@@ -1,0 +1,14 @@
+node_modules/
+.playwright-cli/
+
+dist/
+dist-*/
+tutorial-output/
+
+build/mac/
+build/electron-builder.mac.generated.json
+
+src/native/*.exe
+
+*.log
+*.tmp

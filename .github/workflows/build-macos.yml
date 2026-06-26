@@ -1,0 +1,90 @@
+name: Build macOS package
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-macos:
+    name: Build macOS DMG and ZIP
+    runs-on: macos-latest
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      XUANNIAN_MAC_OUTPUT: dist-mac
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Create macOS icon
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/mac/icon.iconset
+          sips -z 16 16 src/xuannian-logo-256.png --out build/mac/icon.iconset/icon_16x16.png
+          sips -z 32 32 src/xuannian-logo-256.png --out build/mac/icon.iconset/icon_16x16@2x.png
+          sips -z 32 32 src/xuannian-logo-256.png --out build/mac/icon.iconset/icon_32x32.png
+          sips -z 64 64 src/xuannian-logo-256.png --out build/mac/icon.iconset/icon_32x32@2x.png
+          sips -z 128 128 src/xuannian-logo-256.png --out build/mac/icon.iconset/icon_128x128.png
+          sips -z 256 256 src/xuannian-logo-256.png --out build/mac/icon.iconset/icon_128x128@2x.png
+          sips -z 256 256 src/xuannian-logo-256.png --out build/mac/icon.iconset/icon_256x256.png
+          sips -z 512 512 src/xuannian-logo-256.png --out build/mac/icon.iconset/icon_256x256@2x.png
+          sips -z 512 512 src/xuannian-logo-256.png --out build/mac/icon.iconset/icon_512x512.png
+          sips -z 1024 1024 src/xuannian-logo-256.png --out build/mac/icon.iconset/icon_512x512@2x.png
+          iconutil -c icns build/mac/icon.iconset -o build/mac/icon.icns
+
+      - name: Create macOS builder config
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require('fs');
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          const build = JSON.parse(JSON.stringify(pkg.build || {}));
+          build.directories = { ...(build.directories || {}), output: process.env.XUANNIAN_MAC_OUTPUT || 'dist-mac' };
+          build.files = [
+            'index.html',
+            'quick.html',
+            'sticky.html',
+            'screenshot-select.html',
+            'src/**/*',
+            '!src/native/*.cs',
+            '!src/native/*.exe',
+            '!src/xuannian-logo.png',
+            'package.json',
+          ];
+          delete build.asarUnpack;
+          delete build.extraResources;
+          build.mac = {
+            icon: 'build/mac/icon.icns',
+            category: 'public.app-category.productivity',
+            identity: null,
+            target: ['dmg', 'zip'],
+            artifactName: '${productName}-${version}-${arch}.${ext}',
+          };
+          build.dmg = {
+            artifactName: '${productName}-${version}-${arch}.dmg',
+          };
+          fs.writeFileSync('build/electron-builder.mac.generated.json', JSON.stringify(build, null, 2));
+          NODE
+
+      - name: Build macOS packages
+        run: npx electron-builder --mac dmg zip --x64 --arm64 --publish never --config build/electron-builder.mac.generated.json
+
+      - name: Upload macOS packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: xuannian-macos-packages
+          path: |
+            dist-mac/*.dmg
+            dist-mac/*.zip
+            dist-mac/*.blockmap
+          if-no-files-found: error

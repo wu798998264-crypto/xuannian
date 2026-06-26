@@ -1,0 +1,979 @@
+﻿<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>玄念3.0快捷面板</title>
+  <style>
+    :root{--panel:#fff;--soft:#f6f6f6;--text:#262626;--muted:#888;--line:#e9e9e9;--black:#242424;--blue:#2d7dff;--green:#42b95d;--yellow:#d9a21e;--purple:#9c68e8;--scroll-track:#f0f0f0;--scroll-thumb:#cfcfcf}
+    body.dark{--panel:#242424;--soft:#303030;--text:#f4f4f4;--muted:#aaa;--line:#3f3f3f;--black:#efefef;--scroll-track:#303030;--scroll-thumb:#666}
+    *{box-sizing:border-box}
+    html,body{width:100%;height:100%;margin:0;overflow:hidden;background:transparent;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",Arial,sans-serif;color:var(--text)}
+    .panel{width:100%;height:100%;border-radius:20px;background:var(--panel);border:1px solid var(--line);box-shadow:0 24px 80px rgba(0,0,0,.24);overflow:hidden;display:flex;flex-direction:column}
+    .tabs{height:54px;padding:8px;border-bottom:1px solid var(--line);display:grid;grid-template-columns:1fr 1fr;gap:8px}
+    .tab{border:0;border-radius:12px;background:transparent;color:var(--muted);font-weight:900;font-size:15px;cursor:pointer}
+    .tab.active{background:var(--black);color:#fff}
+    body.dark .tab.active{color:#1f1f1f}
+    .body{position:relative;flex:1;min-height:0;display:flex}
+    .pane{display:none;flex:1;min-width:0;min-height:0}
+    .pane.active{display:flex;flex-direction:column}
+    .filters{display:flex;gap:8px;padding:10px 12px 0;flex-wrap:wrap}
+    .filter{height:32px;padding:0 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--muted);font-weight:900}
+    .filter.active{background:var(--black);border-color:var(--black);color:#fff}
+    body.dark .filter.active{color:#1f1f1f}
+    .list{flex:1;min-height:0;overflow-y:auto;padding:12px;scrollbar-gutter:stable}
+    .item{display:grid;grid-template-columns:4px minmax(0,1fr) auto;gap:10px;padding:12px;border:1px solid var(--line);border-radius:14px;background:var(--soft);margin-bottom:10px;cursor:pointer}
+    .item-main{min-width:0}
+    .item-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
+    .bar{border-radius:999px;min-height:42px;background:var(--blue)}
+    .bar.image{background:var(--green)}.bar.link{background:var(--yellow)}.bar.file{background:var(--purple)}
+    .title{font-size:14px;font-weight:900;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .text{font-size:13px;line-height:1.5;margin-top:4px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+    .time{font-size:11px;color:var(--muted);margin-top:6px}
+    .item-actions{display:flex;align-items:center;gap:6px}
+    .icon-btn{width:30px;height:30px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--muted);display:grid;place-items:center;cursor:pointer}
+    .icon-btn svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+    .icon-btn.active{background:#e0e0e0;color:#242424;border-color:#d0d0d0}
+    body.dark .icon-btn.active{background:#555;color:#f5f5f5;border-color:#666}
+    [data-favorite-record] svg path{fill:currentColor;stroke:currentColor}
+    .icon-btn.favorited{color:#d3a300;background:#fff8da;border-color:#f1dfa0}
+    body.dark .icon-btn.favorited{background:#4d4523;border-color:#6c5a16;color:#ffd862}
+    .thumb{width:72px;height:48px;border-radius:10px;border:1px solid var(--line);object-fit:cover;display:block;margin:6px 0;background:var(--line)}
+    .record-thumbs{display:grid;grid-template-columns:repeat(auto-fill,minmax(58px,1fr));gap:6px;margin-top:7px;max-height:116px;overflow:hidden}
+    .record-thumb{min-width:0;display:flex;flex-direction:column;gap:2px;overflow:hidden}
+    .record-thumb img,.record-thumb video,.record-thumb .video-thumb,.record-thumb .file-thumb{width:100%;height:52px;border-radius:9px;border:1px solid var(--line);object-fit:contain;background:var(--line);flex:none}
+    .record-thumb.image-only img{height:58px}
+    .record-thumb-name{display:block;min-width:0;height:12px;color:var(--muted);font-size:9px;line-height:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    #noteList .thumb{width:88px;height:58px}
+    .note-thumbs{display:grid;grid-template-columns:repeat(auto-fill,62px);gap:5px;margin-top:6px;max-height:66px;overflow:hidden}
+    .note-thumb-item{display:flex;min-width:0;width:62px;height:66px;flex-direction:column;gap:2px;overflow:hidden}
+    .note-thumb-item img,.note-thumb-item video,.note-thumb-item .video-thumb,.note-thumb-item .file-thumb{width:100%;height:48px;border-radius:8px;border:1px solid var(--line);object-fit:contain;background:var(--line);flex:none}
+    .note-thumb-item.image-only img{height:64px}
+    .note-thumb-name{display:block;min-width:0;height:12px;color:var(--muted);font-size:9px;line-height:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .file-thumb{display:grid;place-items:center;color:var(--muted);font-size:10px;font-weight:900;text-transform:uppercase;padding:4px}
+    .video-thumb{position:relative;display:block;background:var(--soft);overflow:hidden;border:1px solid var(--line)}
+    .video-thumb video{display:block;width:100%;height:100%;object-fit:contain;border:0;background:#111}
+    .video-thumb .video-badge{position:absolute;right:6px;bottom:6px;display:grid;place-items:center;width:20px;height:20px;border-radius:999px;background:rgba(0,0,0,.58);color:white;font-size:10px;line-height:1}
+    .video-thumb.failed::after{content:"VIDEO";position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-size:10px;font-weight:900;color:var(--muted)}
+    .hover-preview{position:fixed;display:none;z-index:20;pointer-events:none;padding:8px;border-radius:14px;background:var(--panel);border:1px solid var(--line);box-shadow:0 18px 48px rgba(0,0,0,.24)}
+    .hover-preview.show{display:block}
+    .hover-preview img,.hover-preview video{display:block;max-width:320px;max-height:260px;border-radius:10px;object-fit:contain;background:#111}
+    .hover-preview video{display:none}
+    .hover-preview.video img{display:none}
+    .hover-preview.video video{display:block}
+    .quick-toast{position:fixed;left:50%;bottom:14px;z-index:60;min-width:88px;max-width:calc(100vw - 36px);padding:8px 13px;border-radius:999px;background:rgba(32,32,32,.9);color:#fff;font-size:12px;font-weight:900;text-align:center;box-shadow:0 12px 32px rgba(0,0,0,.24);opacity:0;transform:translate(-50%,8px);pointer-events:none;transition:opacity .16s ease,transform .16s ease}
+    body.dark .quick-toast{background:rgba(245,245,245,.94);color:#202020}
+    .quick-toast.show{opacity:1;transform:translate(-50%,0)}
+    .note-shell{display:grid;grid-template-columns:30px minmax(0,1fr);flex:1;min-height:0}
+    .rail{position:relative;background:var(--panel)}
+    .drawer{position:absolute;left:0;top:0;bottom:0;width:230px;padding:12px;background:var(--panel);border-right:1px solid var(--line);box-shadow:0 12px 30px rgba(0,0,0,.1);transform:translateX(calc(-100% - 1px));opacity:0;pointer-events:none;transition:.18s ease;z-index:3}
+    body.dark .drawer{box-shadow:0 12px 30px rgba(0,0,0,.36)}
+    .rail:hover .drawer{transform:translateX(0);opacity:1;pointer-events:auto}
+    .tabline{position:absolute;left:9px;top:18px;bottom:18px;width:12px;border-radius:999px;background:var(--soft);border:1px solid var(--line);box-shadow:inset 0 0 0 1px rgba(255,255,255,.28)}
+    .tabline::after{content:"";position:absolute;left:50%;top:50%;width:6px;height:6px;border-right:2px solid var(--muted);border-bottom:2px solid var(--muted);transform:translate(-65%,-50%) rotate(-45deg);opacity:.9;transition:opacity .14s ease}
+    .rail:hover .tabline::after{opacity:0}
+    .projects{display:grid;gap:8px;max-height:100%;overflow-y:auto}
+    .project{min-height:42px;padding:9px 10px;border-radius:12px;border:1px solid var(--line);background:var(--soft);text-align:left;font-weight:800;color:var(--text);cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .project.active{background:var(--black);color:#fff;border-color:var(--black)}
+    body.dark .project.active{color:#1f1f1f}
+    .empty{padding:46px 16px;text-align:center;color:var(--muted)}
+    .idea-compose{border-top:1px solid var(--line);padding:10px;display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px 8px}
+    .compose-resize-handle{grid-column:1/-1;height:12px;margin:-7px 8px -2px;cursor:ns-resize;position:relative;touch-action:none}
+    .compose-resize-handle::before{content:"";position:absolute;left:50%;top:5px;width:52px;height:3px;transform:translateX(-50%);border-radius:999px;background:var(--line)}
+    .compose-resize-handle:hover::before{background:var(--muted)}
+    .idea-compose textarea{min-height:52px;max-height:50dvh;resize:none;border:1px solid var(--line);border-radius:12px;background:var(--soft);color:var(--text);padding:10px;font:inherit}
+    .idea-compose .send{white-space:nowrap;min-width:44px}
+    .send{height:38px;align-self:end;border:0;border-radius:12px;background:var(--black);color:#fff;font-weight:900;padding:0 14px;cursor:pointer}
+    body.dark .send{color:#1f1f1f}
+    .quick-modal,.picker{position:fixed;inset:0;display:none;align-items:center;justify-content:center;background:rgba(0,0,0,.18);z-index:30}
+    .quick-modal.show,.picker.show{display:flex}
+    .quick-modal-box{width:min(660px,calc(100vw - 28px));max-height:calc(100vh - 28px);overflow-y:auto;border:1px solid var(--line);border-radius:18px;background:var(--panel);box-shadow:0 18px 48px rgba(0,0,0,.24);padding:16px}
+    .quick-modal-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:12px}
+    .quick-modal-head h3{margin:0;font-size:18px}
+    .quick-close{width:32px;height:32px;border:0;border-radius:10px;background:var(--soft);color:var(--muted);font-weight:900;cursor:pointer}
+    .preview-box{border:1px solid var(--line);border-radius:14px;background:var(--soft);padding:12px;margin-top:10px}
+    .preview-box b{display:block;margin-bottom:6px;font-size:13px}
+    .preview-text{white-space:pre-wrap;line-height:1.6;font-size:13px;color:var(--text)}
+    .preview-text.copyable{cursor:pointer;user-select:text;border-radius:8px;padding:4px;margin:-4px}
+    .preview-text.copyable:hover{background:var(--soft)}
+    .preview-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}
+    .quick-form{display:grid;gap:10px}
+    .quick-form label{font-size:12px;font-weight:900;color:var(--muted)}
+    .quick-form input,.quick-form textarea,.quick-form select{width:100%;margin-top:6px;border:1px solid var(--line);border-radius:12px;background:var(--soft);color:var(--text);padding:10px;font:inherit;outline:none}
+    .quick-form textarea{min-height:92px;resize:vertical}
+    .quick-form .preview-box{margin-top:0}
+    .quick-edit-attachments{display:grid;grid-template-columns:repeat(auto-fill,62px);gap:6px;max-height:156px;overflow-y:auto;padding-right:2px}
+    .quick-edit-attachment{width:62px;height:66px;min-width:0;display:flex;flex-direction:column;gap:3px;cursor:pointer;overflow:hidden}
+    .quick-edit-attachment img,
+    .quick-edit-attachment video,
+    .quick-edit-attachment .video-thumb,
+    .quick-edit-attachment .file-thumb{width:100%;height:48px;border-radius:8px;border:1px solid var(--line);object-fit:contain;background:var(--line);flex:none}
+    .quick-edit-attachment.image-only img{height:64px}
+    .quick-edit-attachment .note-thumb-name{font-size:9px;height:12px;line-height:12px}
+    .quick-action{height:36px;border:1px solid var(--line);border-radius:12px;background:var(--soft);color:var(--text);font-weight:900;padding:0 12px;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:6px}
+    .quick-action svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+    .quick-action.primary{border-color:var(--black);background:var(--black);color:#fff}
+    body.dark .quick-action.primary{color:#1f1f1f}
+    .picker-box{width:320px;max-width:calc(100vw - 32px);border:1px solid var(--line);border-radius:16px;background:var(--panel);box-shadow:0 18px 48px rgba(0,0,0,.24);padding:14px}
+    .picker-title{font-weight:900;margin-bottom:10px}
+    .picker-list{display:grid;gap:8px;max-height:260px;overflow-y:auto}
+    .picker-option{min-height:38px;border:1px solid var(--line);border-radius:12px;background:var(--soft);color:var(--text);font-weight:800;text-align:left;padding:0 12px}
+    .picker-input{width:100%;height:40px;border:1px solid var(--line);border-radius:12px;background:var(--soft);color:var(--text);padding:0 12px;font:inherit;font-weight:800;outline:none}
+    .picker-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:4px}
+    .picker-actions button{height:34px;border:1px solid var(--line);border-radius:11px;background:var(--soft);color:var(--text);font-weight:900;padding:0 12px}
+    .picker-actions .primary{background:var(--black);border-color:var(--black);color:#fff}
+    body.dark .picker-actions .primary{color:#1f1f1f}
+    @media (hover:hover){
+      .item .item-actions{opacity:0;pointer-events:none;transition:opacity .14s ease}
+      .item:hover .item-actions,.item:focus-within .item-actions{opacity:1;pointer-events:auto}
+    }
+    ::-webkit-scrollbar{width:14px}
+    ::-webkit-scrollbar-track{background:var(--scroll-track);border-radius:999px}
+    ::-webkit-scrollbar-thumb{background:var(--scroll-thumb);border:4px solid var(--scroll-track);border-radius:999px}
+  </style>
+</head>
+<body>
+  <div class="panel">
+    <div class="tabs">
+      <button class="tab active" data-tab="clipboard">剪切板</button>
+      <button class="tab" data-tab="notes">收藏</button>
+    </div>
+    <div class="body">
+      <section class="pane active" id="clipboardPane"><div class="filters" id="recordFilters"><button class="filter active" data-filter="all">全部</button><button class="filter" data-filter="text">文本</button><button class="filter" data-filter="image">图片</button><button class="filter" data-filter="link">链接</button><button class="filter" data-filter="file">文件</button></div><div class="list" id="recordList"></div></section>
+      <section class="pane" id="notesPane">
+        <div class="note-shell">
+          <div class="rail"><div class="drawer"><div class="projects" id="projectList"></div></div><div class="tabline"></div></div>
+          <div class="list" id="noteList"></div>
+        </div>
+      </section>
+    </div>
+  </div>
+  <div class="hover-preview" id="hoverPreview"><img alt=""><video muted playsinline></video></div>
+  <div class="quick-toast" id="quickToast"></div>
+  <div class="picker" id="picker"><div class="picker-box"><div class="picker-title" id="pickerTitle"></div><div class="picker-list" id="pickerList"></div></div></div>
+  <script>
+    const $ = (s) => document.querySelector(s);
+    const $$ = (s) => Array.from(document.querySelectorAll(s));
+    const api = window.nativeAPI || {};
+    const savedQuickTab=localStorage.getItem('xuannian.quick.tab');
+    const state = { records: [], projects: [], notes: [], stickyProjects: [], stickyNotes: [], pinnedIds: new Set(), projectId: null, tab: savedQuickTab==='notes'?'notes':'clipboard', clipType: 'all', hotkeyParts: [], settings: {}, videoThumbObserver: null };
+    const labels = { text:'文本', image:'图片', link:'链接', file:'文件' };
+    function escapeHtml(str=''){ return String(str).replace(/[&<>'"]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[m])); }
+    function nowText(ts){ const d=new Date(ts||Date.now()); return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; }
+    function toast(message){
+      const el=$('#quickToast');
+      if(!el) return;
+      el.textContent=message;
+      el.classList.add('show');
+      clearTimeout(toast.timer);
+      toast.timer=setTimeout(()=>el.classList.remove('show'),1100);
+    }
+    function switchTab(tab){
+      if(!['clipboard','notes'].includes(tab)) tab='clipboard';
+      state.tab=tab;
+      localStorage.setItem('xuannian.quick.tab', tab);
+      $$('.tab').forEach(btn=>btn.classList.toggle('active', btn.dataset.tab===tab));
+      $('#clipboardPane').classList.toggle('active', tab==='clipboard');
+      $('#notesPane').classList.toggle('active', tab==='notes');
+      renderActiveTab();
+    }
+    function renderActiveTab(){
+      if(state.tab==='clipboard'){
+        renderRecords();
+      }else if(state.tab==='notes'){
+        renderProjects();
+        renderNotes();
+      }
+    }
+    function iconSvg(name){
+      const map={
+        star:'<svg viewBox="0 0 24 24"><path d="m12 3 2.7 5.46 6.03.88-4.36 4.24 1.03 5.98L12 16.7l-5.4 2.86 1.03-5.98L3.27 9.34l6.03-.88L12 3Z"></path></svg>',
+        bookmark:'<svg viewBox="0 0 24 24"><path d="M7 4h10a1 1 0 0 1 1 1v15l-6-3.5L6 20V5a1 1 0 0 1 1-1Z"></path></svg>',
+        edit:'<svg viewBox="0 0 24 24"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z"></path></svg>',
+        pin:'<svg viewBox="0 0 24 24"><path d="M9 4h6"></path><path d="M10 4l1 6-4 4v2h10v-2l-4-4 1-6"></path><path d="M12 16v5"></path></svg>',
+        pinOff:'<svg viewBox="0 0 24 24"><path d="m3 3 18 18"></path><path d="M9 4h6"></path><path d="M10 4l1 6-2.2 2.2"></path><path d="M14.6 14.6H17v-2l-4-4 1-4"></path><path d="M12 16v5"></path></svg>'
+      };
+      return map[name] || '';
+    }
+    async function finishQuickPaste(){
+      if(api.pasteClipboardToActiveTarget){
+        await api.pasteClipboardToActiveTarget();
+      }else{
+        api.hideQuickPanel?.();
+      }
+    }
+    async function copyRecord(item){
+      if(!item) return;
+      const files=(Array.isArray(item.files) && item.files.length ? item.files : [item.content]).filter(Boolean);
+      const recordText=String(item.content || '').trim();
+      const fileClipboardText=recordText && recordText!=='图片内容' && !files.some(filePath=>String(filePath)===recordText) ? recordText : '';
+      if(item.type==='image' && files.length > 1 && api.copyFileToClipboard){
+        await api.copyFileToClipboard(files, item.clipboardAction === 'cut' ? 'cut' : 'copy', fileClipboardText);
+        await finishQuickPaste();
+        return;
+      }
+      if((item.type==='file' || (item.type==='image' && files.length && (item.fileBacked !== false || fileClipboardText))) && api.copyFileToClipboard){
+        await api.copyFileToClipboard(files, item.clipboardAction === 'cut' ? 'cut' : 'copy', fileClipboardText);
+      }else if(item.type==='image' && item.preview && api.copyImage){
+        await api.copyImage(item.preview);
+      }else{
+        await api.copyText?.(item.content || '');
+      }
+      await finishQuickPaste();
+    }
+    async function copyIdea(item){
+      if(!item) return;
+      const content=String(item.content || '').trim();
+      const expanded=String(item.expandedContent || '').trim();
+      const text=[content, expanded].filter(Boolean).join('\n\n').trim();
+      const files=itemFilePathsForCopy(item);
+      if(files.length && api.copyFileToClipboard){
+        await api.copyFileToClipboard(files, 'copy', text);
+        await finishQuickPaste();
+        return;
+      }
+      if(text && text !== '附件灵感'){
+        await api.copyText?.(text);
+        await finishQuickPaste();
+        return;
+      }
+      const image=itemImageSourceForCopy(item);
+      if(image && api.copyImage){
+        await api.copyImage(image);
+        await finishQuickPaste();
+        return;
+      }
+      await api.copyText?.(text || content || expanded || '');
+      await finishQuickPaste();
+    }
+    function showPicker(title, options, onPick){
+      $('#pickerTitle').textContent=title;
+      $('#pickerList').innerHTML=options.length ? options.map(item=>`<button class="picker-option" data-pick="${item.id}">${escapeHtml(item.name)}</button>`).join('') : '<div class="empty">暂无分类</div>';
+      $('#picker').classList.add('show');
+      $$('[data-pick]').forEach(btn=>btn.onclick=async(event)=>{
+        event.stopPropagation();
+        $('#picker').classList.remove('show');
+        await onPick(btn.dataset.pick);
+      });
+    }
+    function recordFiles(record){
+      return (Array.isArray(record?.files) && record.files.length ? record.files : (record?.type==='file' ? parseFilePathsFromText(record.content) : [])).filter(Boolean);
+    }
+    function suggestedRecordTitle(record, files=[]){
+      if(record?.type==='text') return String(record.content||'').slice(0,18) || '未命名收藏';
+      if(record?.type==='file') return files[0] ? String(files[0]).split(/[\\/]/).pop() : '文件记录';
+      if(record?.type==='image') return '图片记录';
+      return `${labels[record?.type]||record?.type||'内容'}记录`;
+    }
+    async function saveRecordToProject(recordId, projectId, titleOverride=''){
+      const record=state.records.find(item=>item.id===recordId);
+      if(!record || !projectId || !api.addNote) return;
+      const files=recordFiles(record);
+      let attachments=files.map(filePath=>({kind:attachmentKindFromPath(filePath),name:String(filePath).split(/[\\/]/).pop() || '文件',path:filePath,ext:(String(filePath).split('.').pop() || '').toLowerCase()}));
+      if(record.type==='image' && record.preview && !attachments.length){
+        attachments=[{kind:'image',name:'剪切板图片',dataUrl:record.preview}];
+      }
+      const firstFileName=files[0] ? String(files[0]).split(/[\\/]/).pop() : '';
+      const recordText=String(record.content || '').trim();
+      const content=recordText && recordText!=='图片内容' && !files.some(filePath=>String(filePath)===recordText) ? recordText : '';
+      await api.addNote({
+        projectId,
+        type:'text',
+        title:String(titleOverride || '').trim() || suggestedRecordTitle(record, files),
+        content:['image','file'].includes(record.type) ? content : (record.content || ''),
+        note:'',
+        attachments,
+        sourceRecordId:record.id,
+      });
+      await loadData();
+    }
+    function stickyNoteForRecord(recordId){
+      return (state.stickyNotes || []).find(note=>note.sourceRecordId===recordId) || null;
+    }
+    function isRecordPinned(recordId){
+      const note=stickyNoteForRecord(recordId);
+      return !!note && state.pinnedIds.has(note.id);
+    }
+    function stickyPayloadFromRecord(record){
+      const files=recordFiles(record);
+      let attachments=files.map(filePath=>({
+        kind:attachmentKindFromPath(filePath),
+        name:String(filePath).split(/[\\/]/).pop() || '文件',
+        path:filePath,
+        ext:(String(filePath).split('.').pop() || '').toLowerCase(),
+      }));
+      if(record.type==='image' && record.preview && !attachments.length){
+        attachments=[{kind:'image',name:'剪切板图片',dataUrl:record.preview}];
+      }
+      const recordText=String(record.content || '').trim();
+      const text=['image','file'].includes(record.type)
+        ? (recordText && recordText!=='图片内容' && !files.some(filePath=>String(filePath)===recordText) ? recordText : '')
+        : (record.content || '');
+      return {
+        projectId:state.stickyProjects[0]?.id || '',
+        content:text,
+        attachments,
+        sourceRecordId:record.id,
+      };
+    }
+    async function ensureStickyForRecord(recordId){
+      const existing=stickyNoteForRecord(recordId);
+      if(existing) return existing;
+      const record=state.records.find(item=>item.id===recordId);
+      if(!record || !api.addStickyNote) return null;
+      state.stickyNotes=await api.addStickyNote(stickyPayloadFromRecord(record));
+      return stickyNoteForRecord(recordId) || state.stickyNotes[0] || null;
+    }
+    async function toggleRecordPin(recordId){
+      const note=await ensureStickyForRecord(recordId);
+      if(!note || !api.toggleStickyNote) return;
+      const result=await api.toggleStickyNote(note.id);
+      if(result?.reason){
+        toast(result.reason);
+      }else if(result?.pinned){
+        state.pinnedIds.add(note.id);
+      }else{
+        state.pinnedIds.delete(note.id);
+      }
+      renderRecords();
+    }
+    function showFavoriteTitleDialog(recordId, projectId){
+      const record=state.records.find(item=>item.id===recordId);
+      if(!record) return;
+      const files=recordFiles(record);
+      $('#pickerTitle').textContent='设置收藏标题';
+      $('#pickerList').innerHTML=`<input class="picker-input" id="favoriteTitleInput" value="${escapeHtml(suggestedRecordTitle(record, files))}" placeholder="收藏标题" /><div class="picker-actions"><button id="cancelFavoriteTitle">取消</button><button class="primary" id="confirmFavoriteTitle">保存</button></div>`;
+      $('#picker').classList.add('show');
+      $('#cancelFavoriteTitle').onclick=()=>$('#picker').classList.remove('show');
+      $('#confirmFavoriteTitle').onclick=async()=>{
+        const title=$('#favoriteTitleInput').value.trim();
+        $('#picker').classList.remove('show');
+        await saveRecordToProject(recordId, projectId, title);
+      };
+      setTimeout(()=>$('#favoriteTitleInput')?.select(),0);
+    }
+    function favoriteRecord(recordId){
+      showPicker('收藏到分类', state.projects.map(item=>({id:item.id,name:item.name})), (projectId)=>showFavoriteTitleDialog(recordId, projectId));
+    }
+    function ideaCategoryRows(){
+      return [
+        {id:'uncategorized',name:'灵感采集区'},
+        ...state.ideaCategories.map(item=>({id:item.id,name:item.name || '未命名分类'}))
+      ];
+    }
+    async function favoriteIdea(ideaId){
+      const item=state.inspirations.find(idea=>idea.id===ideaId);
+      if(!item || !api.moveInspiration) return;
+      if(item.categoryId){
+        await api.moveInspiration(item.id, null);
+        await loadData();
+        return;
+      }
+      const rows=state.ideaCategories.map(category=>({id:category.id,name:category.name || '未命名分类'}));
+      showPicker('选择灵感分类', rows, async(categoryId)=>{
+        await api.moveInspiration(item.id, categoryId);
+        await loadData();
+      });
+    }
+    function imageSrc(item){
+      if(!item) return '';
+      if(item.dataUrl) return item.dataUrl;
+      if(item.preview) return item.preview;
+      if(item.path) return 'file:///' + String(item.path).replace(/\\/g,'/');
+      return '';
+    }
+    function pathFileName(value=''){
+      const raw=String(value||'');
+      const clean=raw.replace(/^file:\/\/\/?/i,'').split('?')[0];
+      try{
+        return decodeURIComponent(clean.split(/[\\/]/).pop() || clean || '文件');
+      }catch{
+        return clean.split(/[\\/]/).pop() || clean || '文件';
+      }
+    }
+    function fileUrlFromPath(value=''){
+      const raw=String(value||'');
+      if(/^file:\/\//i.test(raw)) return raw;
+      return 'file:///' + raw.replace(/\\/g,'/');
+    }
+    function isFolderLikePath(value=''){
+      const name=pathFileName(value);
+      return !!value && !/\.[^.\s\\/]+$/.test(name);
+    }
+    function firstImageAttachment(item){
+      return (item?.attachments || []).find(a => a.kind === 'image' && (a.dataUrl || a.path));
+    }
+    function parseFilePathsFromText(value){
+      return String(value || '').split(/\r?\n/).map(item=>item.trim()).filter(item=>/^[a-zA-Z]:[\\/]/.test(item) || /^\\\\/.test(item));
+    }
+    function isImageAttachmentPath(value=''){
+      return /\.(png|jpe?g|gif|webp|bmp|tiff?)$/i.test(String(value).split('?')[0]);
+    }
+    function isVideoAttachmentPath(value=''){
+      return /\.(mp4|mov|m4v|avi|mkv|webm|wmv|flv|mpeg|mpg)$/i.test(String(value).split('?')[0]);
+    }
+    function isAudioAttachmentPath(value=''){
+      return /\.(mp3|wav|m4a|aac|flac|ogg|wma)$/i.test(String(value).split('?')[0]);
+    }
+    function videoThumbMarkup(src){
+      return `<span class="video-thumb"><video data-video-thumb src="${src}" preload="none" muted playsinline></video><span class="video-badge">▶</span></span>`;
+    }
+    function bindVideoThumbnails(root=document){
+      if(!root?.querySelectorAll) return;
+      if(!state.videoThumbObserver && 'IntersectionObserver' in window){
+        state.videoThumbObserver=new IntersectionObserver(entries=>{
+          entries.forEach(entry=>{
+            if(!entry.isIntersecting) return;
+            const video=entry.target;
+            state.videoThumbObserver.unobserve(video);
+            video.preload='metadata';
+            try{ video.load(); }catch{}
+          });
+        },{rootMargin:'160px'});
+      }
+      root.querySelectorAll('video[data-video-thumb]').forEach(video=>{
+        if(video.dataset.thumbBound) return;
+        video.dataset.thumbBound='1';
+        video.muted=true;
+        video.playsInline=true;
+        const seek=()=>{
+          try{
+            const target=Number.isFinite(video.duration) && video.duration>0 ? Math.min(0.2, Math.max(0.05, video.duration/20)) : 0.1;
+            if(video.readyState>=1 && Math.abs(video.currentTime-target)>0.05) video.currentTime=target;
+          }catch{}
+        };
+        video.addEventListener('loadedmetadata', seek, {once:true});
+        video.addEventListener('loadeddata', ()=>{ try{ video.pause(); }catch{} }, {once:true});
+        video.addEventListener('seeked', ()=>{ try{ video.pause(); }catch{} }, {once:true});
+        video.addEventListener('error', ()=>video.closest('.video-thumb')?.classList.add('failed'), {once:true});
+        if(state.videoThumbObserver) state.videoThumbObserver.observe(video);
+        else{
+          video.preload='metadata';
+          try{ video.load(); }catch{}
+          if(video.readyState>=1) seek();
+        }
+      });
+    }
+    function attachmentKindFromPath(value=''){
+      if(isImageAttachmentPath(value)) return 'image';
+      if(isVideoAttachmentPath(value)) return 'video';
+      if(isAudioAttachmentPath(value)) return 'audio';
+      return 'file';
+    }
+    function attachmentDisplayRank(item){
+      if(item?.kind==='image') return 0;
+      if(item?.kind==='video') return 1;
+      if(item?.kind==='audio') return 2;
+      return 3;
+    }
+    function sortAttachmentsForDisplay(attachments=[]){
+      return [...(attachments || [])].filter(Boolean).sort((a,b)=>attachmentDisplayRank(a)-attachmentDisplayRank(b));
+    }
+    function noteFilePathsForCopy(note){
+      const attachmentPathItems=(note?.attachments || []).filter(item=>item?.path);
+      const attachmentPaths=attachmentPathItems.map(item=>item.path);
+      if(attachmentPaths.length) return [...new Set(attachmentPaths)];
+      const sourceRecord=note?.sourceRecordId ? state.records.find(item=>item.id===note.sourceRecordId) : null;
+      const sourceFiles=Array.isArray(sourceRecord?.files) ? sourceRecord.files : parseFilePathsFromText(sourceRecord?.content);
+      const sourcePaths=(sourceRecord?.type === 'file' || sourceRecord?.fileBacked === true || sourceFiles.some(file=>!isImageAttachmentPath(file))) ? sourceFiles : [];
+      return [...new Set([...attachmentPaths, ...sourcePaths, ...parseFilePathsFromText(note?.content)])];
+    }
+    function noteImageSourceForCopy(note){
+      const image=(note?.attachments || []).find(item=>item?.kind==='image' && (item.dataUrl || item.preview || item.path));
+      if(image) return imageSrc(image);
+      const sourceRecord=note?.sourceRecordId ? state.records.find(item=>item.id===note.sourceRecordId) : null;
+      if(sourceRecord?.type==='image' && sourceRecord.preview) return sourceRecord.preview;
+      return '';
+    }
+    function itemFilePathsForCopy(item){
+      return [...new Set((item?.attachments || [])
+        .filter(attachment=>attachment?.path)
+        .map(attachment=>attachment.path))];
+    }
+    function itemImageSourceForCopy(item){
+      const image=(item?.attachments || []).find(attachment=>attachment?.kind==='image' && (attachment.dataUrl || attachment.preview || attachment.path));
+      return image ? imageSrc(image) : '';
+    }
+    function renderRecordThumbs(item){
+      const files=(Array.isArray(item?.files) ? item.files : []).filter(Boolean).slice(0,8);
+      if(files.length){
+        return `<div class="record-thumbs">${files.map(filePath=>{
+          const name=escapeHtml(pathFileName(filePath));
+          const src=escapeHtml(fileUrlFromPath(filePath));
+          if(isImageAttachmentPath(filePath)){
+            return `<span class="record-thumb image-only"><img class="quick-previewable" loading="lazy" data-preview-image="${src}" src="${src}" alt="${name}"></span>`;
+          }
+          if(isVideoAttachmentPath(filePath)){
+            return `<span class="record-thumb">${videoThumbMarkup(src)}<span class="record-thumb-name">${name}</span></span>`;
+          }
+          const ext=escapeHtml((String(name).split('.').pop() || (isFolderLikePath(filePath)?'folder':'file')).slice(0,6));
+          return `<span class="record-thumb"><span class="file-thumb">${ext}</span><span class="record-thumb-name">${name}</span></span>`;
+        }).join('')}</div>`;
+      }
+      if(item?.type==='image' && item.preview){
+        const src=escapeHtml(item.preview);
+        return `<img class="thumb quick-previewable" loading="lazy" data-preview-image="${src}" src="${src}" alt="">`;
+      }
+      return '';
+    }
+    async function copySingleAttachment(item){
+      if(!item) return false;
+      if(item.path && api.copyFileToClipboard) return api.copyFileToClipboard(item.path);
+      const src=imageSrc(item);
+      if(item.kind==='image' && src && api.copyImage) return api.copyImage(src);
+      return false;
+    }
+    async function copySingleAttachmentWithFeedback(item, options={}){
+      const ok=await copySingleAttachment(item);
+      if(!options.silent) toast(ok===false ? '复制失败' : '已复制');
+      if(ok!==false && options.hide){
+        setTimeout(()=>api.hideQuickPanel?.(),80);
+      }
+      return ok;
+    }
+    async function openSingleAttachment(item){
+      if(!item?.path || !api.openPath) return false;
+      return api.openPath(item.path);
+    }
+    function bindQuickAttachmentInteractions(item, options={}){
+      $$('[data-quick-attachment-index]').forEach(card=>{
+        if(card.dataset.attachmentBound) return;
+        card.dataset.attachmentBound='1';
+        let clickTimer=null;
+        card.addEventListener('click', event=>{
+          event.stopPropagation();
+          clearTimeout(clickTimer);
+          clickTimer=setTimeout(()=>copySingleAttachmentWithFeedback(item.attachments?.[Number(card.dataset.quickAttachmentIndex)], options),220);
+        });
+        card.addEventListener('dblclick', async event=>{
+          event.preventDefault();
+          event.stopPropagation();
+          clearTimeout(clickTimer);
+          await openSingleAttachment(item.attachments?.[Number(card.dataset.quickAttachmentIndex)]);
+        });
+      });
+    }
+    function applyTheme(theme){
+      const systemDark = typeof matchMedia === 'function' && matchMedia('(prefers-color-scheme: dark)').matches;
+      const actual = theme === 'system' ? (systemDark ? 'dark' : 'light') : (theme || 'light');
+      document.body.classList.toggle('dark', actual === 'dark');
+    }
+    function renderRecords(){
+      $$('.filter').forEach(btn=>btn.classList.toggle('active', btn.dataset.filter===state.clipType));
+      const items = state.records.filter(item=>state.clipType==='all' || item.type===state.clipType).slice(0,80);
+      $('#recordList').innerHTML = items.length ? items.map(item=>{
+        const mediaText=item.type==='image' && item.content && item.content!=='图片内容' ? `<div class="text">${escapeHtml(item.content || '')}</div>` : '';
+        return `
+        <div class="item" data-record="${item.id}">
+          <div class="bar ${item.type}"></div>
+          <div class="item-main"><div class="item-head"><div class="title">${labels[item.type] || '文本'}</div></div>${['image','file'].includes(item.type) ? `${renderRecordThumbs(item)}${mediaText}` : `<div class="text">${escapeHtml(item.content || '')}</div>`}<div class="time">${nowText(item.createdAt)}</div></div>
+          <div class="item-actions"><button class="icon-btn ${isRecordPinned(item.id)?'active':''}" data-pin-record="${item.id}" title="${isRecordPinned(item.id)?'取消置顶':'置顶为便签'}">${iconSvg(isRecordPinned(item.id)?'pinOff':'pin')}</button><button class="icon-btn" data-favorite-record="${item.id}" title="收藏">${iconSvg('bookmark')}</button></div>
+        </div>`;
+      }).join('') : '<div class="empty">暂无剪切板记录</div>';
+      $('#recordList').onclick=(event)=>{
+        const pin=event.target.closest('[data-pin-record]');
+        if(pin){ event.stopPropagation(); toggleRecordPin(pin.dataset.pinRecord); return; }
+        const fav=event.target.closest('[data-favorite-record]');
+        if(fav){ event.stopPropagation(); favoriteRecord(fav.dataset.favoriteRecord); return; }
+        const card=event.target.closest('[data-record]');
+        if(card) copyRecord(state.records.find(x=>x.id===card.dataset.record));
+      };
+      bindImagePreview();
+      bindVideoThumbnails($('#recordList'));
+    }
+    function renderProjects(){
+      $('#projectList').innerHTML = state.projects.map(p=>`<button class="project ${p.id===state.projectId?'active':''}" data-project="${p.id}">${escapeHtml(p.name)}</button>`).join('');
+      $$('[data-project]').forEach(btn=>btn.onclick=()=>{ state.projectId=btn.dataset.project; renderProjects(); renderNotes(); });
+    }
+    function noteDisplayContent(item){
+      const content=String(item?.content || '').trim();
+      if(!content) return '';
+      const sourceRecord=item?.sourceRecordId ? state.records.find(record=>record.id===item.sourceRecordId) : null;
+      const sourceContent=String(sourceRecord?.content || '').trim();
+      if(sourceRecord?.type==='image' && (content==='图片内容' || content===sourceContent)) return '';
+      if(sourceRecord?.type==='file' && (content===sourceContent || parseFilePathsFromText(content).length>0)) return '';
+      return content;
+    }
+    function renderNoteThumbs(item, interactive=false){
+      const attachments=(item?.attachments || [])
+        .map((attachment,index)=>({attachment,index}))
+        .filter(entry=>entry.attachment)
+        .sort((a,b)=>attachmentDisplayRank(a.attachment)-attachmentDisplayRank(b.attachment));
+      if(!attachments.length) return '';
+      return `<div class="note-thumbs">${attachments.map(({attachment,index})=>{
+        const src=imageSrc(attachment);
+        const label=escapeHtml(attachment.name || '附件');
+        const interaction=interactive ? ` data-quick-attachment-index="${index}" title="单击复制，双击打开"` : '';
+        if(attachment.kind==='image' && src){
+          return `<span class="note-thumb-item image-only"${interaction}><img class="quick-previewable" loading="lazy" data-preview-image="${escapeHtml(src)}" src="${escapeHtml(src)}" alt="${label}"></span>`;
+        }
+        if(attachment.kind==='video' && src){
+          return `<span class="note-thumb-item"${interaction}>${videoThumbMarkup(escapeHtml(src))}<span class="note-thumb-name">${label}</span></span>`;
+        }
+        const ext=escapeHtml((attachment.ext || String(label).split('.').pop() || (attachment.kind==='audio'?'audio':'file')).slice(0,6));
+        return `<span class="note-thumb-item"${interaction}><span class="file-thumb">${ext}</span><span class="note-thumb-name">${label}</span></span>`;
+      }).join('')}</div>`;
+    }
+    function renderIdeaThumbs(item){
+      const attachments=(item?.attachments || [])
+        .map((attachment,index)=>({attachment,index}))
+        .filter(entry=>entry.attachment)
+        .sort((a,b)=>attachmentDisplayRank(a.attachment)-attachmentDisplayRank(b.attachment));
+      if(!attachments.length) return '';
+      return `<div class="note-thumbs">${attachments.map(({attachment,index})=>{
+        const src=imageSrc(attachment);
+        const label=escapeHtml(attachment.name || '附件');
+        const interaction=` data-idea-attachment-id="${escapeHtml(item.id)}" data-idea-attachment-index="${index}" title="单击复制"`;
+        if(attachment.kind==='image' && src){
+          return `<span class="note-thumb-item image-only"${interaction}><img loading="lazy" src="${escapeHtml(src)}" alt="${label}"></span>`;
+        }
+        if(attachment.kind==='video' && src){
+          return `<span class="note-thumb-item"${interaction}>${videoThumbMarkup(escapeHtml(src))}<span class="note-thumb-name">${label}</span></span>`;
+        }
+        const ext=escapeHtml((attachment.ext || String(label).split('.').pop() || (attachment.kind==='audio'?'audio':'file')).slice(0,6));
+        return `<span class="note-thumb-item"${interaction}><span class="file-thumb">${ext}</span><span class="note-thumb-name">${label}</span></span>`;
+      }).join('')}</div>`;
+    }
+    function renderNotes(){
+      const items = state.notes.filter(n=>!state.projectId || n.projectId===state.projectId).sort((a,b)=>(a.order||0)-(b.order||0));
+      $('#noteList').innerHTML = items.length ? items.map(item=>{
+        const displayContent=noteDisplayContent(item);
+        return `<div class="item" data-note="${item.id}">
+          <div class="bar text"></div>
+          <div class="item-main"><div class="item-head"><div class="title">${escapeHtml(item.title || '收藏')}</div></div>${renderNoteThumbs(item)}${displayContent ? `<div class="text">${escapeHtml(displayContent)}</div>` : ''}</div>
+          <div class="item-actions"><button class="icon-btn ${state.pinnedIds.has(item.id)?'active':''}" data-pin-note="${item.id}" title="${state.pinnedIds.has(item.id)?'取消置顶':'置顶'}">${iconSvg(state.pinnedIds.has(item.id)?'pinOff':'pin')}</button></div>
+        </div>`;
+      }).join('') : '<div class="empty">当前分类暂无收藏</div>';
+      $('#noteList').onclick=async(event)=>{
+        const pin=event.target.closest('[data-pin-note]');
+        if(pin){
+          event.stopPropagation();
+          const result=await api.toggleStickyNote?.(pin.dataset.pinNote);
+          if(result?.pinned) state.pinnedIds.add(pin.dataset.pinNote);
+          else state.pinnedIds.delete(pin.dataset.pinNote);
+          renderNotes();
+          return;
+        }
+        const card=event.target.closest('[data-note]');
+        if(!card) return;
+        const item=state.notes.find(x=>x.id===card.dataset.note);
+        const files=noteFilePathsForCopy(item);
+        if(files.length && api.copyFileToClipboard){
+          await api.copyFileToClipboard(files, 'copy', String(item?.content || '').trim());
+          await finishQuickPaste();
+          return;
+        }
+        const image=noteImageSourceForCopy(item);
+        if(image && api.copyImage){
+          await api.copyImage(image);
+          await finishQuickPaste();
+          return;
+        }
+        await api.copyText?.(item?.content || item?.title || '');
+        await finishQuickPaste();
+      };
+      bindImagePreview();
+      bindVideoThumbnails($('#noteList'));
+    }
+    function renderIdeaCategories(){
+      $('#ideaCategoryList').innerHTML=ideaCategoryRows().map(item=>`<button class="project ${item.id===state.ideaCategoryId?'active':''}" data-idea-category="${item.id}">${escapeHtml(item.name)}</button>`).join('');
+      $$('[data-idea-category]').forEach(btn=>btn.onclick=()=>{ state.ideaCategoryId=btn.dataset.ideaCategory; renderIdeaCategories(); renderIdeas(); });
+    }
+    function closeIdeaModal(){
+      $('#ideaModal').classList.remove('show');
+      $('#ideaModalBox').innerHTML='';
+      api.setQuickEditorMode?.(false);
+    }
+    function ideaCategoryOptions(selectedId){
+      const value=selectedId || 'uncategorized';
+      return [
+        `<option value="uncategorized" ${value==='uncategorized'?'selected':''}>灵感采集区</option>`,
+        ...state.ideaCategories.map(item=>`<option value="${escapeHtml(item.id)}" ${value===item.id?'selected':''}>${escapeHtml(item.name || '未命名分类')}</option>`)
+      ].join('');
+    }
+    function renderIdeaPreviewAttachments(item){
+      const thumbs=renderNoteThumbs(item, true);
+      return thumbs ? `<div class="preview-box"><b>附件</b>${thumbs}</div>` : '';
+    }
+    function renderQuickEditorAttachments(item){
+      const attachments=(item?.attachments || [])
+        .map((attachment,index)=>({attachment,index}))
+        .filter(entry=>entry.attachment)
+        .sort((a,b)=>attachmentDisplayRank(a.attachment)-attachmentDisplayRank(b.attachment));
+      if(!attachments.length) return '';
+      return `<div class="preview-box"><b>附件</b><div class="quick-edit-attachments">${attachments.map(({attachment,index})=>{
+        const src=imageSrc(attachment);
+        const label=escapeHtml(attachment.name || '附件');
+        const interaction=` data-quick-attachment-index="${index}" title="单击复制，双击打开"`;
+        if(attachment.kind==='image' && src){
+          return `<span class="quick-edit-attachment image-only"${interaction}><img loading="lazy" src="${escapeHtml(src)}" alt="${label}"></span>`;
+        }
+        if(attachment.kind==='video' && src){
+          return `<span class="quick-edit-attachment"${interaction}>${videoThumbMarkup(escapeHtml(src))}<span class="note-thumb-name">${label}</span></span>`;
+        }
+        const ext=escapeHtml((attachment.ext || String(label).split('.').pop() || (attachment.kind==='audio'?'audio':'file')).slice(0,6));
+        return `<span class="quick-edit-attachment"${interaction}><span class="file-thumb">${ext}</span><span class="note-thumb-name">${label}</span></span>`;
+      }).join('')}</div></div>`;
+    }
+    function showQuickIdeaPreview(id){
+      const item=state.inspirations.find(x=>x.id===id);
+      if(!item) return;
+      $('#ideaModalBox').innerHTML=`
+        <div class="quick-modal-head"><h3>灵感预览</h3><button class="quick-close" id="closeIdeaModal">×</button></div>
+        <div class="preview-box"><b>原始灵感</b><div class="preview-text copyable" data-copy-quick-idea-section="original" title="点击复制原始灵感">${escapeHtml(item.content || '附件灵感')}</div></div>
+        <div class="preview-box"><b>正文</b><div class="preview-text copyable" data-copy-quick-idea-section="expanded" title="点击复制正文">${escapeHtml(item.expandedContent || '暂无正文')}</div></div>
+        ${renderIdeaPreviewAttachments(item)}
+        <div class="preview-actions"><button class="quick-action primary" id="editQuickIdea">${iconSvg('edit')} 编辑</button></div>`;
+      $('#ideaModal').classList.add('show');
+      api.setQuickEditorMode?.(false);
+      $('#closeIdeaModal').onclick=closeIdeaModal;
+      $('#editQuickIdea').onclick=()=>showQuickIdeaEditor(id);
+      $$('[data-copy-quick-idea-section]').forEach(section=>section.onclick=async(event)=>{
+        event.stopPropagation();
+        const text=section.dataset.copyQuickIdeaSection==='original'
+          ? String(item.content || '附件灵感')
+          : String(item.expandedContent || '暂无正文');
+        const copied=await api.copyText?.(text);
+        toast(copied===false ? '复制失败' : (section.dataset.copyQuickIdeaSection==='original'?'原始灵感已复制':'正文已复制'));
+      });
+      bindQuickAttachmentInteractions(item, {hide:false, silent:false});
+      bindImagePreview();
+      bindVideoThumbnails($('#ideaModalBox'));
+    }
+    function showQuickIdeaEditor(id){
+      const item=state.inspirations.find(x=>x.id===id);
+      if(!item) return;
+      api.setQuickEditorMode?.(false);
+      $('#ideaModalBox').innerHTML=`
+        <div class="quick-modal-head"><h3>编辑灵感</h3><button class="quick-close" id="closeIdeaModal">×</button></div>
+        <div class="quick-form">
+          <label>所属分类<select id="quickIdeaCategory">${ideaCategoryOptions(item.categoryId || 'uncategorized')}</select></label>
+          <label>原始灵感<textarea id="quickIdeaContent">${escapeHtml(item.content || '')}</textarea></label>
+          <label>正文<textarea id="quickIdeaExpanded">${escapeHtml(item.expandedContent || '')}</textarea></label>
+          ${renderQuickEditorAttachments(item)}
+        </div>
+        <div class="preview-actions"><button class="quick-action" id="cancelQuickIdeaEdit">取消</button><button class="quick-action primary" id="saveQuickIdea">保存</button></div>`;
+      $('#ideaModal').classList.add('show');
+      $('#closeIdeaModal').onclick=closeIdeaModal;
+      $('#cancelQuickIdeaEdit').onclick=()=>showQuickIdeaPreview(id);
+      $('#saveQuickIdea').onclick=async()=>{
+        const categoryValue=$('#quickIdeaCategory').value;
+        const categoryId=categoryValue==='uncategorized' ? null : categoryValue;
+        if(api.updateInspiration){
+          state.inspirations=await api.updateInspiration(id, $('#quickIdeaContent').value.trim(), $('#quickIdeaExpanded').value.trim(), item.attachments || []);
+        }
+        if(api.moveInspiration && categoryId !== (item.categoryId || null)){
+          state.inspirations=await api.moveInspiration(id, categoryId);
+          state.ideaCategoryId=categoryId || 'uncategorized';
+        }
+        await loadData();
+        showQuickIdeaPreview(id);
+      };
+      bindQuickAttachmentInteractions(item);
+      bindImagePreview();
+      bindVideoThumbnails($('#ideaModalBox'));
+    }
+    function renderIdeas(){
+      const active=state.ideaCategoryId==='uncategorized' ? null : state.ideaCategoryId;
+      const items=state.inspirations.filter(item=>active ? item.categoryId===active : !item.categoryId).slice(0,60);
+      $('#ideaList').innerHTML=items.length ? items.map(item=>`
+        <div class="item" data-idea="${item.id}">
+          <div class="bar text"></div>
+          <div class="item-main"><div class="item-head"><div class="title">${escapeHtml(active ? (state.ideaCategories.find(c=>c.id===active)?.name || '灵感') : '灵感采集区')}</div></div>${renderIdeaThumbs(item)}<div class="text">${escapeHtml(item.content || '附件灵感')}</div><div class="time">${nowText(item.createdAt)}</div></div>
+          <div class="item-actions"><button class="icon-btn ${item.categoryId?'favorited':''}" data-favorite-idea="${item.id}" title="${item.categoryId?'取消收藏':'归类'}">${iconSvg('star')}</button></div>
+        </div>`).join('') : '<div class="empty">当前分类暂无灵感</div>';
+      $('#ideaList').onclick=async(event)=>{
+        const attachment=event.target.closest('[data-idea-attachment-id]');
+        if(attachment){
+          event.stopPropagation();
+          const item=state.inspirations.find(x=>x.id===attachment.dataset.ideaAttachmentId);
+          await copySingleAttachmentWithFeedback(item?.attachments?.[Number(attachment.dataset.ideaAttachmentIndex)], {hide:true, silent:true});
+          return;
+        }
+        const fav=event.target.closest('[data-favorite-idea]');
+        if(fav){ event.stopPropagation(); favoriteIdea(fav.dataset.favoriteIdea); return; }
+        const card=event.target.closest('[data-idea]');
+        if(card) showQuickIdeaPreview(card.dataset.idea);
+      };
+      bindImagePreview();
+      bindVideoThumbnails($('#ideaList'));
+    }
+    async function sendIdea(){
+      const input=$('#ideaInput');
+      const content=input.value.trim();
+      if(!content || !api.addInspiration) return;
+      const categoryId=state.ideaCategoryId==='uncategorized' ? null : state.ideaCategoryId;
+      await api.addInspiration(content, [], categoryId);
+      input.value='';
+      await loadData();
+    }
+    async function loadData(){
+      const [records, projects, notes, stickyProjects, stickyNotes, settings, pinnedIds] = await Promise.all([
+        api.getRecords?.() || [],
+        api.getNoteProjects?.() || [],
+        api.getNotes?.() || [],
+        api.getStickyProjects?.() || [],
+        api.getStickyNotes?.() || [],
+        api.getSettings?.() || {},
+        api.getPinnedStickyIds?.() || [],
+      ]);
+      state.records = Array.isArray(records) ? records : [];
+      state.projects = Array.isArray(projects) ? projects : [];
+      state.notes = Array.isArray(notes) ? notes : [];
+      state.stickyProjects = Array.isArray(stickyProjects) ? stickyProjects : [];
+      state.stickyNotes = Array.isArray(stickyNotes) ? stickyNotes : [];
+      state.pinnedIds = new Set(Array.isArray(pinnedIds) ? pinnedIds : []);
+      state.settings = settings || {};
+      applyTheme(state.settings.theme || 'light');
+      state.projectId = state.projects.some(item=>item.id===state.projectId) ? state.projectId : (state.projects[0]?.id || null);
+      switchTab(state.tab || 'clipboard');
+      bindImagePreview();
+      bindVideoThumbnails();
+    }
+    function bindImagePreview(){
+      const pop=$('#hoverPreview');
+      const img=pop?.querySelector('img');
+      const previewVideo=pop?.querySelector('video');
+      if(!pop || !img || !previewVideo) return;
+      const isPreviewTarget=(target)=>!!target.closest?.('.quick-previewable,video[data-video-thumb],.video-thumb');
+      const hide=()=>{
+        pop.classList.remove('show','video');
+        try{ previewVideo.pause(); }catch(error){}
+      };
+      const position=(target)=>{
+        const rect=target.getBoundingClientRect();
+        pop.style.left=`${Math.min(rect.right+10, innerWidth-340)}px`;
+        pop.style.top=`${Math.max(8, Math.min(rect.top, innerHeight-280))}px`;
+      };
+      if(!state.previewMouseBound){
+        state.previewMouseBound=true;
+        document.addEventListener('mousemove', event=>{
+          if(!isPreviewTarget(event.target)) hide();
+        });
+      }
+      $$('.quick-previewable').forEach(el=>{
+        if(el.dataset.previewBound) return;
+        el.dataset.previewBound='1';
+        el.addEventListener('mouseenter',()=>{
+          if(el.closest('#ideaModalBox')) return;
+          const src=el.dataset.previewImage || el.src;
+          if(!src) return;
+          pop.classList.remove('video');
+          try{ previewVideo.pause(); }catch(error){}
+          img.src=src;
+          position(el);
+          pop.classList.add('show');
+        });
+        el.addEventListener('mouseleave',hide);
+      });
+      $$('video[data-video-thumb]').forEach(video=>{
+        if(video.dataset.hoverPreviewBound) return;
+        video.dataset.hoverPreviewBound='1';
+        const target=video.closest('.video-thumb') || video;
+        target.addEventListener('mouseenter',()=>{
+          if(video.closest('#ideaModalBox') || video.closest('.quick-form') || video.closest('.video-thumb.failed') || video.readyState<2) return;
+          const src=video.currentSrc || video.src;
+          if(!src) return;
+          pop.classList.add('video');
+          img.removeAttribute('src');
+          if(previewVideo.src!==src){
+            previewVideo.src=src;
+            try{ previewVideo.load(); }catch(error){}
+          }
+          try{
+            const t=Number.isFinite(video.currentTime) && video.currentTime>0 ? video.currentTime : 0.1;
+            if(previewVideo.readyState>=1) previewVideo.currentTime=t;
+          }catch(error){}
+          position(target);
+          pop.classList.add('show');
+        });
+        target.addEventListener('mouseleave',hide);
+      });
+    }
+    function bindTopTextareaResize(handle, textarea, boundsElement, options={}){
+      if(!handle || !textarea || handle.dataset.topResizeBound) return;
+      handle.dataset.topResizeBound='1';
+      const min=Number(options.min || 52);
+      let pointerId=null;
+      let startY=0;
+      let startHeight=0;
+      const maxHeight=()=>{
+        const base=boundsElement?.getBoundingClientRect?.().height || innerHeight;
+        return Math.max(min, Math.floor(base * 0.5));
+      };
+      const applyY=(clientY)=>{
+        const next=Math.max(min, Math.min(maxHeight(), startHeight + (startY - clientY)));
+        textarea.style.height=`${next}px`;
+      };
+      const apply=(event)=>{
+        if(pointerId===null || event.pointerId!==pointerId) return;
+        applyY(event.clientY);
+      };
+      const stop=(event)=>{
+        if(pointerId===null || (event && event.pointerId!==pointerId)) return;
+        try{ handle.releasePointerCapture(pointerId); }catch(error){}
+        pointerId=null;
+        document.body.style.userSelect='';
+      };
+      handle.addEventListener('pointerdown', event=>{
+        if(event.pointerType==='mouse') return;
+        if(event.button!==0) return;
+        event.preventDefault();
+        pointerId=event.pointerId;
+        startY=event.clientY;
+        startHeight=textarea.getBoundingClientRect().height;
+        document.body.style.userSelect='none';
+        try{ handle.setPointerCapture(pointerId); }catch(error){}
+      });
+      handle.addEventListener('pointermove', apply);
+      handle.addEventListener('pointerup', stop);
+      handle.addEventListener('pointercancel', stop);
+      const mouseMove=(event)=>{
+        if(pointerId!=='mouse') return;
+        applyY(event.clientY);
+      };
+      const mouseUp=()=>{
+        if(pointerId!=='mouse') return;
+        pointerId=null;
+        document.body.style.userSelect='';
+        window.removeEventListener('mousemove', mouseMove);
+        window.removeEventListener('mouseup', mouseUp);
+      };
+      handle.addEventListener('mousedown', event=>{
+        if(event.button!==0 || pointerId!==null) return;
+        event.preventDefault();
+        pointerId='mouse';
+        startY=event.clientY;
+        startHeight=textarea.getBoundingClientRect().height;
+        document.body.style.userSelect='none';
+        window.addEventListener('mousemove', mouseMove);
+        window.addEventListener('mouseup', mouseUp);
+      });
+    }
+    $$('.tab').forEach(btn=>btn.onclick=()=>switchTab(btn.dataset.tab));
+    $('#picker').addEventListener('click', event=>{ if(event.target.id==='picker') $('#picker').classList.remove('show'); });
+    $('#recordFilters').onclick=(event)=>{
+      const btn=event.target.closest('[data-filter]');
+      if(!btn) return;
+      state.clipType=btn.dataset.filter;
+      renderRecords();
+    };
+    document.addEventListener('keydown', e=>{
+      if(e.key!=='Escape') return;
+      api.hideQuickPanel?.();
+    });
+    api.onClipboardRecords?.((records)=>{
+      state.records=Array.isArray(records) ? records : [];
+      if(state.tab==='clipboard') renderRecords();
+    });
+    api.onQuickRefresh?.(loadData);
+    api.onStickyPinState?.((ids)=>{
+      state.pinnedIds=new Set(Array.isArray(ids) ? ids : []);
+      if(state.tab==='clipboard') renderRecords();
+      if(state.tab==='notes') renderNotes();
+    });
+    api.onQuickHotkey?.((parts)=>{ state.hotkeyParts = (parts || []).map(part=>part.length===1 ? part.toUpperCase() : part); });
+    loadData();
+  </script>
+</body>
+</html>

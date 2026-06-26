@@ -1,0 +1,1351 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>玄念便签</title>
+  <style>
+    :root{--bg:#fff;--panel:#fff;--panel-soft:#f6f6f6;--text:#202020;--muted:#858585;--line:#e8e8e8;--black:#202020}
+    body.dark{--bg:#282828;--panel:#2f2f2f;--panel-soft:#262626;--text:#f5f5f5;--muted:#aaa;--line:#444;--black:#f5f5f5}
+    *{box-sizing:border-box}
+    html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent;font-family:"Microsoft YaHei UI","Microsoft YaHei",Arial,sans-serif;color:var(--text)}
+    body{padding:0}
+    .sticky-window{position:relative;width:100%;height:100%;border:1px solid transparent;border-radius:18px;background:var(--panel);box-shadow:0 18px 45px rgba(0,0,0,.18);overflow:hidden;display:flex;flex-direction:column}
+    .sticky-window.media-only:not(.controls-visible){background:transparent;box-shadow:none}
+    .sticky-window.controls-visible:not(.editing){border-color:var(--line)}
+    .topbar{height:38px;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 8px 6px 12px;-webkit-app-region:drag;flex:none;transition:opacity .14s ease,background-color .14s ease;position:relative;z-index:40}
+    .sticky-window:not(.editing) .topbar{position:absolute;left:0;right:0;top:0;z-index:12;opacity:0;background:transparent}
+    .sticky-window.controls-visible:not(.editing) .topbar,.sticky-window:not(.editing) .topbar:hover,.sticky-window:not(.editing) .topbar:focus-within{opacity:1;background:var(--panel)}
+    .sticky-window:not(.editing) .body{padding-top:42px}
+    .sticky-window:not(.editing) .body.image-only,
+    .sticky-window:not(.editing) .body.multi-media{padding-top:38px}
+    .title{font-weight:900;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:max-content}
+    .project-slot{flex:1;min-width:0;display:flex;justify-content:center;-webkit-app-region:no-drag}
+    .sticky-window:not(.editing) .project-slot{justify-content:flex-start;-webkit-app-region:drag;height:100%;align-items:center}
+    .project-select{width:min(190px,100%);height:28px;border:1px solid var(--line);border-radius:9px;background:var(--panel-soft);color:var(--text);padding:0 10px;font-size:12px;font-weight:800;outline:none}
+    .actions,.media-tools{display:flex;align-items:center;gap:6px;-webkit-app-region:no-drag;position:relative;z-index:42}
+    .topbar .title{ -webkit-app-region:drag }
+    button{border:0;background:none;color:inherit;font:inherit;cursor:pointer}
+    .icon-btn{width:28px;height:28px;border-radius:9px;display:grid;place-items:center;background:var(--panel-soft);border:1px solid var(--line)}
+    .icon-btn:hover{background:var(--line)}
+    .icon-btn svg{width:15px;height:15px;stroke:currentColor;fill:none;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+    .body{flex:1;min-height:0;overflow:auto;padding:8px 12px 14px}
+    .body.image-only{overflow:hidden;padding:0}
+    .body.single-media{overflow:hidden}
+    .body.multi-media{padding:0;overflow:hidden}
+    .body.multi-media.needs-scroll{overflow:auto}
+    .body.free-media-grid{padding:8px 12px 14px}
+    .view-content{min-height:0;display:flex;flex-direction:column;gap:10px}
+    .view-content.image-only{gap:0}
+    .text{font-size:15px;line-height:1.65;white-space:pre-wrap;word-break:break-word;cursor:pointer;max-width:100%;overflow:visible}
+    .empty{height:100%;display:grid;place-items:center;color:var(--muted);font-size:13px;text-align:center}
+    .attachments{display:block;width:100%;aspect-ratio:var(--image-ratio,1/1);flex:0 0 auto;margin:0}
+    .attachment{width:100%;height:100%;min-width:0;border:0;border-radius:12px;background:transparent;padding:0;display:flex;align-items:center;justify-content:center;min-height:0;overflow:hidden}
+    .attachment > img,.attachment > video,.attachment > .video-thumb,.attachment > .file-thumb,.attachment > .folder-thumb{width:100%;height:100%;border-radius:12px;border:0;background:#e8e8e8;object-fit:contain;display:grid;place-items:center;cursor:pointer}
+    .sticky-window.media-only:not(.controls-visible) .attachment > img,
+    .sticky-window.media-only:not(.controls-visible) .attachment > video,
+    .sticky-window.media-only:not(.controls-visible) .attachment > .video-thumb,
+    .sticky-window.media-only:not(.controls-visible) .attachment > .file-thumb,
+    .sticky-window.media-only:not(.controls-visible) .attachment > .folder-thumb{background:transparent}
+    .attachment > img{opacity:var(--media-opacity,1)}
+    .attachment > img{transform:scaleX(var(--media-mirror,1)) rotate(var(--media-rotate,0deg)) scale(var(--rotate-scale,1));transition:transform .12s ease,opacity .12s ease}
+    .view-content.single-image .attachment{position:relative;overflow:hidden}
+    .view-content.single-image .attachment > img:not(.native-file-icon){position:absolute;left:50%;top:50%;width:var(--fit-img-width,100%);height:var(--fit-img-height,100%);max-width:none;max-height:none;object-fit:fill;transform-origin:center center;transform:translate(-50%,-50%) scaleX(var(--media-mirror,1)) rotate(var(--media-rotate,0deg));}
+    body.dark .attachment > img,body.dark .attachment > video,body.dark .attachment > .video-thumb,body.dark .attachment > .file-thumb,body.dark .attachment > .folder-thumb{background:#202020}
+    .attachment span.name{display:none}
+    .attachment.has-caption{flex-direction:column;background:var(--panel-soft);overflow:hidden}
+    .attachment.has-caption > img,.attachment.has-caption > video,.attachment.has-caption > .video-thumb,.attachment.has-caption > .file-thumb,.attachment.has-caption > .folder-thumb{height:calc(100% - 22px);min-height:0;border-radius:12px 12px 0 0;background:transparent}
+    .attachment.has-caption span.name{display:block;flex:0 0 22px;line-height:22px;padding:0 6px;font-size:10px;font-weight:800;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:center;background:var(--panel-soft)}
+    .view-content.multi-attachments .attachments{display:flex;flex-direction:column;gap:0;aspect-ratio:var(--multi-ratio,1);align-content:start;overflow:hidden}
+    .attachment-row{display:flex;gap:0;min-height:0;flex:0 0 var(--row-height,50%);height:var(--row-height,50%);align-items:stretch}
+    .view-content.multi-attachments .attachment{height:100%;min-height:0;border-radius:0;overflow:hidden;flex:0 0 var(--item-width,50%);width:var(--item-width,50%);aspect-ratio:auto}
+    .view-content.multi-attachments .attachment > img,.view-content.multi-attachments .attachment > video,.view-content.multi-attachments .attachment > .video-thumb,.view-content.multi-attachments .attachment > .file-thumb,.view-content.multi-attachments .attachment > .folder-thumb{height:100%;border-radius:0;background:transparent;object-fit:contain}
+    .view-content.multi-attachments .attachment.has-caption > img,.view-content.multi-attachments .attachment.has-caption > video,.view-content.multi-attachments .attachment.has-caption > .video-thumb,.view-content.multi-attachments .attachment.has-caption > .file-thumb,.view-content.multi-attachments .attachment.has-caption > .folder-thumb{height:calc(100% - 22px)}
+    .view-content.has-image:not(.image-only) .attachments{margin-top:6px}
+    .view-content.multi-attachments .attachment .video-thumb video{object-fit:contain}
+    .view-content.free-attachments .attachments{display:grid;grid-template-columns:repeat(auto-fill,112px);grid-auto-rows:112px;gap:8px;align-content:start;justify-content:start;aspect-ratio:auto;overflow:visible}
+    .view-content.free-attachments .attachment{width:100%;height:112px;min-height:0;overflow:hidden;border-radius:10px;background:var(--panel-soft);aspect-ratio:auto}
+    .view-content.free-attachments .attachment > img,.view-content.free-attachments .attachment > video,.view-content.free-attachments .attachment > .video-thumb,.view-content.free-attachments .attachment > .file-thumb,.view-content.free-attachments .attachment > .folder-thumb{height:100%;border-radius:10px;object-fit:contain;background:transparent}
+    .view-content.free-attachments .attachment.has-caption > img,.view-content.free-attachments .attachment.has-caption > video,.view-content.free-attachments .attachment.has-caption > .video-thumb,.view-content.free-attachments .attachment.has-caption > .file-thumb,.view-content.free-attachments .attachment.has-caption > .folder-thumb{height:88px;border-radius:10px 10px 0 0}
+    .view-content.free-attachments .attachment.has-caption span.name{height:24px;flex-basis:24px;line-height:24px}
+    .video-thumb{position:relative;overflow:hidden;display:block}
+    .video-thumb video{width:100%;height:100%;object-fit:contain;border:0;background:transparent}
+    .video-badge{position:absolute;right:6px;bottom:5px;background:rgba(0,0,0,.62);color:#fff;border-radius:999px;font-size:9px;line-height:1;padding:4px 5px;z-index:2}
+    .play-btn{position:absolute;right:6px;bottom:5px;z-index:3;width:22px;height:22px;border-radius:999px;background:rgba(0,0,0,.62);color:#fff;display:grid;place-items:center;font-size:10px;line-height:1;-webkit-app-region:no-drag}
+    .file-thumb{position:relative;font-size:13px;font-weight:900;color:var(--muted);text-transform:uppercase;background-position:center;background-repeat:no-repeat;background-size:contain}
+    .file-thumb.generic-file:before{content:"";position:absolute;left:28%;top:16%;width:42%;height:54%;border:3px solid #8d8d8d;border-radius:4px;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.08)}
+    .file-thumb.generic-file:after{content:"";position:absolute;left:54%;top:16%;width:14%;height:14%;border-left:3px solid #8d8d8d;border-bottom:3px solid #8d8d8d;background:#efefef}
+    .file-thumb.doc-thumb:before{border-color:#2f7be8}
+    .file-thumb.doc-thumb .file-label,.file-thumb.text-thumb .file-label,.file-thumb.pdf-thumb .file-label,.file-thumb.archive-thumb .file-label,.file-thumb.file-group-thumb .file-label{position:absolute;left:50%;top:43%;transform:translate(-50%,-50%);z-index:2;padding:2px 6px;border-radius:6px;background:#2f7be8;color:#fff;font-size:17px;line-height:1;font-weight:900}
+    .file-thumb.text-thumb:before{border-color:#767676}
+    .file-thumb.text-thumb .file-label{background:#767676;font-size:14px}
+    .file-thumb.pdf-thumb:before{border-color:#df4f45}
+    .file-thumb.pdf-thumb .file-label{background:#df4f45;font-size:13px}
+    .file-thumb.archive-thumb:before{border-color:#9a69d8}
+    .file-thumb.archive-thumb .file-label{background:#9a69d8;font-size:12px}
+    .file-thumb.file-group-thumb:before{left:24%;top:18%;width:48%;height:48%;border-color:#7f8da3}
+    .file-thumb.file-group-thumb .file-label{background:#7f8da3;font-size:13px}
+    .file-thumb.shortcut-thumb:before{border-color:#8e8e8e}
+    .file-thumb.shortcut-thumb:after{content:"↗";position:absolute;left:26%;top:51%;width:22px;height:22px;border:2px solid #d8e8ff;border-radius:4px;background:#fff;color:#1f9bd7;font-size:18px;line-height:17px;text-align:center;font-weight:900}
+    .file-thumb.audio-thumb:before,.file-thumb.video-file-thumb:before{content:"";position:absolute;left:25%;top:22%;width:50%;height:42%;border-radius:10px;background:#dedede}
+    .file-thumb.audio-thumb:after{content:"♪";position:absolute;left:0;right:0;top:30%;text-align:center;font-size:34px;line-height:1;color:#777}
+    .file-thumb.video-file-thumb:after{content:"▶";position:absolute;left:0;right:0;top:31%;text-align:center;font-size:30px;line-height:1;color:#666}
+    .file-thumb.has-native-icon{background-color:transparent}
+    .file-thumb.has-native-icon:before,.file-thumb.has-native-icon:after{display:none}
+    .file-thumb.has-native-icon .file-label{display:none}
+    .native-file-icon{width:70%;height:70%;object-fit:contain;background:transparent;border:0;border-radius:0;pointer-events:none}
+    .folder-thumb{position:relative;background:transparent}
+    .folder-thumb.has-native-icon{display:grid;place-items:center}
+    .folder-thumb.has-native-icon:before,.folder-thumb.has-native-icon:after{display:none}
+    .folder-thumb:before{content:"";position:absolute;left:17%;top:25%;width:35%;height:14%;border-radius:8px 8px 0 0;background:linear-gradient(180deg,#ffd966,#f1be30);box-shadow:0 1px 0 rgba(255,255,255,.45) inset}
+    .folder-thumb:after{content:"";position:absolute;left:12%;top:35%;width:76%;height:45%;border-radius:9px;background:linear-gradient(180deg,#ffd65f 0%,#f4b728 100%);box-shadow:inset 0 0 0 2px rgba(155,108,0,.12),0 4px 10px rgba(0,0,0,.1)}
+    .editor{display:flex;flex-direction:column;gap:10px;height:100%}
+    textarea{width:100%;min-height:98px;flex:1;resize:none;border:1px solid var(--line);border-radius:14px;background:var(--panel-soft);color:var(--text);padding:12px;font:inherit;line-height:1.6;outline:none}
+    .edit-attachments{display:grid;grid-template-columns:repeat(auto-fill,80px);gap:8px;max-height:142px;overflow:auto;padding-right:2px}
+    .edit-attachment{position:relative;width:80px;height:88px;border:1px solid var(--line);border-radius:12px;background:var(--panel-soft);padding:5px;display:flex;flex-direction:column;gap:4px}
+    .edit-attachment img,.edit-attachment video,.edit-attachment .video-thumb,.edit-attachment .file-thumb,.edit-attachment .folder-thumb{width:100%;height:58px;border-radius:8px;object-fit:contain;border:1px solid var(--line);background:#e8e8e8}
+    .edit-attachment b{font-size:9px;line-height:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .remove{position:absolute;right:2px;top:2px;width:18px;height:18px;border-radius:999px;background:rgba(0,0,0,.65);color:#fff;display:grid;place-items:center;font-size:13px}
+    .upload-row{display:flex;align-items:center;justify-content:space-between;gap:8px;flex:none}
+    .hint{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .primary{height:34px;border-radius:11px;padding:0 14px;background:var(--black);color:var(--panel);font-weight:800}
+    .secondary{height:34px;border-radius:11px;padding:0 14px;background:var(--panel-soft);color:var(--text);border:1px solid var(--line);font-weight:800}
+    .save-actions{display:flex;align-items:center;gap:8px}
+    body.dark .primary{background:#f5f5f5;color:#202020}
+    button,input,textarea,select,.actions,.media-tools,.save-actions,.edit-attachment,.attachment,.opacity-panel,.collect-card{ -webkit-app-region:no-drag; pointer-events:auto; }
+    .resize-handle{position:fixed;z-index:12;-webkit-app-region:no-drag}
+    .resize-handle.n{top:0;left:12px;right:12px;height:7px;cursor:ns-resize}
+    .resize-handle.s{bottom:0;left:12px;right:12px;height:7px;cursor:ns-resize}
+    .resize-handle.e{right:0;top:12px;bottom:12px;width:7px;cursor:ew-resize}
+    .resize-handle.w{left:0;top:12px;bottom:12px;width:7px;cursor:ew-resize}
+    .resize-handle.ne{right:0;top:0;width:14px;height:14px;cursor:nesw-resize}
+    .resize-handle.nw{left:0;top:0;width:14px;height:14px;cursor:nwse-resize}
+    .resize-handle.se{right:0;bottom:0;width:14px;height:14px;cursor:nwse-resize}
+    .resize-handle.sw{left:0;bottom:0;width:14px;height:14px;cursor:nesw-resize}
+    .toast{position:fixed;left:50%;bottom:12px;z-index:30;min-width:86px;max-width:calc(100% - 28px);padding:8px 12px;border-radius:999px;background:rgba(32,32,32,.88);color:#fff;font-size:12px;font-weight:800;text-align:center;box-shadow:0 10px 28px rgba(0,0,0,.18);opacity:0;transform:translate(-50%,8px);pointer-events:none;transition:opacity .16s ease,transform .16s ease}
+    body.dark .toast{background:rgba(245,245,245,.92);color:#202020}
+    .toast.show{opacity:1;transform:translate(-50%,0)}
+    .opacity-panel{position:absolute;left:54px;top:34px;z-index:24;width:150px;padding:9px;border:1px solid var(--line);border-radius:12px;background:var(--panel);box-shadow:0 14px 36px rgba(0,0,0,.22);opacity:0;pointer-events:none;transition:opacity .14s ease;-webkit-app-region:no-drag}
+    .sticky-window.show-opacity .opacity-panel{opacity:1;pointer-events:auto}
+    .opacity-panel input{width:100%}
+    .collect-card{width:min(330px,100%);border:1px solid var(--line);border-radius:16px;background:var(--panel);box-shadow:0 20px 55px rgba(0,0,0,.28);padding:16px}
+    .collect-card h3{margin:0 0 8px;font-size:16px}
+    .collect-card p{margin:0 0 12px;color:var(--muted);font-size:13px;line-height:1.6}
+    .collect-list{display:grid;gap:8px;max-height:min(260px,50vh);overflow:auto;padding-right:2px}
+    .collect-option{height:38px;border:1px solid var(--line);border-radius:12px;background:var(--panel-soft);color:var(--text);font-weight:800;text-align:left;padding:0 12px}
+    .collect-option:hover{background:var(--line)}
+    .collect-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
+    .confirm-overlay{position:fixed;inset:0;z-index:60;display:none;place-items:center;padding:18px;background:rgba(0,0,0,.38);-webkit-app-region:no-drag}
+    .confirm-overlay.show{display:grid}
+    .confirm-card{width:min(310px,100%);border:1px solid var(--line);border-radius:16px;background:var(--panel);box-shadow:0 20px 55px rgba(0,0,0,.28);padding:16px}
+    .confirm-card h3{margin:0 0 8px;font-size:16px}
+    .confirm-card p{margin:0;color:var(--muted);font-size:13px;line-height:1.6}
+    .confirm-card input{width:100%;height:38px;border:1px solid var(--line);border-radius:12px;background:var(--panel-soft);color:var(--text);padding:0 12px;font:inherit;outline:none}
+    .confirm-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
+  </style>
+</head>
+<body>
+  <div class="resize-handle n" data-resize-edge="n"></div>
+  <div class="resize-handle s" data-resize-edge="s"></div>
+  <div class="resize-handle e" data-resize-edge="e"></div>
+  <div class="resize-handle w" data-resize-edge="w"></div>
+  <div class="resize-handle ne" data-resize-edge="ne"></div>
+  <div class="resize-handle nw" data-resize-edge="nw"></div>
+  <div class="resize-handle se" data-resize-edge="se"></div>
+  <div class="resize-handle sw" data-resize-edge="sw"></div>
+  <main class="sticky-window">
+    <div class="topbar">
+      <div class="title" id="title">便签</div>
+      <div class="project-slot" id="projectSlot"></div>
+      <div class="actions" id="actions"></div>
+    </div>
+    <div class="opacity-panel" id="opacityPanel"><input type="range" id="opacityRange" min="0" max="100" value="100" /></div>
+    <section class="body" id="body"></section>
+  </main>
+  <div class="toast" id="toast"></div>
+  <div class="confirm-overlay" id="discardConfirm">
+    <div class="confirm-card">
+      <h3>放弃本次编辑？</h3>
+      <p>当前修改尚未保存，返回后会恢复到编辑前的状态。</p>
+      <div class="confirm-actions">
+        <button class="secondary" id="keepEditingBtn">继续编辑</button>
+        <button class="primary" id="discardEditingBtn">放弃修改</button>
+      </div>
+    </div>
+  </div>
+  <div class="confirm-overlay" id="toolsGuide">
+    <div class="confirm-card">
+      <h3>置顶便签小技巧</h3>
+      <p>鼠标靠近便签时可编辑、取消置顶、镜像、旋转和调整透明度。鼠标停在图片上时，按 X 镜像，按 R 旋转，按 Shift + 鼠标滚轮调节透明度。</p>
+      <div class="confirm-actions">
+        <button class="primary" id="closeToolsGuideBtn">知道了</button>
+      </div>
+    </div>
+  </div>
+  <div class="confirm-overlay" id="collectAfterSave">
+    <div class="collect-card">
+      <h3>保存到收藏？</h3>
+      <p>这条置顶便签来自剪切板。你可以选择一个收藏分类保存修改后的内容，也可以不收藏，仅完成便签保存。</p>
+      <div class="collect-list" id="collectProjectList"></div>
+      <div class="collect-actions">
+        <button class="secondary" id="skipCollectBtn">不收藏</button>
+      </div>
+    </div>
+  </div>
+  <div class="confirm-overlay" id="createProjectOverlay">
+    <div class="confirm-card">
+      <h3>新建便签分类</h3>
+      <input id="newStickyProjectName" placeholder="分类名称" />
+      <div class="confirm-actions">
+        <button class="secondary" id="cancelCreateProjectBtn">取消</button>
+        <button class="primary" id="confirmCreateProjectBtn">创建</button>
+      </div>
+    </div>
+  </div>
+  <input type="file" id="fileInput" hidden multiple />
+  <script>
+    const api=window.nativeAPI;
+    const params=new URLSearchParams(location.search);
+    const FREE_GRID_DEFAULT_COLUMNS=3;
+    const FREE_GRID_ITEM_SIZE=112;
+    const FREE_GRID_GAP=8;
+    const FREE_GRID_DEFAULT_HEIGHT=360;
+    const TEMP_STICKY_PROJECT_ID='__temporary_sticky__';
+    const NEW_STICKY_PROJECT_ID='__new_sticky_project__';
+    const state={id:params.get('id')||'',source:params.get('source')==='sticky'?'sticky':'note',edit:params.get('edit')==='1'||!params.get('id'),notes:[],note:null,projects:[],projectId:'',attachments:[],text:'',fitApplied:false,editBaseline:'',saving:false,mirror:false,rotation:0,opacity:1,hoveringMedia:false,settings:{},verticalExpanded:false,temporarySaved:false};
+    let lastFocusAt=0;
+    let controlsHideTimer=0;
+    let opacityHideTimer=0;
+    let controlsWatchTimer=0;
+    const $=s=>document.querySelector(s);
+    const $$=s=>Array.from(document.querySelectorAll(s));
+    function escapeHtml(str=''){return String(str).replace(/[&<>'"]/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[m]));}
+    function icon(name){
+      const map={
+        edit:'<svg viewBox="0 0 24 24"><path d="M12 20h9"></path><path d="M16.5 3.5a2.1 2.1 0 1 1 3 3L7 19l-4 1 1-4 12.5-12.5Z"></path></svg>',
+        back:'<svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"></path><path d="M9 12h10"></path></svg>',
+        close:'<svg viewBox="0 0 24 24"><path d="M6 6l12 12"></path><path d="M18 6 6 18"></path></svg>',
+        pinOff:'<svg viewBox="0 0 24 24"><path d="m3 3 18 18"></path><path d="M9 4h6"></path><path d="M10 4l1 6-2.2 2.2"></path><path d="M14.6 14.6H17v-2l-4-4 1-4"></path><path d="M12 16v5"></path></svg>',
+        mirror:'<svg viewBox="0 0 24 24"><path d="M12 4v16"></path><path d="M4 7h5v10H4Z"></path><path d="M20 7h-5v10h5Z"></path></svg>',
+        rotate:'<svg viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-3-6.7"></path><path d="M21 4v8h-8"></path></svg>',
+        opacity:'<svg viewBox="0 0 24 24"><path d="M12 3s7 7.1 7 12a7 7 0 0 1-14 0c0-4.9 7-12 7-12Z"></path></svg>',
+        expandY:'<svg viewBox="0 0 24 24"><path d="M12 3v18"></path><path d="m8 7 4-4 4 4"></path><path d="m8 17 4 4 4-4"></path></svg>',
+        collapseY:'<svg viewBox="0 0 24 24"><path d="M12 3v18"></path><path d="m16 8-4 4-4-4"></path><path d="m16 16-4-4-4 4"></path></svg>',
+        paperclip:'<svg viewBox="0 0 24 24"><path d="m21.4 11.6-8.9 8.9a6 6 0 0 1-8.5-8.5l9.5-9.5a4 4 0 0 1 5.7 5.7l-9.6 9.6a2 2 0 0 1-2.8-2.8l8.9-8.9"></path></svg>'
+      };
+      return map[name]||'';
+    }
+    function attachmentKindFromPath(value=''){
+      const v=String(value).split('?')[0];
+      if(/\.(png|jpe?g|gif|webp|bmp|tiff?)$/i.test(v)) return 'image';
+      if(/\.(mp4|mov|m4v|avi|mkv|webm|wmv|flv|mpeg|mpg)$/i.test(v)) return 'video';
+      if(/\.(mp3|wav|m4a|aac|flac|ogg|wma)$/i.test(v)) return 'audio';
+      return 'file';
+    }
+    function label(item){return item?.name||String(item?.path||'').split(/[\\/]/).pop()||'附件';}
+    function src(item){if(item?.dataUrl)return item.dataUrl;if(item?.preview)return item.preview;if(item?.path)return `file:///${String(item.path).replace(/\\/g,'/')}`;return '';}
+    function filePathOf(item){
+      if(item?.path) return String(item.path);
+      const value=String(item?.preview||'');
+      if(/^file:\/\//i.test(value)){
+        try{return decodeURIComponent(value.replace(/^file:\/\/\/?/i,'')).replace(/\//g,'\\');}catch{return value;}
+      }
+      return '';
+    }
+    function iconPathAttr(item){
+      const value=filePathOf(item);
+      return value ? ` data-icon-path="${escapeHtml(value)}"` : '';
+    }
+    function isFolder(item){const name=label(item);return item?.kind==='folder'||(!/\.[^.\s\\/]+$/.test(name)&&!!item?.path);}
+    function videoThumb(url){return `<span class="video-thumb"><video data-video-thumb src="${escapeHtml(url)}" preload="metadata" muted playsinline></video><button class="play-btn" data-open-media title="打开播放">▶</button></span>`;}
+    function fileThumbClass(item,ext=''){
+      const lower=String(ext || item?.ext || label(item).split('.').pop() || '').toLowerCase();
+      if(item?.kind==='group') return 'file-thumb generic-file file-group-thumb';
+      if(lower==='lnk' || lower==='url') return 'file-thumb generic-file shortcut-thumb';
+      if(['doc','docx','wps','rtf'].includes(lower)) return 'file-thumb generic-file doc-thumb';
+      if(['txt','md','json','xml','csv','log'].includes(lower)) return 'file-thumb generic-file text-thumb';
+      if(lower==='pdf') return 'file-thumb generic-file pdf-thumb';
+      if(['zip','rar','7z','tar','gz'].includes(lower)) return 'file-thumb generic-file archive-thumb';
+      if(item?.kind==='audio') return 'file-thumb audio-thumb';
+      if(item?.kind==='video') return 'file-thumb video-file-thumb';
+      return 'file-thumb generic-file';
+    }
+    function shouldUseNativeFileIcon(item,ext=''){
+      if(!item || item.kind==='group') return false;
+      const lower=String(ext || item.ext || label(item).split('.').pop() || '').toLowerCase();
+      if(['lnk','url','doc','docx','wps','rtf','txt','md','json','xml','csv','log','pdf','zip','rar','7z','tar','gz'].includes(lower)) return false;
+      return false;
+    }
+    function attachmentClass(item,edit=false){
+      if(edit) return 'edit-attachment';
+      const kind=isFolder(item) ? 'folder' : (item?.kind || 'file');
+      return `attachment kind-${kind}${kind==='image'?'':' has-caption'}`;
+    }
+    function attachmentMarkup(item,edit=false,index=0){
+      const name=escapeHtml(label(item));
+      const remove=edit?`<button class="remove" data-remove="${index}">×</button>`:'';
+      const cls=attachmentClass(item,edit);
+      if(item?.kind==='image'&&(item.dataUrl||item.path||item.preview)) return `<div class="${cls}" data-attachment-index="${index}"><img src="${escapeHtml(src(item))}" alt="${name}">${remove}<${edit?'b':'span class="name"'}>${name}</${edit?'b':'span'}></div>`;
+      if(item?.kind==='video'&&(item.dataUrl||item.path||item.preview)) return `<div class="${cls}" data-attachment-index="${index}">${videoThumb(src(item))}${remove}<${edit?'b':'span class="name"'}>${name}</${edit?'b':'span'}></div>`;
+      if(isFolder(item)) return `<div class="${cls}" data-attachment-index="${index}"><span class="folder-thumb"></span>${remove}<${edit?'b':'span class="name"'}>${name}</${edit?'b':'span'}></div>`;
+      const ext=escapeHtml((item?.ext||String(name).split('.').pop()||'file').slice(0,8));
+      const nativeAttr=shouldUseNativeFileIcon(item,ext) ? iconPathAttr(item) : '';
+      return `<div class="${cls}" data-attachment-index="${index}"><span class="${fileThumbClass(item,ext)}"${nativeAttr}><span class="file-label">${item?.kind==='group'?'FILES':ext}</span></span>${remove}<${edit?'b':'span class="name"'}>${name}</${edit?'b':'span'}></div>`;
+    }
+    function sortAttachments(list=[]){
+      const rank=a=>a?.kind==='image'?0:a?.kind==='video'?1:a?.kind==='audio'?2:isFolder(a)?3:4;
+      return [...list].sort((a,b)=>rank(a)-rank(b));
+    }
+    function isMediaOnlyAttachmentSet(list=[]){
+      return !!list.length && list.every(item=>item?.kind==='image'||item?.kind==='video');
+    }
+    function usesFreeAttachmentGrid(list=[]){
+      return list.length>6 && !isMediaOnlyAttachmentSet(list);
+    }
+    function displayAttachments(list=[]){
+      const items=sortAttachments(list).filter(Boolean);
+      return items;
+      const visualCount=items.filter(item=>item?.kind==='image'||item?.kind==='video').length;
+      if(items.length>18 && visualCount===0){
+        const files=items.map(filePathOf).filter(Boolean);
+        return [{
+          kind:'group',
+          name:`${items.length} 个文件`,
+          files,
+          path:files[0]||'',
+          ext:'files'
+        }];
+      }
+      return items;
+    }
+    function attachmentRowsMarkup(list=[]){
+      const rows=[];
+      for(let i=0;i<list.length;i+=2){
+        rows.push(`<div class="attachment-row">${list.slice(i,i+2).map((item,offset)=>attachmentMarkup(item,false,i+offset)).join('')}</div>`);
+      }
+      return rows.join('');
+    }
+    function attachmentGridMarkup(list=[]){
+      return list.map((item,index)=>attachmentMarkup(item,false,index)).join('');
+    }
+    function hasImageAttachments(list=state.note?.attachments||[]){
+      return (list||[]).some(item=>item?.kind==='image'&&(item.dataUrl||item.path||item.preview));
+    }
+    function rotatedImageRatio(width,height){
+      const raw=Number(width)/Number(height);
+      if(!(raw>0)) return 1;
+      return Math.abs(Number(state.rotation)||0)%180===90 ? 1/raw : raw;
+    }
+    function imageRotateScale(width,height){
+      return 1;
+    }
+    function singleImageElement(){
+      return $('.view-content.single-image .attachment > img:not(.native-file-icon)');
+    }
+    function updateSingleImageFit(){
+      const img=singleImageElement();
+      const box=$('.view-content.single-image .attachment');
+      if(!img||!box||!img.naturalWidth||!img.naturalHeight) return;
+      const rect=box.getBoundingClientRect();
+      if(!(rect.width>0&&rect.height>0)) return;
+      const rotated=Math.abs(Number(state.rotation)||0)%180===90;
+      const maxWidth=rotated ? rect.height : rect.width;
+      const maxHeight=rotated ? rect.width : rect.height;
+      const scale=Math.min(maxWidth/img.naturalWidth,maxHeight/img.naturalHeight);
+      if(!(scale>0)) return;
+      img.style.setProperty('--fit-img-width',`${Math.max(1,Math.round(img.naturalWidth*scale))}px`);
+      img.style.setProperty('--fit-img-height',`${Math.max(1,Math.round(img.naturalHeight*scale))}px`);
+    }
+    function attachmentElementRatio(card){
+      const img=card?.querySelector?.('img:not(.native-file-icon)');
+      if(img?.naturalWidth&&img?.naturalHeight){
+        img.style.setProperty('--rotate-scale',String(imageRotateScale(img.naturalWidth,img.naturalHeight)));
+        return rotatedImageRatio(img.naturalWidth,img.naturalHeight);
+      }
+      const video=card?.querySelector?.('video');
+      if(video?.videoWidth&&video?.videoHeight) return video.videoWidth/video.videoHeight;
+      const value=Number(card?.style?.getPropertyValue('--item-ratio'));
+      return value>0 ? value : 1;
+    }
+    function clampAttachmentRatio(value){
+      const ratio=Number(value);
+      if(!(ratio>0)) return 1;
+      return Math.max(0.28,Math.min(4.2,ratio));
+    }
+    function syncMultiAttachmentLayout(){
+      const wrap=$('.view-content.multi-attachments .attachments');
+      if(!wrap) return 0;
+      const rows=$$('.view-content.multi-attachments .attachment-row');
+      if(!rows.length) return 1;
+      const rowData=rows.map(row=>{
+        const cards=Array.from(row.querySelectorAll('.attachment'));
+        const ratios=cards.map(card=>clampAttachmentRatio(attachmentElementRatio(card)));
+        const rowRatio=Math.max(0.28,ratios.reduce((sum,value)=>sum+value,0)||1);
+        return {row,cards,ratios,rowRatio};
+      });
+      const maxRowRatio=Math.max(...rowData.map(item=>item.rowRatio),1);
+      const rowHeight=`${100/rowData.length}%`;
+      rowData.forEach(({row,cards,ratios})=>{
+        row.style.setProperty('--row-height',rowHeight);
+        cards.forEach((card,index)=>{
+          const width=Math.max(6,Math.min(100,(ratios[index]||1)/maxRowRatio*100));
+          card.style.setProperty('--item-width',`${width}%`);
+          card.style.setProperty('--item-ratio',String(ratios[index]||1));
+        });
+      });
+      const ratio=maxRowRatio/rowData.length;
+      wrap.style.setProperty('--multi-ratio',String(ratio));
+      return ratio;
+    }
+    async function copyAttachment(item){
+      if(!item) return false;
+      if(item.kind==='group' && Array.isArray(item.files) && item.files.length){
+        return api.copyFileToClipboard?.(item.files,'copy');
+      }
+      if(item.kind==='image'&&(item.dataUrl||item.path||item.preview)){
+        return api.copyImage?.(src(item));
+      }
+      const filePath=filePathOf(item);
+      if(filePath) return api.copyFileToClipboard?.(filePath,'copy');
+      return false;
+    }
+    async function openAttachment(item){
+      if(item?.kind==='group' && Array.isArray(item.files) && item.files.length){
+        return api.openPath?.(item.files[0]);
+      }
+      const filePath=filePathOf(item);
+      if(!filePath) return false;
+      return api.openPath?.(filePath);
+    }
+    function toast(message){
+      const el=$('#toast');
+      if(!el) return;
+      el.textContent=message;
+      el.classList.add('show');
+      clearTimeout(toast.timer);
+      toast.timer=setTimeout(()=>el.classList.remove('show'),1200);
+    }
+    function normalizeShortcut(value){
+      const parts=String(value||'').trim().split('+').map(item=>item.trim()).filter(Boolean);
+      if(!parts.length) return '';
+      const mods=[];
+      let key='';
+      for(const part of parts){
+        const low=part.toLowerCase();
+        if(low==='ctrl'||low==='control') mods.push('Ctrl');
+        else if(low==='meta'||low==='cmd'||low==='command'||low==='win') mods.push('Meta');
+        else if(low==='alt'||low==='option') mods.push('Alt');
+        else if(low==='shift') mods.push('Shift');
+        else if(low==='space'||low==='spacebar'||low==='空格') key='Space';
+        else if(low==='wheel'||low==='mousewheel'||low==='滚轮') key='Wheel';
+        else key=part.length===1 ? part.toUpperCase() : part;
+      }
+      return [...new Set(['Ctrl','Meta','Alt','Shift'].filter(item=>mods.includes(item))), key].filter(Boolean).join('+');
+    }
+    function hotkeyEventName(event){
+      const key=event.code==='Space' || event.key===' ' || event.key==='Spacebar' ? 'Space' : (event.key.length===1 ? event.key.toUpperCase() : event.key);
+      return [
+        event.ctrlKey ? 'Ctrl' : '',
+        event.metaKey ? 'Meta' : '',
+        event.altKey ? 'Alt' : '',
+        event.shiftKey ? 'Shift' : '',
+        key
+      ].filter(Boolean).join('+');
+    }
+    function wheelHotkeyEventName(event){
+      return [
+        event.ctrlKey ? 'Ctrl' : '',
+        event.metaKey ? 'Meta' : '',
+        event.altKey ? 'Alt' : '',
+        event.shiftKey ? 'Shift' : '',
+        'Wheel'
+      ].filter(Boolean).join('+');
+    }
+    function matchesShortcut(event, configured, fallback){
+      return normalizeShortcut(configured || fallback) === normalizeShortcut(hotkeyEventName(event));
+    }
+    function matchesWheelShortcut(event, configured, fallback){
+      return normalizeShortcut(configured || fallback) === normalizeShortcut(wheelHotkeyEventName(event));
+    }
+    function showControls(){
+      const root=$('.sticky-window');
+      if(!root || state.edit) return;
+      clearTimeout(controlsHideTimer);
+      root.classList.add('controls-visible');
+      scheduleControlsWatch();
+    }
+    function hideControlsNow(){
+      const root=$('.sticky-window');
+      clearTimeout(controlsHideTimer);
+      clearTimeout(opacityHideTimer);
+      clearTimeout(controlsWatchTimer);
+      controlsWatchTimer=0;
+      root?.classList.remove('controls-visible','show-opacity');
+      state.hoveringMedia=false;
+    }
+    function hideControlsSoon(delay=110){
+      clearTimeout(controlsHideTimer);
+      controlsHideTimer=setTimeout(hideControlsNow,delay);
+    }
+    function scheduleOpacityHide(delay=9000){
+      clearTimeout(opacityHideTimer);
+      opacityHideTimer=setTimeout(()=>{
+        $('.sticky-window')?.classList.remove('show-opacity');
+      },delay);
+    }
+    function containsPoint(el,x,y,padding=0){
+      if(!el) return false;
+      const rect=el.getBoundingClientRect();
+      return x>=rect.left-padding && x<=rect.right+padding && y>=rect.top-padding && y<=rect.bottom+padding;
+    }
+    function isPointOverMediaSurface(x,y){
+      return $$('.attachments,.attachment,.attachment img,.attachment video,.attachment .video-thumb,.attachment .file-thumb,.attachment .folder-thumb')
+        .some(el=>containsPoint(el,x,y,1));
+    }
+    function isPointOverToolbarSurface(x,y){
+      const root=$('.sticky-window');
+      const opacityPadding=root?.classList.contains('show-opacity') ? 18 : 0;
+      return containsPoint($('.topbar'),x,y,4) || containsPoint($('#opacityPanel'),x,y,opacityPadding);
+    }
+    function isPointOverActiveSurface(event){
+      if(!event) return false;
+      return isPointOverMediaSurface(event.clientX,event.clientY) || isPointOverToolbarSurface(event.clientX,event.clientY);
+    }
+    function updateControlsFromPointer(event){
+      if(state.edit) return;
+      if(isPointOverActiveSurface(event)){
+        state.hoveringMedia=true;
+        showControls();
+      }else{
+        hideControlsNow();
+      }
+    }
+    function scheduleControlsWatch(delay=120){
+      clearTimeout(controlsWatchTimer);
+      if(state.edit) return;
+      controlsWatchTimer=setTimeout(checkControlsHoverState,delay);
+    }
+    async function checkControlsHoverState(){
+      controlsWatchTimer=0;
+      const root=$('.sticky-window');
+      if(!root || state.edit || !root.classList.contains('controls-visible')) return;
+      const status=await api.getStickyPointerStatus?.().catch(()=>null);
+      if(!status) return;
+      const event={clientX:Number(status.x),clientY:Number(status.y)};
+      if(!status.insideWindow || !isPointOverActiveSurface(event)){
+        hideControlsNow();
+        return;
+      }
+      state.hoveringMedia=true;
+      scheduleControlsWatch();
+    }
+    function toggleOpacityPanel(){
+      const root=$('.sticky-window');
+      if(!root || !hasImageAttachments()) return;
+      showControls();
+      root.classList.toggle('show-opacity');
+      if(root.classList.contains('show-opacity')) clearTimeout(opacityHideTimer);
+    }
+    function applyMediaTransform(){
+      const root=$('.sticky-window');
+      if(!root) return;
+      root.style.setProperty('--media-mirror', state.mirror ? '-1' : '1');
+      root.style.setProperty('--media-rotate', `${state.rotation}deg`);
+      root.style.setProperty('--media-opacity', String(state.opacity));
+      root.classList.toggle('image-rotated', Math.abs(Number(state.rotation)||0)%180===90);
+      const slider=$('#opacityRange');
+      if(slider) slider.value=String(Math.round(state.opacity*100));
+      requestAnimationFrame(updateSingleImageFit);
+    }
+    function toggleMirror(){ if(!hasImageAttachments()) return; state.mirror=!state.mirror; applyMediaTransform(); }
+    function rotateMedia(){ if(!hasImageAttachments()) return; state.rotation=(state.rotation+90)%360; state.fitApplied=false; applyMediaTransform(); updateAspectRatio(); }
+    function setMediaOpacity(value){
+      if(!hasImageAttachments()) return;
+      const next=Number(value);
+      state.opacity=Math.max(0, Math.min(1, Number.isFinite(next)?next:1));
+      applyMediaTransform();
+    }
+    function isLongStickyContent(text=state.note?.content||''){
+      const value=String(text||'').trim();
+      if(!value) return false;
+      const lines=value.split(/\r?\n/).length;
+      return Array.from(value).length>160 || lines>5;
+    }
+    function visibleTextExtraHeight(textRect){
+      const hasText=!!$('#copyText');
+      if(!hasText) return 0;
+      const measured=textRect?.height||0;
+      return isLongStickyContent() ? Math.min(112, measured || 112) : measured;
+    }
+    function bindMediaHotAreas(){
+      $$('.attachments,.attachment,.attachment img,.attachment video,.attachment .video-thumb,.attachment .file-thumb,.attachment .folder-thumb').forEach(el=>{
+        el.addEventListener('mouseenter',()=>{state.hoveringMedia=true;showControls();});
+        el.addEventListener('mousemove',()=>{state.hoveringMedia=true;showControls();});
+        el.addEventListener('mouseleave',event=>{
+          if(!isPointOverActiveSurface(event)) state.hoveringMedia=false;
+        });
+      });
+    }
+    function bindControlVisibility(){
+      const root=$('.sticky-window');
+      if(!root || root.dataset.controlsBound) return;
+      root.dataset.controlsBound='1';
+      root.addEventListener('mousemove',updateControlsFromPointer);
+      root.addEventListener('mouseleave',event=>{
+        if(isPointOverActiveSurface(event)) return;
+        hideControlsNow();
+      });
+      const keepVisible=()=>{state.hoveringMedia=true;showControls();};
+      const keepOpacityVisible=()=>{clearTimeout(opacityHideTimer);keepVisible();};
+      $('.topbar')?.addEventListener('mouseenter',keepVisible);
+      $('.topbar')?.addEventListener('mousemove',keepVisible);
+      $('#opacityPanel')?.addEventListener('mouseenter',keepOpacityVisible);
+      $('#opacityPanel')?.addEventListener('mousemove',keepOpacityVisible);
+      $('#opacityPanel')?.addEventListener('mouseleave',event=>{
+        if(isPointOverMediaSurface(event.clientX,event.clientY) || containsPoint($('.topbar'),event.clientX,event.clientY)){
+          scheduleOpacityHide(9000);
+        }else{
+          hideControlsNow();
+        }
+      });
+    }
+    function readImageLayout(){
+      const img=singleImageElement();
+      const box=$('.attachments');
+      if(!img||!box||!img.naturalWidth||!img.naturalHeight) return null;
+      img.style.setProperty('--rotate-scale',String(imageRotateScale(img.naturalWidth,img.naturalHeight)));
+      const ratio=rotatedImageRatio(img.naturalWidth,img.naturalHeight);
+      box.style.setProperty('--image-ratio',String(ratio));
+      requestAnimationFrame(updateSingleImageFit);
+      const imageRect=box.getBoundingClientRect();
+      const topbarRect=$('.topbar')?.getBoundingClientRect();
+      const bodyEl=$('#body');
+      const bodyStyle=bodyEl ? getComputedStyle(bodyEl) : null;
+      const bodyPadding=(parseFloat(bodyStyle?.paddingTop)||0)+(parseFloat(bodyStyle?.paddingBottom)||0);
+      const textRect=$('#copyText')?.getBoundingClientRect();
+      const hasText=!!$('#copyText');
+      const contentStyle=$('.view-content') ? getComputedStyle($('.view-content')) : null;
+      const gap=hasText ? (parseFloat(contentStyle?.rowGap || contentStyle?.gap)||0) : 0;
+      return {
+        ratio,
+        extraHeight:Math.max(0,Math.round((state.edit?(topbarRect?.height||0):0)+bodyPadding+visibleTextExtraHeight(textRect)+gap)),
+        horizontalExtra:Math.max(0,Math.round(window.innerWidth-imageRect.width)),
+        textFlexible:isLongStickyContent()
+      };
+    }
+    function readSingleMediaLayout(){
+      const card=$('.view-content:not(.multi-attachments) .attachment');
+      const box=$('.attachments');
+      if(!card||!box) return null;
+      const video=card.querySelector('video');
+      let ratio=0;
+      if(video?.videoWidth&&video?.videoHeight) ratio=video.videoWidth/video.videoHeight;
+      if(!(ratio>0) && card.querySelector('.video-thumb')) ratio=16/9;
+      if(!(ratio>0) && (card.querySelector('.file-thumb') || card.querySelector('.folder-thumb'))) ratio=1;
+      if(!(ratio>0)) return null;
+      const mediaRect=box.getBoundingClientRect();
+      const captionHeight=card.classList.contains('has-caption') ? 22 : 0;
+      const adjustedRatio=mediaRect.width>0 ? mediaRect.width/(mediaRect.width/ratio+captionHeight) : ratio;
+      box.style.setProperty('--image-ratio',String(adjustedRatio));
+      const topbarRect=$('.topbar')?.getBoundingClientRect();
+      const bodyEl=$('#body');
+      const bodyStyle=bodyEl ? getComputedStyle(bodyEl) : null;
+      const bodyPadding=(parseFloat(bodyStyle?.paddingTop)||0)+(parseFloat(bodyStyle?.paddingBottom)||0);
+      const textRect=$('#copyText')?.getBoundingClientRect();
+      const hasText=!!$('#copyText');
+      const contentStyle=$('.view-content') ? getComputedStyle($('.view-content')) : null;
+      const gap=hasText ? (parseFloat(contentStyle?.rowGap || contentStyle?.gap)||0) : 0;
+      return {
+        ratio,
+        extraHeight:Math.max(0,Math.round((state.edit?(topbarRect?.height||0):0)+bodyPadding+visibleTextExtraHeight(textRect)+gap+captionHeight)),
+        horizontalExtra:Math.max(0,Math.round(window.innerWidth-mediaRect.width)),
+        textFlexible:isLongStickyContent()
+      };
+    }
+    function readMultiAttachmentLayout(){
+      const wrap=$('.view-content.multi-attachments .attachments');
+      if(!wrap) return null;
+      const count=$$('.view-content.multi-attachments .attachment').length;
+      if(count<2) return null;
+      const ratio=syncMultiAttachmentLayout() || Number(wrap.style.getPropertyValue('--multi-ratio')) || 1;
+      const imageRect=wrap.getBoundingClientRect();
+      const topbarRect=$('.topbar')?.getBoundingClientRect();
+      const bodyEl=$('#body');
+      const bodyStyle=bodyEl ? getComputedStyle(bodyEl) : null;
+      const bodyPadding=(parseFloat(bodyStyle?.paddingTop)||0)+(parseFloat(bodyStyle?.paddingBottom)||0);
+      const textRect=$('#copyText')?.getBoundingClientRect();
+      const hasText=!!$('#copyText');
+      const contentStyle=$('.view-content') ? getComputedStyle($('.view-content')) : null;
+      const gap=hasText ? (parseFloat(contentStyle?.rowGap || contentStyle?.gap)||0) : 0;
+      return {
+        ratio,
+        extraHeight:Math.max(0,Math.round((state.edit?(topbarRect?.height||0):0)+bodyPadding+visibleTextExtraHeight(textRect)+gap)),
+        horizontalExtra:Math.max(0,Math.round(window.innerWidth-imageRect.width)),
+        textFlexible:isLongStickyContent()
+      };
+    }
+    function updateAspectRatio(){
+      if(state.edit){api.setStickyAspectRatio?.(0);return;}
+      if($('.view-content')?.classList.contains('free-attachments')){api.setStickyAspectRatio?.(0);return;}
+      if($('.view-content')?.classList.contains('multi-attachments')){
+        const layout=readMultiAttachmentLayout();
+        if(layout){
+          api.setStickyAspectRatio?.(layout);
+          if(layout.textFlexible){
+            state.fitApplied=true;
+            return;
+          }
+          if(!state.fitApplied){
+            state.fitApplied=true;
+            api.fitStickyToImageLayout?.(layout);
+          }
+        }else{
+          api.setStickyAspectRatio?.(0);
+        }
+        return;
+      }
+      const img=singleImageElement();
+      const singleMediaLayout=readSingleMediaLayout();
+      if(!img && singleMediaLayout){
+        api.setStickyAspectRatio?.(singleMediaLayout);
+        if(!state.fitApplied){
+          state.fitApplied=true;
+          api.fitStickyToImageLayout?.(singleMediaLayout);
+        }
+        return;
+      }
+      if(!img){api.setStickyAspectRatio?.(0);return;}
+      const apply=async()=>{
+        const layout=readImageLayout();
+        if(!layout) return;
+        await api.setStickyAspectRatio?.(layout);
+        if(layout.textFlexible){
+          state.fitApplied=true;
+          return;
+        }
+        if(!state.fitApplied){
+          state.fitApplied=true;
+          await api.fitStickyToImageLayout?.(layout);
+          requestAnimationFrame(()=>api.setStickyAspectRatio?.(readImageLayout()||layout));
+        }
+      };
+      if(img.complete&&img.naturalWidth) apply();
+      else img.addEventListener('load',apply,{once:true});
+    }
+    function currentStickyLayout(){
+      if($('.view-content')?.classList.contains('free-attachments')) return {freeGrid:true,defaultHeight:FREE_GRID_DEFAULT_HEIGHT};
+      if($('.view-content')?.classList.contains('multi-attachments')) return readMultiAttachmentLayout();
+      return singleImageElement() ? readImageLayout() : readSingleMediaLayout();
+    }
+    function updateBodyScrollMode(){
+      const body=$('#body');
+      if(!body) return;
+      if(!body.classList.contains('multi-media')){
+        body.classList.remove('needs-scroll');
+        return;
+      }
+      requestAnimationFrame(()=>{
+        body.classList.toggle('needs-scroll', body.scrollHeight - body.clientHeight > 16);
+      });
+    }
+    function contentNeedsVerticalExpand(){
+      const body=$('#body');
+      if(!body) return false;
+      return body.scrollHeight - body.clientHeight > 4;
+    }
+    function updateExpandButton(){
+      const btn=$('#expandYBtn');
+      if(!btn) return;
+      btn.title=state.verticalExpanded?'收缩':'上下弹开';
+      btn.innerHTML=icon(state.verticalExpanded?'collapseY':'expandY');
+    }
+    async function toggleVerticalExpand(){
+      const layout=currentStickyLayout();
+      if(state.verticalExpanded){
+        if(layout) await api.setStickyAspectRatio?.(layout);
+        state.fitApplied=true;
+        await api.collapseStickyVertically?.(layout||{});
+        state.verticalExpanded=false;
+      }else{
+        if(layout) await api.setStickyAspectRatio?.(layout);
+        else await api.setStickyAspectRatio?.(0);
+        state.fitApplied=true;
+        await api.expandStickyVertically?.();
+        state.verticalExpanded=true;
+      }
+      updateExpandButton();
+      showControls();
+    }
+    function projectOptions(selectedId=''){
+      const options=[];
+      if(state.source==='sticky'){
+        options.push(`<option value="${TEMP_STICKY_PROJECT_ID}" ${selectedId===TEMP_STICKY_PROJECT_ID?'selected':''}>临时便签（仅入剪切板）</option>`);
+      }
+      options.push(...(state.projects||[]).map(item=>`<option value="${escapeHtml(item.id)}" ${item.id===selectedId?'selected':''}>${escapeHtml(item.name||'便签分类')}</option>`));
+      if(state.source==='sticky'){
+        options.push(`<option value="${NEW_STICKY_PROJECT_ID}">+ 新建分类</option>`);
+      }
+      return options.join('');
+    }
+    function editSnapshot(){
+      return JSON.stringify({
+        text:String(state.text||''),
+        projectId:String(state.projectId||''),
+        attachments:(state.attachments||[]).map(item=>({
+          kind:item?.kind||'',
+          name:item?.name||'',
+          path:item?.path||'',
+          dataUrl:item?.dataUrl||'',
+          preview:item?.preview||'',
+        })),
+      });
+    }
+    function markEditBaseline(){
+      state.editBaseline=editSnapshot();
+    }
+    function isEditDirty(){
+      const input=$('#textInput');
+      if(input) state.text=input.value;
+      return editSnapshot()!==state.editBaseline;
+    }
+    function shouldOfferCollectAfterSave(){
+      return state.source==='sticky' && !!state.id && !!state.note?.sourceRecordId && isEditDirty();
+    }
+    function titleFromCollectPayload(payload){
+      const content=String(payload?.content||'').trim();
+      if(content) return content.slice(0,18);
+      const first=(payload?.attachments||[])[0];
+      return first?.name || '剪切板便签';
+    }
+    function showCreateStickyProject(){
+      return new Promise(resolve=>{
+        const overlay=$('#createProjectOverlay');
+        const input=$('#newStickyProjectName');
+        const cancel=$('#cancelCreateProjectBtn');
+        const confirm=$('#confirmCreateProjectBtn');
+        if(!overlay||!input||!cancel||!confirm){resolve(null);return;}
+        const finish=item=>{
+          overlay.classList.remove('show');
+          overlay.onclick=null;
+          cancel.onclick=null;
+          confirm.onclick=null;
+          confirm.disabled=false;
+          input.value='';
+          resolve(item||null);
+        };
+        cancel.onclick=()=>finish(null);
+        overlay.onclick=event=>{if(event.target===overlay) finish(null);};
+        confirm.onclick=async()=>{
+          const name=input.value.trim();
+          if(!name){toast('请输入分类名称');return;}
+          confirm.disabled=true;
+          try{
+            const item=await api.addNoteProject?.({name,description:''});
+            state.projects=await api.getNoteProjects?.() || state.projects;
+            finish(item);
+          }catch{
+            confirm.disabled=false;
+            toast('分类创建失败');
+          }
+        };
+        input.onkeydown=event=>{if(event.key==='Enter') confirm.click();};
+        overlay.classList.add('show');
+        setTimeout(()=>input.focus(),50);
+      });
+    }
+    function showCollectAfterSave(savedNote,payload){
+      return new Promise(async resolve=>{
+        const overlay=$('#collectAfterSave');
+        const list=$('#collectProjectList');
+        const skip=$('#skipCollectBtn');
+        if(!overlay||!list||!skip){resolve(false);return;}
+        const finish=value=>{
+          overlay.classList.remove('show');
+          overlay.onclick=null;
+          skip.onclick=null;
+          resolve(value);
+        };
+        try{
+          const projects=await api.getNoteProjects?.() || [];
+          list.innerHTML=projects.length
+            ? projects.map(item=>`<button class="collect-option" data-collect-project="${escapeHtml(item.id)}">${escapeHtml(item.name||'收藏分类')}</button>`).join('')
+            : '<div class="empty">暂无收藏分类，可先不收藏。</div>';
+          list.querySelectorAll('[data-collect-project]').forEach(btn=>btn.onclick=async()=>{
+            const projectId=btn.dataset.collectProject;
+            try{
+              await api.addNote?.({
+                projectId,
+                type:'text',
+                title:payload.title || titleFromCollectPayload(payload),
+                content:payload.content || '',
+                note:'',
+                attachments:[...(payload.attachments||[])],
+                sourceRecordId:savedNote?.sourceRecordId || payload.sourceRecordId || '',
+              });
+              finish(true);
+            }catch{
+              toast('收藏失败，便签已保存');
+              finish(false);
+            }
+          });
+        }catch{
+          list.innerHTML='<div class="empty">分类读取失败，可先不收藏。</div>';
+        }
+        skip.onclick=()=>finish(false);
+        overlay.onclick=event=>{if(event.target===overlay) finish(false);};
+        overlay.classList.add('show');
+      });
+    }
+    function leaveEdit(){
+      $('#discardConfirm').classList.remove('show');
+      if(!state.id){
+        api.closeStickyWindow?.();
+        return;
+      }
+      state.edit=false;
+      state.text=state.note?.content||'';
+      state.projectId=state.note?.projectId||state.projects[0]?.id||'';
+      state.attachments=[...(state.note?.attachments||[])];
+      state.fitApplied=false;
+      render();
+    }
+    function requestLeaveEdit(){
+      $('#discardConfirm').classList.add('show');
+    }
+    function render(){
+      const actions=$('#actions');
+      const body=$('#body');
+      const projectSlot=$('#projectSlot');
+      $('.sticky-window')?.classList.toggle('editing',state.edit);
+      $('#title').textContent=state.edit ? (state.id?'编辑便签':'新建便签') : '便签';
+      if(state.edit){
+        $('.sticky-window')?.classList.remove('media-only','controls-visible','show-opacity');
+        body.classList.remove('image-only','multi-media','needs-scroll','single-media','free-media-grid');
+        const editingExisting=!!state.id;
+        projectSlot.innerHTML=!editingExisting&&(state.source==='sticky'||state.projects?.length) ? `<select class="project-select" id="stickyProjectSelect" title="选择分类">${projectOptions(state.projectId)}</select>` : '';
+        actions.innerHTML=`<button class="icon-btn" id="attachBtn" title="上传图片">${icon('paperclip')}</button>${editingExisting?`<button class="icon-btn" id="backBtn" title="返回">${icon('back')}</button>`:`<button class="icon-btn" id="closeNewBtn" title="关闭">${icon('close')}</button>`}`;
+        body.innerHTML=`<div class="editor" id="editor"><textarea id="textInput" placeholder="输入便签内容，也可以直接粘贴图片或截图...">${escapeHtml(state.text)}</textarea><div class="edit-attachments" id="attachmentList">${state.attachments.length?state.attachments.map((item,i)=>attachmentMarkup(item,true,i)).join(''):''}</div><div class="upload-row"><span class="hint">支持上传、拖拽或粘贴图片。</span><div class="save-actions">${editingExisting?'<button class="secondary" id="cancelEditBtn">返回</button>':''}<button class="primary" id="saveBtn">保存</button></div></div></div>`;
+        $('#attachBtn').onclick=pickFiles;
+        if(editingExisting){
+          $('#backBtn').onclick=requestLeaveEdit;
+          $('#cancelEditBtn').onclick=requestLeaveEdit;
+        }else{
+          $('#closeNewBtn').onclick=()=>api.closeStickyWindow?.();
+        }
+        $('#stickyProjectSelect')?.addEventListener('change',async event=>{
+          const value=event.target.value;
+          if(value===NEW_STICKY_PROJECT_ID){
+            event.target.value=state.projectId||state.projects[0]?.id||TEMP_STICKY_PROJECT_ID;
+            const item=await showCreateStickyProject();
+            if(item?.id) state.projectId=item.id;
+            render();
+            return;
+          }
+          state.projectId=value;
+        });
+        $('#saveBtn').onclick=saveNote;
+        $('#fileInput').onchange=e=>addBrowserFiles(e.target.files);
+        $('#textInput').oninput=e=>{state.text=e.target.value;};
+        if(!editingExisting){
+          $('#textInput').addEventListener('keydown',event=>{
+            if(event.key!=='Enter'||event.shiftKey||event.isComposing||event.keyCode===229) return;
+            event.preventDefault();
+            saveNote();
+          });
+        }
+        $$('[data-remove]').forEach(btn=>btn.onclick=()=>{state.attachments.splice(Number(btn.dataset.remove),1);render();});
+        bindIntake($('#editor'));
+      }else{
+        const attachments=displayAttachments(state.note?.attachments||[]);
+        const hasImageTools=hasImageAttachments(attachments);
+        const canCheckExpand=!!String(state.note?.content||'').trim();
+        projectSlot.innerHTML=hasImageTools?`<div class="media-tools"><button class="icon-btn" id="mirrorBtn" title="图片镜像">${icon('mirror')}</button><button class="icon-btn" id="rotateBtn" title="图片旋转">${icon('rotate')}</button><button class="icon-btn" id="opacityBtn" title="图片透明">${icon('opacity')}</button></div>`:'';
+        actions.innerHTML=`${canCheckExpand?`<button class="icon-btn" id="expandYBtn" title="${state.verticalExpanded?'收缩':'上下弹开'}">${icon(state.verticalExpanded?'collapseY':'expandY')}</button>`:''}<button class="icon-btn" id="editBtn" title="编辑">${icon('edit')}</button><button class="icon-btn" id="closeBtn" title="取消置顶">${icon('close')}</button>`;
+        const image=attachments.find(item=>item?.kind==='image'&&(item.dataUrl||item.path||item.preview));
+        const viewAttachments=attachments.length>1 ? attachments : (image ? [image] : attachments.slice(0,1));
+        const multi=viewAttachments.length>1;
+        const freeGrid=!state.note?.content && multi && usesFreeAttachmentGrid(viewAttachments);
+        if(freeGrid && !$('#expandYBtn')){
+          actions.insertAdjacentHTML('afterbegin',`<button class="icon-btn" id="expandYBtn" title="${state.verticalExpanded?'收缩':'上下弹开'}">${icon(state.verticalExpanded?'collapseY':'expandY')}</button>`);
+        }
+        const pureImageMedia=!!viewAttachments.length && !state.note?.content && viewAttachments.every(item=>item?.kind==='image'&&(item.dataUrl||item.path||item.preview));
+        const mediaOnly=pureImageMedia;
+        const singleMedia=!state.note?.content && viewAttachments.length===1 && ['video','audio','file','folder','group'].includes(isFolder(viewAttachments[0])?'folder':(viewAttachments[0]?.kind||'file'));
+        $('.sticky-window')?.classList.toggle('media-only',mediaOnly);
+        body.classList.toggle('image-only',mediaOnly&&!multi);
+        body.classList.toggle('multi-media',!state.note?.content&&multi&&!freeGrid);
+        body.classList.toggle('free-media-grid',freeGrid);
+        body.classList.toggle('single-media',singleMedia);
+        const attachmentsHtml=freeGrid?attachmentGridMarkup(viewAttachments):(multi?attachmentRowsMarkup(viewAttachments):viewAttachments.map((item,i)=>attachmentMarkup(item,false,i)).join(''));
+        body.innerHTML=`<div class="view-content ${image?'has-image':''} ${multi?'multi-attachments':''} ${image&&!state.note?.content&&!multi?'image-only':''}">${viewAttachments.length?`<div class="attachments">${attachmentsHtml}</div>`:''}${state.note?.content?`<div class="text" id="copyText">${escapeHtml(state.note.content)}</div>`:''}${!viewAttachments.length&&!state.note?.content?'<div class="empty">空便签</div>':''}</div>`;
+        $('.view-content')?.classList.toggle('single-image',!!image&&!multi);
+        if(freeGrid){
+          $('.view-content')?.classList.add('free-attachments');
+          $('.view-content')?.classList.remove('multi-attachments');
+        }
+        if(canCheckExpand && !state.verticalExpanded && !contentNeedsVerticalExpand()){
+          $('#expandYBtn')?.remove();
+        }
+        if(canCheckExpand && !$('#expandYBtn')) state.verticalExpanded=false;
+        $('#expandYBtn')?.addEventListener('click',toggleVerticalExpand);
+        $('#editBtn').onclick=()=>{state.edit=true;state.text=state.note?.content||'';state.projectId=state.note?.projectId||state.projectId;state.attachments=[...(state.note?.attachments||[])];markEditBaseline();render();};
+        $('#closeBtn').onclick=()=>api.closeStickyWindow?.();
+        $('#mirrorBtn')?.addEventListener('click',toggleMirror);
+        $('#rotateBtn')?.addEventListener('click',rotateMedia);
+        $('#opacityBtn')?.addEventListener('click',toggleOpacityPanel);
+        $('#opacityRange').oninput=event=>setMediaOpacity(Number(event.target.value)/100);
+        $('#copyText')?.addEventListener('click', copyText);
+        $('#copyText')?.addEventListener('contextmenu', copySelectedText);
+        bindAttachmentActions(viewAttachments);
+        bindMediaHotAreas();
+        showToolsGuideOnce();
+      }
+      bindVideoThumbnails();
+      bindMediaLayoutRefresh();
+      syncMultiAttachmentLayout();
+      hydrateFileIcons();
+      applyMediaTransform();
+      updateAspectRatio();
+      updateBodyScrollMode();
+      setTimeout(updateBodyScrollMode,220);
+    }
+    function showToolsGuideOnce(){
+      const key='xuannian.sticky-tools-guide.v1';
+      if(state.edit || localStorage.getItem(key)==='seen') return;
+      localStorage.setItem(key,'seen');
+      const mirror=normalizeShortcut(state.settings.stickyMirrorHotkey||'X').replace(/\+/g,' + ');
+      const rotate=normalizeShortcut(state.settings.stickyRotateHotkey||'R').replace(/\+/g,' + ');
+      const opacity=normalizeShortcut(state.settings.stickyOpacityHotkey||'Shift+Wheel').replace(/\+/g,' + ');
+      const text=$('#toolsGuide p');
+      if(text) text.textContent=`鼠标靠近便签时可编辑、取消置顶、镜像、旋转和调整透明度。鼠标停在图片或附件上时，按 ${mirror} 镜像，按 ${rotate} 旋转，按 ${opacity} 调节透明度。`;
+      setTimeout(()=>$('#toolsGuide')?.classList.add('show'),120);
+    }
+    async function loadData(){
+      const quickNewSticky=state.source==='sticky' && !state.id;
+      state.notes=quickNewSticky || state.source!=='sticky' ? (await api.getNotes?.() || []) : (await api.getStickyNotes?.() || []);
+      state.projects=quickNewSticky || state.source!=='sticky' ? (await api.getNoteProjects?.() || []) : (await api.getStickyProjects?.() || []);
+      const settings=await api.getSettings();
+      state.settings=settings||{};
+      document.body.classList.toggle('dark',settings?.theme==='dark');
+      if(state.temporarySaved&&!state.id){
+        render();
+        return;
+      }
+      state.note=state.id?state.notes.find(item=>item.id===state.id):null;
+      const defaultProjectId=state.source==='sticky' && !state.id ? TEMP_STICKY_PROJECT_ID : (state.projects[0]?.id || '');
+      state.projectId=state.note?.projectId || state.projectId || defaultProjectId;
+      if(!state.note&&!state.edit) state.edit=true;
+      if(state.note&&(!state.edit||!state.editBaseline)){state.text=state.note.content||'';state.attachments=[...(state.note.attachments||[])];state.projectId=state.note.projectId||state.projectId;}
+      if(state.edit&&!state.editBaseline) markEditBaseline();
+      render();
+    }
+    async function saveNote(){
+      if(state.saving) return;
+      const content=($('#textInput')?.value||'').trim();
+      if(!content&&!state.attachments.length) return;
+      const firstAttachment=state.attachments[0];
+      const title=content ? content.slice(0,18) : (firstAttachment?.name || '图片便签');
+      const offerCollectAfterSave=shouldOfferCollectAfterSave();
+      const sourceRecordId=state.note?.sourceRecordId || '';
+      const isTemporarySticky=state.source==='sticky' && !state.id && state.projectId===TEMP_STICKY_PROJECT_ID;
+      const payload={projectId:isTemporarySticky?'':(state.projectId||state.projects[0]?.id||''),type:'text',title,content,note:'',attachments:[...state.attachments]};
+      state.saving=true;
+      try{
+        const backupResult=!state.id && api.backupStickyToClipboard
+          ? await api.backupStickyToClipboard(payload).catch(()=>({ok:false}))
+          : {ok:true};
+        if(isTemporarySticky){
+          state.note={...payload,id:'',temporary:true,createdAt:Date.now(),updatedAt:Date.now(),projectId:TEMP_STICKY_PROJECT_ID};
+          state.temporarySaved=true;
+          state.text=content;
+          state.attachments=[...payload.attachments];
+          state.projectId=TEMP_STICKY_PROJECT_ID;
+          state.edit=false;
+          state.fitApplied=false;
+          await api.focusStickyWindow?.();
+          render();
+          toast(backupResult?.ok===false?'临时便签已保存，剪切板备份失败':'临时便签已保存，已录入剪切板');
+          return;
+        }
+        const saveAsCollection=state.source!=='sticky' || (!state.id && !isTemporarySticky);
+        if(saveAsCollection){
+          if(state.id) state.notes=await api.updateNote(state.id,payload);
+          else state.notes=await api.addNote(payload);
+          state.source='note';
+        }else{
+          if(state.id) state.notes=await api.updateStickyNote(state.id,payload);
+          else state.notes=await api.addStickyNote(payload);
+        }
+        state.note=state.id?state.notes.find(item=>item.id===state.id):state.notes[0];
+        state.id=state.note?.id||state.id;
+        state.text=state.note?.content||'';
+        state.attachments=[...(state.note?.attachments||[])];
+        state.projectId=state.note?.projectId||payload.projectId||state.projectId;
+        await api.registerSavedStickyNote?.(state.id);
+        state.edit=false;
+        state.fitApplied=false;
+        await api.focusStickyWindow?.();
+        render();
+        if(offerCollectAfterSave){
+          const collected=await showCollectAfterSave(state.note,{...payload,sourceRecordId});
+          toast(collected?'便签已保存并收藏':'便签已保存');
+        }else if(backupResult?.ok===false) toast('便签已保存，剪切板备份失败');
+      }catch{
+        toast('保存失败，请重试');
+      }finally{
+        state.saving=false;
+      }
+    }
+    async function pickFiles(){
+      if(api.pickInspirationFiles){
+        const files=await api.pickInspirationFiles();
+        addAttachments(files||[]);
+        return;
+      }
+      $('#fileInput').click();
+    }
+    function attachmentFromPath(filePath){
+      const value=String(filePath||'');
+      return {kind:attachmentKindFromPath(value),name:value.split(/[\\/]/).pop()||'附件',path:value,ext:(value.split('.').pop()||'').toLowerCase()};
+    }
+    async function addBrowserFiles(files){
+      const items=[];
+      for(const file of Array.from(files||[])){
+        const path=api.getPathForFile?.(file)||file.path||'';
+        const kind=file.type.startsWith('image/')?'image':file.type.startsWith('video/')?'video':file.type.startsWith('audio/')?'audio':attachmentKindFromPath(file.name);
+        items.push({kind,name:file.name,size:file.size,mime:file.type,path,dataUrl:path?'':await fileToDataUrl(file),ext:(file.name.split('.').pop()||'').toLowerCase()});
+      }
+      addAttachments(items);
+    }
+    function addAttachments(items){
+      const next=(items||[]).filter(item=>item&&(item.dataUrl||item.path||item.preview||item.files?.length));
+      const seen=new Set(state.attachments.map(item=>`${item.path||item.dataUrl||item.preview}|${item.name||''}`));
+      for(const item of next){
+        const key=`${item.path||item.dataUrl||item.preview}|${item.name||''}`;
+        if(seen.has(key)) continue;
+        seen.add(key);
+        state.attachments.push(item);
+      }
+      render();
+    }
+    function fileToDataUrl(file){
+      return new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=reject;r.readAsDataURL(file);});
+    }
+    async function copyText(event){
+      event?.stopPropagation?.();
+      const text=String(state.note?.content||'').trim();
+      if(!text) return;
+      const ok=await api.copyText?.(text);
+      toast(ok===false?'复制失败':'文字已复制');
+    }
+    function selectedTextInElement(el){
+      const selection=window.getSelection?.();
+      if(!selection || selection.rangeCount<1) return '';
+      const text=String(selection.toString()||'').trim();
+      if(!text) return '';
+      const range=selection.getRangeAt(0);
+      const node=range.commonAncestorContainer;
+      const root=node?.nodeType===Node.ELEMENT_NODE ? node : node?.parentElement;
+      return root && el?.contains(root) ? text : '';
+    }
+    async function copySelectedText(event){
+      const selected=selectedTextInElement(event?.currentTarget);
+      if(!selected) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const ok=await api.copyText?.(selected);
+      toast(ok===false?'复制失败':'选段已复制');
+    }
+    async function copyImage(event){
+      event?.stopPropagation?.();
+      const clickedSrc=event?.currentTarget?.currentSrc || event?.currentTarget?.src || '';
+      if(clickedSrc){
+        const ok=await api.copyImage?.(clickedSrc);
+        toast(ok===false?'复制失败':'图片已复制');
+        return;
+      }
+      const image=sortAttachments(state.note?.attachments||[]).find(item=>item?.kind==='image'&&(item.dataUrl||item.path||item.preview));
+      if(!image) return;
+      const ok=await api.copyImage?.(src(image));
+      toast(ok===false?'复制失败':'图片已复制');
+    }
+    function bindAttachmentActions(items=[]){
+      $$('.attachment[data-attachment-index]').forEach(card=>{
+        const item=items[Number(card.dataset.attachmentIndex)];
+        let clickTimer=0;
+        let dragState=null;
+        const stopDrag=()=>{
+          if(dragState?.started) api.endStickyMove?.();
+          dragState=null;
+          window.removeEventListener('mousemove',moveDrag);
+          window.removeEventListener('mouseup',stopDrag);
+        };
+        const moveDrag=async(event)=>{
+          if(!dragState) return;
+          const dx=event.screenX-dragState.startX;
+          const dy=event.screenY-dragState.startY;
+          if(!dragState.started && Math.hypot(dx,dy)>5){
+            dragState.started=await api.beginStickyMove?.({x:dragState.startX,y:dragState.startY});
+            card.dataset.dragged=dragState.started?'1':'';
+          }
+          if(dragState.started){
+            event.preventDefault();
+            api.updateStickyMove?.({x:event.screenX,y:event.screenY});
+          }
+        };
+        card.addEventListener('mousedown',event=>{
+          if(state.edit || event.button!==0 || event.target?.closest?.('button,[data-open-media]')) return;
+          focusStickyWindowThrottled(true);
+          dragState={startX:event.screenX,startY:event.screenY,started:false};
+          window.addEventListener('mousemove',moveDrag);
+          window.addEventListener('mouseup',stopDrag,{once:true});
+        });
+        card.addEventListener('click',event=>{
+          if(event.target?.closest?.('[data-open-media]')) return;
+          if(card.dataset.dragged==='1'){
+            event.preventDefault();
+            event.stopPropagation();
+            card.dataset.dragged='';
+            return;
+          }
+          event.stopPropagation();
+          clearTimeout(clickTimer);
+          clickTimer=setTimeout(async()=>{
+            const ok=await copyAttachment(item);
+            toast(ok===false?'复制失败':'已复制');
+          },180);
+        });
+        card.addEventListener('dblclick',async event=>{
+          event.stopPropagation();
+          clearTimeout(clickTimer);
+          const ok=await openAttachment(item);
+          if(ok===false) toast('无法打开');
+        });
+        card.querySelector('[data-open-media]')?.addEventListener('click',async event=>{
+          event.preventDefault();
+          event.stopPropagation();
+          clearTimeout(clickTimer);
+          const ok=await openAttachment(item);
+          if(ok===false) toast('无法打开');
+        });
+      });
+    }
+    async function handlePaste(event){
+      const files=[...Array.from(event.clipboardData?.files||[])];
+      for(const item of Array.from(event.clipboardData?.items||[])){
+        if(item.kind==='file'){const file=item.getAsFile();if(file)files.push(file);}
+      }
+      if(files.length){event.preventDefault();await addBrowserFiles(files);return;}
+      const payload=await api.readClipboardPayload?.();
+      if(payload?.type==='files'&&payload.files?.length){event.preventDefault();addAttachments(payload.files.map(attachmentFromPath));}
+      else if(payload?.type==='image'&&payload.dataUrl){event.preventDefault();addAttachments([{kind:'image',name:`粘贴图片-${Date.now()}.png`,dataUrl:payload.dataUrl}]);}
+    }
+    function bindIntake(root){
+      root.addEventListener('paste',handlePaste);
+      root.addEventListener('dragover',e=>{if(Array.from(e.dataTransfer?.types||[]).includes('Files'))e.preventDefault();});
+      root.addEventListener('drop',async e=>{if(!e.dataTransfer?.files?.length)return;e.preventDefault();await addBrowserFiles(e.dataTransfer.files);});
+    }
+    function bindVideoThumbnails(){
+      $$('video[data-video-thumb]').forEach(video=>{try{video.currentTime=0.1;}catch{}});
+    }
+    function bindMediaLayoutRefresh(){
+      const refresh=()=>{state.fitApplied=false;syncMultiAttachmentLayout();updateAspectRatio();updateBodyScrollMode();};
+      $$('.view-content.multi-attachments img:not(.native-file-icon),.view-content.free-attachments img:not(.native-file-icon)').forEach(img=>{
+        if(img.complete&&img.naturalWidth) return;
+        img.addEventListener('load',refresh,{once:true});
+      });
+      $$('.view-content.multi-attachments video,.view-content.free-attachments video,.view-content:not(.multi-attachments) video').forEach(video=>{
+        if(video.videoWidth&&video.videoHeight) return;
+        video.addEventListener('loadedmetadata',refresh,{once:true});
+      });
+    }
+    function hydrateFileIcons(){
+      if(!api.getFileIcon) return;
+      $$('[data-icon-path]').forEach(async el=>{
+        const filePath=el.dataset.iconPath;
+        if(!filePath || el.dataset.iconLoaded) return;
+        el.dataset.iconLoaded='1';
+        const dataUrl=await api.getFileIcon(filePath).catch(()=>'');
+        if(!dataUrl) return;
+        el.style.backgroundImage='';
+        el.innerHTML='';
+        const img=document.createElement('img');
+        img.className='native-file-icon';
+        img.src=dataUrl;
+        img.alt='';
+        el.appendChild(img);
+        el.classList.add('has-native-icon');
+      });
+    }
+    function bindResizeHandles(){
+      let started=false;
+      let point=null;
+      let frame=0;
+      let lastSent=0;
+      const move=e=>{
+        if(!started)return;
+        point={x:e.screenX,y:e.screenY};
+        if(frame)return;
+        frame=requestAnimationFrame(()=>{
+          frame=0;
+          const now=performance.now();
+          if(point && now-lastSent>16){lastSent=now;api.updateStickyResize?.(point);}
+        });
+      };
+      const up=()=>{
+        if(frame)cancelAnimationFrame(frame);
+        frame=0;point=null;
+        if(started)api.endStickyResize?.();
+        started=false;
+        window.removeEventListener('mousemove',move);
+        window.removeEventListener('mouseup',up);
+      };
+      $$('[data-resize-edge]').forEach(handle=>handle.addEventListener('mousedown',async e=>{
+        e.preventDefault();
+        focusStickyWindowThrottled(true);
+        started=await api.beginStickyResize?.(handle.dataset.resizeEdge,{x:e.screenX,y:e.screenY});
+        if(!started)return;
+        window.addEventListener('mousemove',move);
+        window.addEventListener('mouseup',up);
+      }));
+    }
+    function focusStickyWindowThrottled(force=false){
+      const now=Date.now();
+      if(!force && now-lastFocusAt<300) return;
+      lastFocusAt=now;
+      api.focusStickyWindow?.();
+    }
+    $('#keepEditingBtn').onclick=()=>$('#discardConfirm').classList.remove('show');
+    $('#discardEditingBtn').onclick=leaveEdit;
+    $('#closeToolsGuideBtn').onclick=()=>$('#toolsGuide').classList.remove('show');
+    $('#discardConfirm').addEventListener('click',event=>{
+      if(event.target.id==='discardConfirm') $('#discardConfirm').classList.remove('show');
+    });
+    $('#toolsGuide').addEventListener('click',event=>{
+      if(event.target.id==='toolsGuide') $('#toolsGuide').classList.remove('show');
+    });
+    document.addEventListener('keydown',event=>{
+      if(state.edit || !state.hoveringMedia) return;
+      if(matchesShortcut(event,state.settings.stickyMirrorHotkey,'X')){
+        event.preventDefault();
+        toggleMirror();
+      }else if(matchesShortcut(event,state.settings.stickyRotateHotkey,'R')){
+        event.preventDefault();
+        rotateMedia();
+      }
+    });
+    document.addEventListener('wheel',event=>{
+      if(state.edit || !state.hoveringMedia || !hasImageAttachments() || !matchesWheelShortcut(event,state.settings.stickyOpacityHotkey,'Shift+Wheel')) return;
+      event.preventDefault();
+      setMediaOpacity(state.opacity + (event.deltaY < 0 ? 0.05 : -0.05));
+    }, {passive:false});
+    api.onStickyLimit?.(message=>toast(message));
+    api.onDataRefresh?.(()=>loadData());
+    document.addEventListener('mousedown',()=>focusStickyWindowThrottled());
+    window.addEventListener('resize',()=>requestAnimationFrame(()=>{updateSingleImageFit();updateBodyScrollMode();}));
+    bindControlVisibility();
+    bindResizeHandles();
+    loadData();
+  </script>
+</body>
+</html>
