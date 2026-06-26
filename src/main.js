@@ -12,6 +12,7 @@ let quickWindowNormalBounds = null;
 let dataRevision = 0;
 let quickWindowRevision = -1;
 let quickWindowWarmRefreshTimer = null;
+let quickWindowPrewarmTimer = null;
 let quickOutsideCloseTimer = null;
 let quickOutsideCloseChecking = false;
 let quickWindowFocusedOnce = false;
@@ -495,14 +496,14 @@ function createTray() {
   const iconPath = appIconPath();
   const trayImage = iconPath ? nativeImage.createFromPath(iconPath) : nativeImage.createEmpty();
   tray = new Tray(trayImage.isEmpty() ? nativeImage.createEmpty() : trayImage);
-  tray.setToolTip('玄念3.0');
+  tray.setToolTip('玄念4.0');
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: '打开玄念3.0', click: showMainWindow },
+    { label: '打开玄念4.0', click: showMainWindow },
     { label: '打开快捷面板', click: showQuickWindow },
     { label: '设置', click: showSettingsWindow },
     { type: 'separator' },
     {
-      label: '退出玄念3.0',
+      label: '退出玄念4.0',
       click: () => {
         isQuitting = true;
         app.quit();
@@ -618,9 +619,11 @@ function candidateUserDataFiles() {
     'XuanNian',
     'XuanNian2.0',
     'XuanNian3.0',
+    'XuanNian4.0',
     '玄念',
     '玄念2.0',
     '玄念3.0',
+    '玄念4.0',
     'app.xuannian.desktop',
     app.getName(),
   ].filter(Boolean));
@@ -1200,6 +1203,15 @@ function stopQuickOutsideCloseWatcher() {
   quickOutsideCloseChecking = false;
 }
 
+function scheduleQuickWindowPrewarm(delay = 80) {
+  if (quickWindowPrewarmTimer) clearTimeout(quickWindowPrewarmTimer);
+  quickWindowPrewarmTimer = setTimeout(() => {
+    quickWindowPrewarmTimer = null;
+    if (isQuitting) return;
+    if (!quickWindow || quickWindow.isDestroyed()) createQuickWindow();
+  }, delay);
+}
+
 function hideQuickWindow() {
   if (!quickWindow || quickWindow.isDestroyed()) return false;
   stopQuickOutsideCloseWatcher();
@@ -1234,7 +1246,7 @@ function createQuickWindow() {
     skipTaskbar: true,
     alwaysOnTop: true,
     icon: appIconPath(),
-    title: '玄念3.0快捷面板',
+    title: '玄念4.0快捷面板',
     transparent: true,
     backgroundColor: '#00000000',
     webPreferences: {
@@ -1263,8 +1275,11 @@ function createQuickWindow() {
   quickWindow.on('hide', stopQuickOutsideCloseWatcher);
   quickWindow.on('closed', () => {
     stopQuickOutsideCloseWatcher();
+    if (quickWindowWarmRefreshTimer) clearTimeout(quickWindowWarmRefreshTimer);
+    quickWindowWarmRefreshTimer = null;
     quickWindowFocusedOnce = false;
     quickWindow = null;
+    scheduleQuickWindowPrewarm(240);
   });
   quickWindow.loadFile(path.join(__dirname, '..', 'quick.html')).then(() => {
     quickWindowRevision = dataRevision;
@@ -1306,7 +1321,11 @@ function showQuickWindow(targetHwnd = '') {
   quickWindowFocusedOnce = false;
   lastQuickToggleAt = Date.now();
   const explicitTarget = rememberPasteTarget(targetHwnd);
-  if (!explicitTarget) rememberPasteTarget(readForegroundWindowHandleSync());
+  if (!explicitTarget) {
+    readForegroundWindowHandleAsync()
+      .then((hwnd) => rememberPasteTarget(hwnd))
+      .catch(() => {});
+  }
   const point = screen.getCursorScreenPoint();
   const display = screen.getDisplayNearestPoint(point);
   const bounds = display.workArea;
@@ -1625,7 +1644,11 @@ function createStickyNoteWindow({ noteId = '', editNew = false, source = '', pre
     win.setBounds(bounds, false);
     const showDraft = () => {
       if (win.isDestroyed()) return;
-      win.show();
+      if (win.webContents.isLoading()) {
+        win.once('ready-to-show', showDraft);
+        return;
+      }
+      win.showInactive();
       win.moveTop();
       win.focus();
     };
@@ -1661,7 +1684,7 @@ function createStickyNoteWindow({ noteId = '', editNew = false, source = '', pre
     skipTaskbar: false,
     alwaysOnTop: true,
     icon: appIconPath(),
-    title: '玄念3.0便签',
+    title: '玄念4.0便签',
     transparent: true,
     backgroundColor: '#00000000',
     paintWhenInitiallyHidden: true,
@@ -1737,7 +1760,7 @@ function createWindow() {
     minWidth: MAIN_WINDOW_MIN_WIDTH,
     minHeight: MAIN_WINDOW_MIN_HEIGHT,
     icon: appIconPath(),
-    title: '玄念3.0',
+    title: '玄念4.0',
     frame: false,
     resizable: true,
     thickFrame: true,
@@ -2154,7 +2177,7 @@ function scheduleQuickWindowWarmRefresh(data, options = {}) {
     quickWindowWarmRefreshTimer = null;
     if (!isQuickWindowUsable()) return;
     sendQuickWindow('native-clipboard-records', data.records || []);
-    if (!options.recordsOnly) sendQuickWindow('quick:refresh');
+    if (!options.recordsOnly && quickWindow.isVisible()) sendQuickWindow('quick:refresh');
     quickWindowRevision = dataRevision;
   };
   if (quickWindow.webContents.isLoading()) {
@@ -2166,7 +2189,7 @@ function scheduleQuickWindowWarmRefresh(data, options = {}) {
     return;
   }
   clearTimeout(quickWindowWarmRefreshTimer);
-  quickWindowWarmRefreshTimer = setTimeout(send, options.recordsOnly ? 80 : 140);
+  quickWindowWarmRefreshTimer = setTimeout(send, options.recordsOnly ? 60 : 220);
 }
 
 function stopClipboardWatcher() {
@@ -3787,10 +3810,8 @@ app.whenReady().then(() => {
   protectUserDataOnStartup();
   createWindow();
   createTray();
-  setTimeout(() => {
-    if (!quickWindow || quickWindow.isDestroyed()) createQuickWindow();
-  }, 60);
-  scheduleStickyDraftPrewarm(180);
+  scheduleQuickWindowPrewarm(40);
+  scheduleStickyDraftPrewarm(80);
   const data = loadData();
   updateUninstallStoragePath(data);
   alwaysOnTop = !!data.settings.alwaysOnTop;
@@ -4111,12 +4132,21 @@ ipcMain.handle('sticky:moveStart', (event, point) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   if (!win || win.isDestroyed() || !stickyWindows.has(win)) return false;
   if (!Number.isFinite(point?.x) || !Number.isFinite(point?.y)) return false;
-  stickyMoveSessions.set(event.sender.id, {
+  const sessionId = event.sender.id;
+  const previous = stickyMoveSessions.get(sessionId);
+  if (previous?.timer) clearTimeout(previous.timer);
+  const session = {
     cursor: { x: point.x, y: point.y },
     bounds: win.getBounds(),
     area: screen.getDisplayMatching(win.getBounds()).workArea,
     lastAt: 0,
-  });
+    timer: null,
+  };
+  session.timer = setTimeout(() => {
+    const current = stickyMoveSessions.get(sessionId);
+    if (current === session) stickyMoveSessions.delete(sessionId);
+  }, 12000);
+  stickyMoveSessions.set(sessionId, session);
   return true;
 });
 
@@ -4128,6 +4158,13 @@ ipcMain.on('sticky:moveMove', (event, point) => {
   const now = Date.now();
   if (session.lastAt && now - session.lastAt < 16) return;
   session.lastAt = now;
+  if (session.timer) {
+    clearTimeout(session.timer);
+    session.timer = setTimeout(() => {
+      const current = stickyMoveSessions.get(event.sender.id);
+      if (current === session) stickyMoveSessions.delete(event.sender.id);
+    }, 12000);
+  }
   const next = clampBoundsToArea({
     x: session.bounds.x + Math.round(point.x - session.cursor.x),
     y: session.bounds.y + Math.round(point.y - session.cursor.y),
@@ -4138,6 +4175,8 @@ ipcMain.on('sticky:moveMove', (event, point) => {
 });
 
 ipcMain.on('sticky:moveEnd', (event) => {
+  const session = stickyMoveSessions.get(event.sender.id);
+  if (session?.timer) clearTimeout(session.timer);
   stickyMoveSessions.delete(event.sender.id);
 });
 

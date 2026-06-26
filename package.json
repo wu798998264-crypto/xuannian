@@ -1,6 +1,6 @@
 {
   "name": "xuannian",
-  "version": "3.0.0",
+  "version": "4.0.0",
   "description": "玄念本地剪切板、便签与灵感工具",
   "main": "src/main.js",
   "scripts": {
@@ -11,7 +11,7 @@
   },
   "build": {
     "appId": "app.xuannian.desktop",
-    "productName": "玄念3.0",
+    "productName": "玄念4.0",
     "compression": "maximum",
     "asar": true,
     "afterPack": "scripts/afterPack.js",
@@ -46,13 +46,13 @@
     },
     "portable": {
       "unpackDirName": false,
-      "artifactName": "玄念3.0-便携版.exe"
+      "artifactName": "玄念4.0-便携版.exe"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "include": "build/installer.nsh",
-      "artifactName": "玄念3.0-安装包.exe"
+      "artifactName": "玄念4.0-安装包.exe"
     }
   },
   "devDependencies": {

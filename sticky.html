@@ -1179,6 +1179,9 @@
           dragState=null;
           window.removeEventListener('mousemove',moveDrag);
           window.removeEventListener('mouseup',stopDrag);
+          window.removeEventListener('blur',stopDrag);
+          window.removeEventListener('mouseleave',stopDrag);
+          window.removeEventListener('dragstart',stopDrag,true);
         };
         const moveDrag=async(event)=>{
           if(!dragState) return;
@@ -1199,6 +1202,9 @@
           dragState={startX:event.screenX,startY:event.screenY,started:false};
           window.addEventListener('mousemove',moveDrag);
           window.addEventListener('mouseup',stopDrag,{once:true});
+          window.addEventListener('blur',stopDrag,{once:true});
+          window.addEventListener('mouseleave',stopDrag,{once:true});
+          window.addEventListener('dragstart',stopDrag,true);
         });
         card.addEventListener('click',event=>{
           if(event.target?.closest?.('[data-open-media]')) return;
