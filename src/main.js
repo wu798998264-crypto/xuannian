@@ -107,6 +107,16 @@ function appIconPath() {
   return fs.existsSync(png) ? png : undefined;
 }
 
+function appHtmlPath(fileName) {
+  return path.join(app.getAppPath(), fileName);
+}
+
+function loadAppHtml(win, fileName, options = {}) {
+  return win.loadFile(appHtmlPath(fileName), options).catch((error) => {
+    runtimeLog(`load ${fileName} failed: ${error?.message || error}`);
+  });
+}
+
 function clipboardHelperPath() {
   if (app.isPackaged) {
     const stableDir = path.join(app.getPath('userData'), 'native');
@@ -1281,9 +1291,9 @@ function createQuickWindow() {
     quickWindow = null;
     scheduleQuickWindowPrewarm(240);
   });
-  quickWindow.loadFile(path.join(__dirname, '..', 'quick.html')).then(() => {
+  loadAppHtml(quickWindow, 'quick.html').then(() => {
     quickWindowRevision = dataRevision;
-  }).catch(() => {});
+  });
 }
 
 function setQuickEditorMode(enabled) {
@@ -1727,7 +1737,7 @@ function createStickyNoteWindow({ noteId = '', editNew = false, source = '', pre
     notifyStickyPinState();
     scheduleStickyDraftPrewarm(120);
   });
-  win.loadFile(path.join(__dirname, '..', 'sticky.html'), {
+  loadAppHtml(win, 'sticky.html', {
     query: { id: noteId || '', edit: editNew ? '1' : '0', source: editNew ? (source || 'sticky') : noteSource },
   });
   win.once('ready-to-show', () => {
@@ -1795,7 +1805,7 @@ function createWindow() {
   mainWindow.on('closed', () => {
     mainWindowResizeSession = null;
   });
-  mainWindow.loadFile(path.join(__dirname, '..', 'index.html'));
+  loadAppHtml(mainWindow, 'index.html');
 }
 
 function resizeBoundsFromPointer(session, point) {
@@ -3798,7 +3808,7 @@ async function captureScreenSelection() {
       finish(result);
       return result;
     });
-    screenshotWindow.loadFile(path.join(__dirname, '..', 'screenshot-select.html'));
+    loadAppHtml(screenshotWindow, 'screenshot-select.html');
   });
 }
 

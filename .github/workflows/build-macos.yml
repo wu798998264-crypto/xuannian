@@ -53,6 +53,7 @@ jobs:
           const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
           const build = JSON.parse(JSON.stringify(pkg.build || {}));
           build.directories = { ...(build.directories || {}), output: process.env.XUANNIAN_MAC_OUTPUT || 'dist-mac' };
+          build.asar = false;
           build.files = [
             'index.html',
             'quick.html',
