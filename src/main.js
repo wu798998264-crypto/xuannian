@@ -108,12 +108,45 @@ function appIconPath() {
 }
 
 function appHtmlPath(fileName) {
-  return path.join(app.getAppPath(), fileName);
+  const candidates = [
+    path.join(__dirname, '..', fileName),
+    path.join(app.getAppPath(), fileName),
+    path.join(process.resourcesPath || '', 'app', fileName),
+  ];
+  return candidates.find((filePath) => {
+    try {
+      return fs.existsSync(filePath);
+    } catch {
+      return false;
+    }
+  }) || candidates[0];
 }
 
 function loadAppHtml(win, fileName, options = {}) {
-  return win.loadFile(appHtmlPath(fileName), options).catch((error) => {
+  const target = appHtmlPath(fileName);
+  runtimeLog(`load ${fileName}: ${target}`);
+  return win.loadFile(target, options).catch((error) => {
     runtimeLog(`load ${fileName} failed: ${error?.message || error}`);
+    const fallback = path.join(app.getAppPath(), fileName);
+    if (fallback !== target) {
+      runtimeLog(`retry ${fileName}: ${fallback}`);
+      return win.loadFile(fallback, options).catch((retryError) => {
+        runtimeLog(`retry ${fileName} failed: ${retryError?.message || retryError}`);
+      });
+    }
+  });
+}
+
+function attachPageDiagnostics(win, label) {
+  if (!win || win.isDestroyed()) return;
+  win.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
+    runtimeLog(`${label} did-fail-load ${errorCode} ${errorDescription} ${validatedURL}`);
+  });
+  win.webContents.on('render-process-gone', (_event, details) => {
+    runtimeLog(`${label} render-process-gone ${JSON.stringify(details || {})}`);
+  });
+  win.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+    runtimeLog(`${label} console ${level} ${sourceId}:${line} ${message}`);
   });
 }
 
@@ -1268,6 +1301,7 @@ function createQuickWindow() {
     },
   });
   quickWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  attachPageDiagnostics(quickWindow, 'quick');
   quickWindow.webContents.on('will-navigate', (event, url) => {
     if (!url.startsWith('file://')) event.preventDefault();
   });
@@ -1718,6 +1752,7 @@ function createStickyNoteWindow({ noteId = '', editNew = false, source = '', pre
   if (noteId) stickyNoteWindows.set(noteId, win);
   notifyStickyPinState();
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  attachPageDiagnostics(win, prewarm ? 'sticky-prewarm' : 'sticky');
   win.webContents.on('will-navigate', (event, url) => {
     if (!url.startsWith('file://')) event.preventDefault();
   });
@@ -1771,7 +1806,7 @@ function createWindow() {
     minHeight: MAIN_WINDOW_MIN_HEIGHT,
     icon: appIconPath(),
     title: '玄念4.0',
-    frame: false,
+    frame: process.platform === 'darwin',
     resizable: true,
     thickFrame: true,
     maximizable: true,
@@ -1786,6 +1821,7 @@ function createWindow() {
     },
   });
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  attachPageDiagnostics(mainWindow, 'main');
   mainWindow.webContents.on('will-navigate', (event, url) => {
     if (!url.startsWith('file://')) event.preventDefault();
   });
