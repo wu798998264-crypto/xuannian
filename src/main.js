@@ -140,6 +140,12 @@ function loadAppHtml(win, fileName, options = {}) {
 
 function attachPageDiagnostics(win, label) {
   if (!win || win.isDestroyed()) return;
+  win.webContents.on('dom-ready', () => {
+    runtimeLog(`${label} dom-ready ${win.webContents.getURL()}`);
+  });
+  win.webContents.on('did-finish-load', () => {
+    runtimeLog(`${label} did-finish-load ${win.webContents.getURL()}`);
+  });
   win.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
     runtimeLog(`${label} did-fail-load ${errorCode} ${errorDescription} ${validatedURL}`);
   });
@@ -180,12 +186,23 @@ function clipboardHelperPath() {
 }
 
 function runtimeLog(message) {
-  if (process.env.XUANNIAN_DEBUG_LOG !== '1') return;
+  if (!app.isPackaged && process.env.XUANNIAN_DEBUG_LOG !== '1') return;
   try {
     const file = path.join(app.getPath('userData'), 'xuannian-runtime.log');
+    if (fs.existsSync(file) && fs.statSync(file).size > 1024 * 1024) {
+      fs.renameSync(file, path.join(app.getPath('userData'), 'xuannian-runtime.old.log'));
+    }
     fs.appendFileSync(file, `[${new Date().toISOString()}] ${message}\n`);
   } catch {}
 }
+
+process.on('uncaughtException', (error) => {
+  runtimeLog(`uncaughtException ${error?.stack || error?.message || error}`);
+});
+
+process.on('unhandledRejection', (reason) => {
+  runtimeLog(`unhandledRejection ${reason?.stack || reason?.message || reason}`);
+});
 
 function normalizeExistingFilePaths(filePaths) {
   const seen = new Set();
@@ -3869,6 +3886,7 @@ async function captureScreenSelection() {
 
 if (gotSingleInstanceLock) {
 app.whenReady().then(() => {
+  runtimeLog(`app ready platform=${process.platform} arch=${process.arch} packaged=${app.isPackaged} appPath=${app.getAppPath()} resources=${process.resourcesPath || ''}`);
   app.setAppUserModelId('app.xuannian.desktop');
   app.setLoginItemSettings({ openAtLogin: true, path: process.execPath });
   Menu.setApplicationMenu(null);
@@ -3887,10 +3905,12 @@ app.whenReady().then(() => {
 }
 
 app.on('before-quit', () => {
+  runtimeLog('before-quit');
   isQuitting = true;
 });
 
 app.on('will-quit', () => {
+  runtimeLog('will-quit');
   globalShortcut.unregisterAll();
   stopKeyboardHotkeyHook();
   stopMouseHotkeyHook();

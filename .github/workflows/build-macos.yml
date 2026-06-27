@@ -8,7 +8,7 @@ on:
 
 jobs:
   build-macos:
-    name: Build macOS DMG and ZIP
+    name: Build macOS DMG
     runs-on: macos-latest
     env:
       CSC_IDENTITY_AUTO_DISCOVERY: "false"
@@ -70,17 +70,25 @@ jobs:
             icon: 'build/mac/icon.icns',
             category: 'public.app-category.productivity',
             identity: null,
-            target: ['dmg', 'zip'],
-            artifactName: '${productName}-${version}-${arch}.${ext}',
+            target: ['dmg'],
+            artifactName: 'XuanNian-${version}-${arch}.${ext}',
           };
           build.dmg = {
-            artifactName: '${productName}-${version}-${arch}.dmg',
+            artifactName: 'XuanNian-${version}-${arch}.dmg',
           };
           fs.writeFileSync('build/electron-builder.mac.generated.json', JSON.stringify(build, null, 2));
           NODE
 
       - name: Build macOS packages
-        run: npx electron-builder --mac dmg zip --x64 --arm64 --publish never --config build/electron-builder.mac.generated.json
+        run: npx electron-builder --mac dmg --x64 --arm64 --publish never --config build/electron-builder.mac.generated.json
+
+      - name: Verify macOS DMG packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          for dmg in dist-mac/*.dmg; do
+            hdiutil verify "$dmg"
+          done
 
       - name: Upload macOS packages
         uses: actions/upload-artifact@v4
@@ -88,6 +96,5 @@ jobs:
           name: xuannian-macos-packages
           path: |
             dist-mac/*.dmg
-            dist-mac/*.zip
             dist-mac/*.blockmap
           if-no-files-found: error
