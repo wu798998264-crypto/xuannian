@@ -13,6 +13,7 @@ let dataRevision = 0;
 let quickWindowRevision = -1;
 let quickWindowWarmRefreshTimer = null;
 let quickWindowPrewarmTimer = null;
+let quickWindowDataDirty = false;
 let quickOutsideCloseTimer = null;
 let quickOutsideCloseChecking = false;
 let quickWindowFocusedOnce = false;
@@ -237,6 +238,21 @@ function notifyStickyWindowsDataRefresh() {
     }
     win.webContents.send('native-data-refresh');
     if (win === prewarmedStickyDraftWindow) prewarmedStickyDraftRevision = dataRevision;
+  }
+}
+
+function notifySettingsChanged(settings = {}) {
+  const cleanSettings = { ...defaultData().settings, ...sanitizeSettings(settings) };
+  if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+    mainWindow.webContents.send('settings:changed', cleanSettings);
+  }
+  sendQuickWindow('settings:changed', cleanSettings);
+  for (const win of [...stickyWindows]) {
+    if (!win || win.isDestroyed() || win.webContents.isDestroyed()) {
+      stickyWindows.delete(win);
+      continue;
+    }
+    win.webContents.send('settings:changed', cleanSettings);
   }
 }
 
@@ -1385,13 +1401,15 @@ function showQuickWindow(targetHwnd = '') {
       sendQuickWindow('quick:hotkey', hotkeyParts());
       sendQuickWindow('quick:refresh');
       quickWindowRevision = dataRevision;
+      quickWindowDataDirty = false;
     });
-  } else if (quickWindowRevision !== dataRevision) {
+  } else if (quickWindowDataDirty || quickWindowRevision !== dataRevision) {
     setTimeout(() => {
       if (!isQuickWindowUsable()) return;
-      if (quickWindowRevision === dataRevision) return;
+      if (!quickWindowDataDirty && quickWindowRevision === dataRevision) return;
       sendQuickWindow('quick:refresh');
       quickWindowRevision = dataRevision;
+      quickWindowDataDirty = false;
     }, 30);
   }
   if (quickWindow && !quickWindow.isDestroyed() && quickWindow.isVisible()) {
@@ -2225,6 +2243,7 @@ function scheduleQuickWindowWarmRefresh(data, options = {}) {
     sendQuickWindow('native-clipboard-records', data.records || []);
     if (!options.recordsOnly && quickWindow.isVisible()) sendQuickWindow('quick:refresh');
     quickWindowRevision = dataRevision;
+    quickWindowDataDirty = false;
   };
   if (quickWindow.webContents.isLoading()) {
     quickWindow.webContents.once('did-finish-load', send);
@@ -2235,7 +2254,7 @@ function scheduleQuickWindowWarmRefresh(data, options = {}) {
     return;
   }
   clearTimeout(quickWindowWarmRefreshTimer);
-  quickWindowWarmRefreshTimer = setTimeout(send, options.recordsOnly ? 60 : 220);
+  quickWindowDataDirty = true;
 }
 
 function stopClipboardWatcher() {
@@ -3896,8 +3915,8 @@ ipcMain.handle('records:save', (_event, records = []) => {
 ipcMain.handle('data:save', (_event, data) => {
   const current = loadData();
   const incomingSettings = { ...current.settings, ...sanitizeSettings(data.settings) };
+  const settingsChanged = JSON.stringify(incomingSettings) !== JSON.stringify(current.settings || {});
   const stickyRefreshNeeded =
-    incomingSettings.theme !== current.settings.theme ||
     JSON.stringify(data.stickyProjects || []) !== JSON.stringify(current.stickyProjects || []) ||
     JSON.stringify(data.stickyNotes || []) !== JSON.stringify(current.stickyNotes || []);
   const hotkeysChanged =
@@ -3927,6 +3946,7 @@ ipcMain.handle('data:save', (_event, data) => {
   const saved = saveData({ ...data, settings: incomingSettings });
   updateUninstallStoragePath(saved);
   broadcastDataRefresh(saved, { notifySticky: stickyRefreshNeeded });
+  if (settingsChanged) notifySettingsChanged(saved.settings);
   return { ok: true, data: saved };
 });
 

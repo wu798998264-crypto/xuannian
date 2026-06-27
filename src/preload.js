@@ -452,6 +452,9 @@ contextBridge.exposeInMainWorld('nativeAPI', {
       callback();
     });
   },
+  onSettingsChanged(callback) {
+    ipcRenderer.on('settings:changed', (_event, settings) => callback(settings || {}));
+  },
   onStickyPinState(callback) {
     ipcRenderer.on('native-sticky-pin-state', (_event, ids) => callback(Array.isArray(ids) ? ids : []));
   },

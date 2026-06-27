@@ -558,6 +558,10 @@
       const actual = theme === 'system' ? (systemDark ? 'dark' : 'light') : (theme || 'light');
       document.body.classList.toggle('dark', actual === 'dark');
     }
+    function applySettings(settings={}){
+      state.settings = { ...(state.settings || {}), ...(settings || {}) };
+      applyTheme(state.settings.theme || 'light');
+    }
     function renderRecords(){
       $$('.filter').forEach(btn=>btn.classList.toggle('active', btn.dataset.filter===state.clipType));
       const items = state.records.filter(item=>state.clipType==='all' || item.type===state.clipType).slice(0,80);
@@ -823,8 +827,7 @@
       state.stickyProjects = Array.isArray(stickyProjects) ? stickyProjects : [];
       state.stickyNotes = Array.isArray(stickyNotes) ? stickyNotes : [];
       state.pinnedIds = new Set(Array.isArray(pinnedIds) ? pinnedIds : []);
-      state.settings = settings || {};
-      applyTheme(state.settings.theme || 'light');
+      applySettings(settings || {});
       state.projectId = state.projects.some(item=>item.id===state.projectId) ? state.projectId : (state.projects[0]?.id || null);
       switchTab(state.tab || 'clipboard');
       bindImagePreview();
@@ -967,6 +970,7 @@
       if(state.tab==='clipboard') renderRecords();
     });
     api.onQuickRefresh?.(loadData);
+    api.onSettingsChanged?.(applySettings);
     api.onStickyPinState?.((ids)=>{
       state.pinnedIds=new Set(Array.isArray(ids) ? ids : []);
       if(state.tab==='clipboard') renderRecords();

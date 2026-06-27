@@ -1025,8 +1025,7 @@
       state.notes=quickNewSticky || state.source!=='sticky' ? (await api.getNotes?.() || []) : (await api.getStickyNotes?.() || []);
       state.projects=quickNewSticky || state.source!=='sticky' ? (await api.getNoteProjects?.() || []) : (await api.getStickyProjects?.() || []);
       const settings=await api.getSettings();
-      state.settings=settings||{};
-      document.body.classList.toggle('dark',settings?.theme==='dark');
+      applySettings(settings||{});
       if(state.temporarySaved&&!state.id){
         render();
         return;
@@ -1038,6 +1037,12 @@
       if(state.note&&(!state.edit||!state.editBaseline)){state.text=state.note.content||'';state.attachments=[...(state.note.attachments||[])];state.projectId=state.note.projectId||state.projectId;}
       if(state.edit&&!state.editBaseline) markEditBaseline();
       render();
+    }
+    function applySettings(settings={}){
+      state.settings={...(state.settings||{}),...(settings||{})};
+      const systemDark=typeof matchMedia==='function' && matchMedia('(prefers-color-scheme: dark)').matches;
+      const actual=state.settings.theme==='system' ? (systemDark?'dark':'light') : (state.settings.theme||'light');
+      document.body.classList.toggle('dark',actual==='dark');
     }
     async function saveNote(){
       if(state.saving) return;
@@ -1347,6 +1352,7 @@
     }, {passive:false});
     api.onStickyLimit?.(message=>toast(message));
     api.onDataRefresh?.(()=>loadData());
+    api.onSettingsChanged?.(applySettings);
     document.addEventListener('mousedown',()=>focusStickyWindowThrottled());
     window.addEventListener('resize',()=>requestAnimationFrame(()=>{updateSingleImageFit();updateBodyScrollMode();}));
     bindControlVisibility();
