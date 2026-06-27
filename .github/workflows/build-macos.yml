@@ -6,6 +6,9 @@ on:
       - main
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build-macos:
     name: Build macOS DMG
@@ -69,7 +72,9 @@ jobs:
           build.mac = {
             icon: 'build/mac/icon.icns',
             category: 'public.app-category.productivity',
-            identity: null,
+            identity: '-',
+            hardenedRuntime: false,
+            gatekeeperAssess: false,
             target: ['dmg'],
             artifactName: 'XuanNian-${version}-${arch}.${ext}',
           };
@@ -98,3 +103,22 @@ jobs:
             dist-mac/*.dmg
             dist-mac/*.blockmap
           if-no-files-found: error
+
+      - name: Publish direct DMG downloads
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: xuannian-4.0-macos-latest
+          target_commitish: main
+          name: 玄念4.0 macOS 最新版
+          body: |
+            直接下载对应芯片的 DMG，不需要解压 GitHub Actions 的 artifact zip。
+
+            - Apple 芯片 M1/M2/M3/M4：XuanNian-4.0.0-arm64.dmg
+            - Intel Mac：XuanNian-4.0.0-x64.dmg
+
+            这是未使用 Apple Developer ID 公证的构建，首次打开如被系统拦截，请在“隐私与安全性”中允许打开。
+          files: |
+            dist-mac/*.dmg
+          draft: false
+          prerelease: false
+          make_latest: true
