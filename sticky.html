@@ -42,6 +42,7 @@
     .attachments{display:block;width:100%;aspect-ratio:var(--image-ratio,1/1);flex:0 0 auto;margin:0}
     .attachment{width:100%;height:100%;min-width:0;border:0;border-radius:12px;background:transparent;padding:0;display:flex;align-items:center;justify-content:center;min-height:0;overflow:hidden}
     .attachment > img,.attachment > video,.attachment > .video-thumb,.attachment > .file-thumb,.attachment > .folder-thumb{width:100%;height:100%;border-radius:12px;border:0;background:#e8e8e8;object-fit:contain;display:grid;place-items:center;cursor:pointer}
+    .attachment > img:not(.native-file-icon){-webkit-user-drag:element;user-select:none}
     .sticky-window.media-only:not(.controls-visible) .attachment > img,
     .sticky-window.media-only:not(.controls-visible) .attachment > video,
     .sticky-window.media-only:not(.controls-visible) .attachment > .video-thumb,
@@ -285,7 +286,7 @@
       const name=escapeHtml(label(item));
       const remove=edit?`<button class="remove" data-remove="${index}">×</button>`:'';
       const cls=attachmentClass(item,edit);
-      if(item?.kind==='image'&&(item.dataUrl||item.path||item.preview)) return `<div class="${cls}" data-attachment-index="${index}"><img src="${escapeHtml(src(item))}" alt="${name}">${remove}<${edit?'b':'span class="name"'}>${name}</${edit?'b':'span'}></div>`;
+      if(item?.kind==='image'&&(item.dataUrl||item.path||item.preview)) return `<div class="${cls}" data-attachment-index="${index}"><img src="${escapeHtml(src(item))}" alt="${name}" draggable="${edit?'false':'true'}">${remove}<${edit?'b':'span class="name"'}>${name}</${edit?'b':'span'}></div>`;
       if(item?.kind==='video'&&(item.dataUrl||item.path||item.preview)) return `<div class="${cls}" data-attachment-index="${index}">${videoThumb(src(item))}${remove}<${edit?'b':'span class="name"'}>${name}</${edit?'b':'span'}></div>`;
       if(isFolder(item)) return `<div class="${cls}" data-attachment-index="${index}"><span class="folder-thumb"></span>${remove}<${edit?'b':'span class="name"'}>${name}</${edit?'b':'span'}></div>`;
       const ext=escapeHtml((item?.ext||String(name).split('.').pop()||'file').slice(0,8));
@@ -338,6 +339,12 @@
     }
     function imageRotateScale(width,height){
       return 1;
+    }
+    function normalizedRotation(){
+      return ((Math.round(Number(state.rotation)||0)%360)+360)%360;
+    }
+    function imageExportNeedsTransform(){
+      return normalizedRotation()!==0 || !!state.mirror;
     }
     function singleImageElement(){
       return $('.view-content.single-image .attachment > img:not(.native-file-icon)');
@@ -397,13 +404,47 @@
       wrap.style.setProperty('--multi-ratio',String(ratio));
       return ratio;
     }
-    async function copyAttachment(item){
+    function transformedImageDataUrlFromElement(img){
+      if(!img || !img.naturalWidth || !img.naturalHeight) return '';
+      const rotation=normalizedRotation();
+      const swap=rotation===90 || rotation===270;
+      const canvas=document.createElement('canvas');
+      canvas.width=swap ? img.naturalHeight : img.naturalWidth;
+      canvas.height=swap ? img.naturalWidth : img.naturalHeight;
+      const ctx=canvas.getContext('2d');
+      if(!ctx) return '';
+      ctx.save();
+      ctx.translate(canvas.width/2,canvas.height/2);
+      if(state.mirror) ctx.scale(-1,1);
+      if(rotation) ctx.rotate(rotation*Math.PI/180);
+      ctx.drawImage(img,-img.naturalWidth/2,-img.naturalHeight/2,img.naturalWidth,img.naturalHeight);
+      ctx.restore();
+      try{return canvas.toDataURL('image/png');}catch{return '';}
+    }
+    async function imageElementForExport(item,card=null){
+      const current=card?.querySelector?.('img:not(.native-file-icon)') || null;
+      if(current?.complete&&current.naturalWidth) return current;
+      const image=new Image();
+      image.decoding='async';
+      image.src=src(item);
+      await new Promise(resolve=>{
+        image.onload=resolve;
+        image.onerror=resolve;
+      });
+      return image.naturalWidth ? image : null;
+    }
+    async function imageSourceForExport(item,card=null){
+      if(!imageExportNeedsTransform()) return src(item);
+      const img=await imageElementForExport(item,card);
+      return transformedImageDataUrlFromElement(img) || src(item);
+    }
+    async function copyAttachment(item,card=null){
       if(!item) return false;
       if(item.kind==='group' && Array.isArray(item.files) && item.files.length){
         return api.copyFileToClipboard?.(item.files,'copy');
       }
       if(item.kind==='image'&&(item.dataUrl||item.path||item.preview)){
-        return api.copyImage?.(src(item));
+        return api.copyImage?.(await imageSourceForExport(item,card));
       }
       const filePath=filePathOf(item);
       if(filePath) return api.copyFileToClipboard?.(filePath,'copy');
@@ -1163,15 +1204,16 @@
     }
     async function copyImage(event){
       event?.stopPropagation?.();
-      const clickedSrc=event?.currentTarget?.currentSrc || event?.currentTarget?.src || '';
-      if(clickedSrc){
+      const clickedImg=event?.currentTarget?.matches?.('img') ? event.currentTarget : event?.currentTarget?.querySelector?.('img:not(.native-file-icon)');
+      if(clickedImg){
+        const clickedSrc=imageExportNeedsTransform() ? transformedImageDataUrlFromElement(clickedImg) : (clickedImg.currentSrc || clickedImg.src || '');
         const ok=await api.copyImage?.(clickedSrc);
         toast(ok===false?'复制失败':'图片已复制');
         return;
       }
       const image=sortAttachments(state.note?.attachments||[]).find(item=>item?.kind==='image'&&(item.dataUrl||item.path||item.preview));
       if(!image) return;
-      const ok=await api.copyImage?.(src(image));
+      const ok=await api.copyImage?.(await imageSourceForExport(image));
       toast(ok===false?'复制失败':'图片已复制');
     }
     function bindAttachmentActions(items=[]){
@@ -1188,6 +1230,16 @@
           window.removeEventListener('mouseleave',stopDrag);
           window.removeEventListener('dragstart',stopDrag,true);
         };
+        const startSystemImageDrag=(img)=>{
+          if(!img) return false;
+          card.dataset.dragged='1';
+          clearTimeout(clickTimer);
+          const dataUrl=img.currentSrc || img.src || src(item);
+          if(!dataUrl) return false;
+          const ok=api.startImageDrag?.(dataUrl,label(item)||'image.png');
+          setTimeout(()=>{if(card.dataset.dragged==='1')card.dataset.dragged='';},900);
+          return ok!==false;
+        };
         const moveDrag=async(event)=>{
           if(!dragState) return;
           const dx=event.screenX-dragState.startX;
@@ -1203,6 +1255,8 @@
         };
         card.addEventListener('mousedown',event=>{
           if(state.edit || event.button!==0 || event.target?.closest?.('button,[data-open-media]')) return;
+          const img=item?.kind==='image' ? event.target?.closest?.('img:not(.native-file-icon)') : null;
+          if(img) return;
           focusStickyWindowThrottled(true);
           dragState={startX:event.screenX,startY:event.screenY,started:false};
           window.addEventListener('mousemove',moveDrag);
@@ -1210,6 +1264,20 @@
           window.addEventListener('blur',stopDrag,{once:true});
           window.addEventListener('mouseleave',stopDrag,{once:true});
           window.addEventListener('dragstart',stopDrag,true);
+        });
+        card.addEventListener('dragstart',event=>{
+          if(state.edit || item?.kind!=='image') return;
+          const img=event.target?.closest?.('img:not(.native-file-icon)');
+          if(!img) return;
+          event.preventDefault();
+          event.stopPropagation();
+          stopDrag();
+          card.dataset.dragged='1';
+          if(event.dataTransfer){
+            event.dataTransfer.effectAllowed='copy';
+            try{event.dataTransfer.setData('text/plain',label(item)||'image.png');}catch{}
+          }
+          startSystemImageDrag(img);
         });
         card.addEventListener('click',event=>{
           if(event.target?.closest?.('[data-open-media]')) return;
@@ -1222,7 +1290,7 @@
           event.stopPropagation();
           clearTimeout(clickTimer);
           clickTimer=setTimeout(async()=>{
-            const ok=await copyAttachment(item);
+            const ok=await copyAttachment(item,card);
             toast(ok===false?'复制失败':'已复制');
           },180);
         });

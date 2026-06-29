@@ -428,6 +428,9 @@
     .settings-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
     .setting-card{border:1px solid var(--line);border-radius:18px;background:var(--panel);padding:16px}
     .setting-card span{display:block;margin-bottom:8px;font-weight:800;color:var(--muted)}
+    .setting-title{display:flex;align-items:center;gap:8px;margin-bottom:8px;font-weight:800;color:var(--muted)}
+    .setting-help-icon{width:22px;height:22px;border:1px solid var(--line);border-radius:999px;background:var(--soft);color:var(--muted);font-size:14px;font-weight:900;line-height:1;display:inline-grid;place-items:center;cursor:pointer;padding:0;-webkit-app-region:no-drag}
+    .setting-help-icon:hover{background:var(--text);border-color:var(--text);color:var(--panel)}
     .settings-inline{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
     .settings-inline .field-input{width:102px;flex:none}
     .setting-hint{display:block;margin-top:8px;color:var(--muted);font-size:12px;line-height:1.5}
@@ -435,8 +438,10 @@
     .setting-guide-slot span{margin:0}
     .hotkey-mini{display:grid;gap:5px;min-width:120px}
     .hotkey-mini b{font-size:12px;color:var(--muted);line-height:1}
-    .hotkey-mini .field-input{width:120px}
-    #settingHotkey,#settingStickyHotkey,#settingStickyMirrorHotkey,#settingStickyRotateHotkey,#settingStickyOpacityHotkey{width:210px;max-width:100%}
+    .hotkey-mini-row{display:flex;align-items:center;gap:6px}
+    .hotkey-mini .field-input{width:120px;height:38px}
+    .settings-actions{align-items:center}
+    #settingHotkey,#settingScreenshotHotkey,#settingStickyHotkey{width:210px;max-width:100%}
     .cache-clear-btn{color:var(--danger);border-color:rgba(236,91,104,.28);white-space:nowrap}
     .cache-clear-btn:hover{background:rgba(236,91,104,.08)}
     .toggle{height:46px;border-radius:14px;border:1px solid var(--line);background:var(--panel-soft);padding:0 14px;font-weight:800;color:var(--text)}
@@ -671,6 +676,13 @@
     body.dark .sticky-card:hover{border-color:transparent;box-shadow:0 9px 24px rgba(0,0,0,.24)}
     .setting-card{border:0;border-radius:12px;background:var(--panel-soft)}
     .icon-btn,.category-manage-btn,.refresh-btn,.ghost-btn{border-color:transparent}
+    #settingsView .ghost-btn{border:1px solid color-mix(in srgb,var(--muted) 34%,var(--line));background:color-mix(in srgb,var(--panel) 76%,var(--work));box-shadow:0 1px 0 rgba(255,255,255,.7),inset 0 0 0 1px rgba(255,255,255,.28)}
+    #settingsView .ghost-btn:hover{border-color:var(--muted);background:var(--panel)}
+    #settingsView .cache-clear-btn{border-color:rgba(236,91,104,.46);background:rgba(236,91,104,.06)}
+    #settingsView .cache-clear-btn:hover{border-color:rgba(236,91,104,.72);background:rgba(236,91,104,.12)}
+    body.dark #settingsView .ghost-btn{border-color:color-mix(in srgb,var(--muted) 45%,var(--line));background:color-mix(in srgb,var(--panel) 72%,var(--panel-soft));box-shadow:inset 0 0 0 1px rgba(255,255,255,.04)}
+    body.dark #settingsView .ghost-btn:hover{border-color:#8a8a8a;background:#35363a}
+    body.dark #settingsView .cache-clear-btn{border-color:rgba(236,91,104,.52);background:rgba(236,91,104,.1)}
     .sticky-card-actions .icon-btn,.sticky-card-sort.icon-btn{backdrop-filter:none}
     ::-webkit-scrollbar{width:10px;height:10px}
     ::-webkit-scrollbar-thumb{border-width:3px}
@@ -913,21 +925,21 @@
           </div>
         </div>
         <div class="setting-card">
-          <span>快捷窗口快捷键</span>
+          <div class="setting-title">快捷窗口快捷键<button class="setting-help-icon" id="showQuickGuide" type="button" title="查看快捷窗口说明" aria-label="查看快捷窗口说明">!</button></div>
           <div class="settings-inline">
             <input class="field-input" id="settingHotkey" placeholder="Ctrl+Alt+X" />
-            <button class="ghost-btn" id="showQuickGuide" type="button">查看说明</button>
           </div>
         </div>
         <div class="setting-card">
           <span>截图快捷键</span>
-          <input class="field-input" id="settingScreenshotHotkey" placeholder="Ctrl+Alt+A" />
+          <div class="settings-inline">
+            <input class="field-input" id="settingScreenshotHotkey" placeholder="Ctrl+Alt+A" />
+          </div>
         </div>
         <div class="setting-card">
-          <span>快捷新建便签快捷键</span>
+          <div class="setting-title">快捷新建便签快捷键<button class="setting-help-icon" id="showStickyGuide" type="button" title="查看快捷便签说明" aria-label="查看快捷便签说明">!</button></div>
           <div class="settings-inline">
             <input class="field-input" id="settingStickyHotkey" placeholder="Ctrl+Alt+S" />
-            <button class="ghost-btn" id="showStickyGuide" type="button">查看说明</button>
           </div>
           <div class="setting-guide-slot">
             <span>新手引导</span>
@@ -937,14 +949,14 @@
         <div class="setting-card">
           <span>置顶便签快捷键</span>
           <div class="settings-inline">
-            <label class="hotkey-mini"><b>镜像</b><input class="field-input" id="settingStickyMirrorHotkey" placeholder="X" title="鼠标停在置顶便签图片或附件上时生效" /></label>
-            <label class="hotkey-mini"><b>旋转</b><input class="field-input" id="settingStickyRotateHotkey" placeholder="R" title="鼠标停在置顶便签图片或附件上时生效" /></label>
-            <label class="hotkey-mini"><b>透明度</b><input class="field-input" id="settingStickyOpacityHotkey" placeholder="Shift+Wheel" title="鼠标停在置顶便签图片或附件上时生效" /></label>
+            <label class="hotkey-mini"><b>镜像</b><span class="hotkey-mini-row"><input class="field-input" id="settingStickyMirrorHotkey" placeholder="X" title="鼠标停在置顶便签图片或附件上时生效" /></span></label>
+            <label class="hotkey-mini"><b>旋转</b><span class="hotkey-mini-row"><input class="field-input" id="settingStickyRotateHotkey" placeholder="R" title="鼠标停在置顶便签图片或附件上时生效" /></span></label>
+            <label class="hotkey-mini"><b>透明度</b><span class="hotkey-mini-row"><input class="field-input" id="settingStickyOpacityHotkey" placeholder="Shift+Wheel" title="鼠标停在置顶便签图片或附件上时生效" /></span></label>
           </div>
           <small class="setting-hint">仅在鼠标悬停置顶便签图片或附件时生效：镜像、旋转、透明度滚轮。</small>
         </div>
 </div>
-      <div class="controls"><button class="black-btn" id="saveSettings">保存设置</button></div>
+      <div class="controls settings-actions"><button class="black-btn" id="saveSettings">保存设置</button><button class="ghost-btn" id="resetAllHotkeys" type="button">恢复默认快捷键</button></div>
     </section>
 
     <section class="view" id="aboutView">
@@ -996,6 +1008,15 @@
 <script>
 const fallbackApi = createBrowserFallbackAPI();
 const api = createUnifiedAPI(window.nativeAPI, fallbackApi);
+
+const DEFAULT_HOTKEY_VALUES = {
+  settingHotkey: 'Ctrl+Alt+X',
+  settingScreenshotHotkey: 'Ctrl+Alt+A',
+  settingStickyHotkey: 'Ctrl+Alt+S',
+  settingStickyMirrorHotkey: 'X',
+  settingStickyRotateHotkey: 'R',
+  settingStickyOpacityHotkey: 'Shift+Wheel',
+};
 
 const state = {
   view: 'clipboard',
@@ -1543,6 +1564,7 @@ function bindEvents(){
   $('#replayOnboarding')?.addEventListener('click', replayOnboarding);
   $('#showStickyGuide')?.addEventListener('click', showStickyGuide);
   $('#saveSettings').addEventListener('click', saveSettings);
+  $('#resetAllHotkeys')?.addEventListener('click', resetAllHotkeyInputs);
   $('#settingHotkey').addEventListener('keydown', (e)=>captureHotkeyInput(e, $('#settingHotkey')));
   bindMouseHotkeyInput($('#settingHotkey'));
   $('#settingScreenshotHotkey').addEventListener('keydown', (e)=>captureHotkeyInput(e, $('#settingScreenshotHotkey')));
@@ -3730,12 +3752,12 @@ async function toggleAlwaysTop(){
 function renderSettings(){
   $('#settingStorage').value=state.settings.storagePath || '';
   $('#settingRetention').value=state.settings.retentionDays || 30;
-  $('#settingHotkey').value=state.settings.quickMenuHotkey || 'Ctrl+Alt+X';
-  $('#settingScreenshotHotkey').value=state.settings.screenshotHotkey || 'Ctrl+Alt+A';
-  $('#settingStickyHotkey').value=state.settings.quickStickyHotkey || 'Ctrl+Alt+S';
-  $('#settingStickyMirrorHotkey').value=state.settings.stickyMirrorHotkey || 'X';
-  $('#settingStickyRotateHotkey').value=state.settings.stickyRotateHotkey || 'R';
-  $('#settingStickyOpacityHotkey').value=state.settings.stickyOpacityHotkey || 'Shift+Wheel';
+  $('#settingHotkey').value=state.settings.quickMenuHotkey || DEFAULT_HOTKEY_VALUES.settingHotkey;
+  $('#settingScreenshotHotkey').value=state.settings.screenshotHotkey || DEFAULT_HOTKEY_VALUES.settingScreenshotHotkey;
+  $('#settingStickyHotkey').value=state.settings.quickStickyHotkey || DEFAULT_HOTKEY_VALUES.settingStickyHotkey;
+  $('#settingStickyMirrorHotkey').value=state.settings.stickyMirrorHotkey || DEFAULT_HOTKEY_VALUES.settingStickyMirrorHotkey;
+  $('#settingStickyRotateHotkey').value=state.settings.stickyRotateHotkey || DEFAULT_HOTKEY_VALUES.settingStickyRotateHotkey;
+  $('#settingStickyOpacityHotkey').value=state.settings.stickyOpacityHotkey || DEFAULT_HOTKEY_VALUES.settingStickyOpacityHotkey;
   $$('[data-shot-hide-window]').forEach(input=>{ input.checked=!!state.settings.hideWindowOnScreenshot; });
   if($('#settingTheme')){
     $('#settingTheme').value=state.settings.theme || 'light';
@@ -3743,6 +3765,15 @@ function renderSettings(){
   }
   applyAlwaysTop(!!state.settings.alwaysOnTop);
 }
+
+function resetAllHotkeyInputs(){
+  Object.entries(DEFAULT_HOTKEY_VALUES).forEach(([targetId,value])=>{
+    const input=document.getElementById(targetId);
+    if(input) input.value=value;
+  });
+  toast('快捷键已恢复默认，保存设置后生效');
+}
+
 function bindShotOptionControls(){
   $$('.shot-icon').forEach(el=>{ el.innerHTML=iconSvg('scissors'); });
   $$('[data-shot-menu]').forEach(btn=>{
@@ -3967,9 +3998,9 @@ async function saveSettings(){
   const hotkey=normalizeHotkey($('#settingHotkey').value);
   const screenshotHotkey=normalizeHotkey($('#settingScreenshotHotkey').value);
   const quickStickyHotkey=normalizeHotkey($('#settingStickyHotkey').value);
-  const stickyMirrorHotkey=normalizeHotkey($('#settingStickyMirrorHotkey').value) || 'X';
-  const stickyRotateHotkey=normalizeHotkey($('#settingStickyRotateHotkey').value) || 'R';
-  const stickyOpacityHotkey=normalizeHotkey($('#settingStickyOpacityHotkey').value) || 'Shift+Wheel';
+  const stickyMirrorHotkey=normalizeHotkey($('#settingStickyMirrorHotkey').value) || DEFAULT_HOTKEY_VALUES.settingStickyMirrorHotkey;
+  const stickyRotateHotkey=normalizeHotkey($('#settingStickyRotateHotkey').value) || DEFAULT_HOTKEY_VALUES.settingStickyRotateHotkey;
+  const stickyOpacityHotkey=normalizeHotkey($('#settingStickyOpacityHotkey').value) || DEFAULT_HOTKEY_VALUES.settingStickyOpacityHotkey;
   const conflict=getHotkeyConflictMessage(hotkey);
   if(conflict){
     await showInfoModal({title:'快捷键冲突', message:conflict});
@@ -4040,9 +4071,9 @@ async function saveSettings(){
   $('#settingHotkey').value=state.settings.quickMenuHotkey;
   $('#settingScreenshotHotkey').value=state.settings.screenshotHotkey;
   $('#settingStickyHotkey').value=state.settings.quickStickyHotkey;
-  $('#settingStickyMirrorHotkey').value=state.settings.stickyMirrorHotkey || 'X';
-  $('#settingStickyRotateHotkey').value=state.settings.stickyRotateHotkey || 'R';
-  $('#settingStickyOpacityHotkey').value=state.settings.stickyOpacityHotkey || 'Shift+Wheel';
+  $('#settingStickyMirrorHotkey').value=state.settings.stickyMirrorHotkey || DEFAULT_HOTKEY_VALUES.settingStickyMirrorHotkey;
+  $('#settingStickyRotateHotkey').value=state.settings.stickyRotateHotkey || DEFAULT_HOTKEY_VALUES.settingStickyRotateHotkey;
+  $('#settingStickyOpacityHotkey').value=state.settings.stickyOpacityHotkey || DEFAULT_HOTKEY_VALUES.settingStickyOpacityHotkey;
   renderClipboard();
   applyTheme(state.settings.theme || 'light');
   toast('设置已保存');

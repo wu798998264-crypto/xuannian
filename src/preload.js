@@ -79,6 +79,10 @@ contextBridge.exposeInMainWorld('nativeAPI', {
   async copyImage(dataUrl) {
     return ipcRenderer.invoke('clipboard:copyImage', dataUrl);
   },
+  startImageDrag(dataUrl, name = '') {
+    ipcRenderer.send('sticky:startImageDrag', dataUrl || '', name || '');
+    return true;
+  },
   async localizeAttachmentsForCopy(attachments = [], scope = 'notes') {
     return ipcRenderer.invoke('attachments:localizeForCopy', Array.isArray(attachments) ? attachments : [], scope || 'notes');
   },
@@ -478,6 +482,15 @@ contextBridge.exposeInMainWorld('nativeAPI', {
   },
   async setQuickEditorMode(enabled) {
     return ipcRenderer.invoke('quick:setEditorMode', !!enabled);
+  },
+  async beginQuickWindowMove(point) {
+    return ipcRenderer.invoke('quick:moveStart', point);
+  },
+  updateQuickWindowMove(point) {
+    ipcRenderer.send('quick:moveMove', point);
+  },
+  endQuickWindowMove() {
+    ipcRenderer.send('quick:moveEnd');
   },
   async pasteClipboardToActiveTarget() {
     return ipcRenderer.invoke('quick:pasteToActiveTarget');

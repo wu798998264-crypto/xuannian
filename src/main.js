@@ -70,6 +70,7 @@ let fileClipboardReadInFlight = false;
 let imageClipboardReadInFlight = false;
 let mainWindowMoveSession = null;
 let mainWindowResizeSession = null;
+let quickWindowMoveSession = null;
 let screenCapturerWarmup = null;
 let screenCapturerWarmupImage = null;
 let clipboardHelperRetryCount = 0;
@@ -78,6 +79,7 @@ const recentClipboardSequences = new Map();
 const pendingClipboardSequences = new Set();
 const selfClipboardDigests = new Map();
 const selfClipboardSequences = new Map();
+const compositeTextSuppressions = new Map();
 const MAX_CLIPBOARD_RECORDS = 500;
 const MAX_LOCALIZED_BINARY_BYTES = 64 * 1024 * 1024;
 const SELF_IMAGE_SUPPRESS_MS = 2500;
@@ -106,6 +108,14 @@ function appIconPath() {
   if (fs.existsSync(ico)) return ico;
   const png = path.join(__dirname, 'xuannian-logo-256.png');
   return fs.existsSync(png) ? png : undefined;
+}
+
+function trayIconPath() {
+  const ico = path.join(__dirname, 'xuannian-tray.ico');
+  if (fs.existsSync(ico)) return ico;
+  const png = path.join(__dirname, 'xuannian-tray.png');
+  if (fs.existsSync(png)) return png;
+  return appIconPath();
 }
 
 function appHtmlPath(fileName) {
@@ -569,7 +579,7 @@ async function pasteCompositeToTarget(hwnd, pending) {
 
 function createTray() {
   if (tray) return tray;
-  const iconPath = appIconPath();
+  const iconPath = trayIconPath();
   const trayImage = iconPath ? nativeImage.createFromPath(iconPath) : nativeImage.createEmpty();
   tray = new Tray(trayImage.isEmpty() ? nativeImage.createEmpty() : trayImage);
   tray.setToolTip('玄念4.0');
@@ -1293,6 +1303,7 @@ function hideQuickWindow() {
   stopQuickOutsideCloseWatcher();
   setQuickEditorMode(false);
   quickWindowFocusedOnce = false;
+  quickWindowMoveSession = null;
   try {
     if (quickWindow.isVisible()) quickWindow.hide();
   } catch (_error) {
@@ -1352,6 +1363,7 @@ function createQuickWindow() {
   quickWindow.on('hide', stopQuickOutsideCloseWatcher);
   quickWindow.on('closed', () => {
     stopQuickOutsideCloseWatcher();
+    quickWindowMoveSession = null;
     if (quickWindowWarmRefreshTimer) clearTimeout(quickWindowWarmRefreshTimer);
     quickWindowWarmRefreshTimer = null;
     quickWindowFocusedOnce = false;
@@ -2167,9 +2179,23 @@ function moveExistingClipboardRecordToTop(data, record, digest) {
   };
   const key = burstDedupeClipboardKey(nextRecord);
   const records = Array.isArray(data.records) ? data.records : [];
+  const withoutCompositeTextShadow = (items) => {
+    if (!Array.isArray(nextRecord.files) || !nextRecord.files.length) return items;
+    const text = String(nextRecord.content || '').trim();
+    if (!text) return items;
+    const textDigest = `text:${crypto.createHash('sha256').update(text).digest('hex')}`;
+    const now = Number(nextRecord.createdAt) || Date.now();
+    return items.filter((item) => {
+      if (!item || (item.type !== 'text' && item.type !== 'link')) return true;
+      if (String(item.content || '').trim() !== text) return true;
+      if (String(item.clipboardDigest || '').replace(/:seq:\d+$/i, '') !== textDigest) return true;
+      const createdAt = Number(item.createdAt || item.updatedAt || 0);
+      return createdAt && Math.abs(now - createdAt) > 10000;
+    });
+  };
   const existingIndex = key ? records.findIndex((item) => burstDedupeClipboardKey(item) === key) : -1;
   if (existingIndex < 0) {
-    data.records = [nextRecord, ...records];
+    data.records = [nextRecord, ...withoutCompositeTextShadow(records)];
     return false;
   }
   const existing = records[existingIndex];
@@ -2181,7 +2207,7 @@ function moveExistingClipboardRecordToTop(data, record, digest) {
     updatedAt: Date.now(),
     clipboardDigest: digest,
   };
-  data.records = [updated, ...records.slice(0, existingIndex), ...records.slice(existingIndex + 1)];
+  data.records = [updated, ...withoutCompositeTextShadow([...records.slice(0, existingIndex), ...records.slice(existingIndex + 1)])];
   return true;
 }
 
@@ -2211,10 +2237,36 @@ function removeBurstDuplicateRecords(records = []) {
   return result;
 }
 
+function removeCompositeTextShadowRecords(records = []) {
+  const compositeTextRecords = [];
+  for (const record of records) {
+    if (!Array.isArray(record?.files) || !record.files.length) continue;
+    const digest = textDigestForContent(record.content);
+    if (!digest) continue;
+    compositeTextRecords.push({
+      digest,
+      createdAt: Number(record.createdAt || record.updatedAt || 0),
+    });
+  }
+  if (!compositeTextRecords.length) return records;
+  return records.filter((record) => {
+    if (record?.type !== 'text' && record?.type !== 'link') return true;
+    const digest = textDigestForContent(record.content);
+    if (!digest) return true;
+    const createdAt = Number(record.createdAt || record.updatedAt || 0);
+    return !compositeTextRecords.some((item) => (
+      item.digest === digest &&
+      createdAt &&
+      item.createdAt &&
+      Math.abs(item.createdAt - createdAt) <= 45000
+    ));
+  });
+}
+
 function pruneSavedData(data) {
   const next = { ...data, records: Array.isArray(data.records) ? [...data.records] : [] };
   const now = Date.now();
-  next.records = removeBurstDuplicateRecords(next.records)
+  next.records = removeCompositeTextShadowRecords(removeBurstDuplicateRecords(next.records))
     .filter((item) => {
       if (!item.createdAt) return true;
       const cutoff = now - recordRetentionDays(item) * 24 * 60 * 60 * 1000;
@@ -3001,10 +3053,7 @@ function readFastClipboardPayload() {
   const richPayload = readRichHtmlClipboardPayload();
   if (richPayload) return richPayload;
   const formats = availableClipboardFormats();
-  const text = clipboardTextForComposite();
-  if (mayContainFileClipboard(formats) || mayContainImageClipboard(formats)) {
-    return text ? { type: 'text', text } : null;
-  }
+  if (mayContainFileClipboard(formats) || mayContainImageClipboard(formats)) return null;
   return { type: 'text', text: clipboard.readText() };
 }
 
@@ -3398,6 +3447,32 @@ function rememberSelfClipboardSequence(sequence, ttl = 30000) {
   trimMapSize(selfClipboardSequences, SELF_CACHE_LIMIT);
 }
 
+function textDigestForContent(value = '') {
+  const text = String(value || '').trim();
+  return text ? `text:${crypto.createHash('sha256').update(text).digest('hex')}` : '';
+}
+
+function rememberCompositeTextSuppression(text, ttl = 30000) {
+  const digest = textDigestForContent(text);
+  if (!digest) return;
+  const now = Date.now();
+  compositeTextSuppressions.set(digest, now + ttl);
+  for (const [key, expiresAt] of compositeTextSuppressions) {
+    if (expiresAt <= now) compositeTextSuppressions.delete(key);
+  }
+  trimMapSize(compositeTextSuppressions, SELF_CACHE_LIMIT);
+}
+
+function isCompositeTextSuppressed(text) {
+  const digest = textDigestForContent(text);
+  if (!digest) return false;
+  const now = Date.now();
+  for (const [key, expiresAt] of compositeTextSuppressions) {
+    if (expiresAt <= now) compositeTextSuppressions.delete(key);
+  }
+  return (compositeTextSuppressions.get(digest) || 0) > now;
+}
+
 function isSelfClipboardSequence(sequence) {
   const value = Number(sequence) || 0;
   if (!value) return false;
@@ -3439,6 +3514,12 @@ async function captureClipboardToData(payload = null, options = {}) {
     }
     const record = normalizeClipboardRecord(clipboardRecordFromPayload(payload));
     if (!record) return false;
+    if ((record.type === 'text' || record.type === 'link') && isCompositeTextSuppressed(record.content)) {
+      return false;
+    }
+    if (Array.isArray(record.files) && record.files.length && String(record.content || '').trim()) {
+      rememberCompositeTextSuppression(record.content);
+    }
     const baseDigest = record.clipboardDigest || `${record.type}:${record.files?.join('|') || record.preview || record.content}`;
     const digest = sequence ? `${baseDigest}:seq:${sequence}` : baseDigest;
     if (sequence && !trustedNativePayload && (hasRecentClipboardSequence(sequence) || sequence === lastCapturedClipboardSequence || isSelfClipboardSequence(sequence))) {
@@ -3527,10 +3608,16 @@ function startNativeClipboardWatcher() {
   runtimeLog(`startNativeClipboardWatcher helper=${helper} exists=${fs.existsSync(helper)}`);
   if (!fs.existsSync(helper)) return false;
 
-  const child = spawn(helper, ['watch'], {
-    windowsHide: true,
-    stdio: ['ignore', 'pipe', 'ignore'],
-  });
+  let child;
+  try {
+    child = spawn(helper, ['watch'], {
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+  } catch (error) {
+    runtimeLog(`clipboard helper spawn failed: ${error?.message || error}`);
+    return false;
+  }
   clipboardWatcherProcess = child;
   clipboardWatcherBuffer = '';
   child.stdout.setEncoding('utf8');
@@ -3547,9 +3634,10 @@ function startNativeClipboardWatcher() {
     clipboardWatcherProcess = null;
     if (!isQuitting) setTimeout(() => startClipboardWatcher(), 800);
   });
-  child.on('error', () => {
-    runtimeLog('clipboard helper error');
+  child.on('error', (error) => {
+    runtimeLog(`clipboard helper error: ${error?.message || error}`);
     if (clipboardWatcherProcess === child) clipboardWatcherProcess = null;
+    if (!isQuitting && !clipboardTimer) startClipboardPollingTimers();
   });
   runtimeLog(`clipboard helper spawned pid=${child.pid || 0}`);
   return true;
@@ -3563,7 +3651,8 @@ function startClipboardWatcher() {
     }, 500);
     return;
   }
-  if (process.platform === 'win32' && app.isPackaged && clipboardHelperRetryCount < 12) {
+  const helperExists = process.platform === 'win32' && fs.existsSync(clipboardHelperPath());
+  if (!helperExists && process.platform === 'win32' && app.isPackaged && clipboardHelperRetryCount < 12) {
     clipboardHelperRetryCount += 1;
     runtimeLog(`clipboard helper missing, retry=${clipboardHelperRetryCount}`);
     setTimeout(() => startClipboardWatcher(), 500);
@@ -3887,7 +3976,7 @@ async function captureScreenSelection() {
 if (gotSingleInstanceLock) {
 app.whenReady().then(() => {
   runtimeLog(`app ready platform=${process.platform} arch=${process.arch} packaged=${app.isPackaged} appPath=${app.getAppPath()} resources=${process.resourcesPath || ''}`);
-  app.setAppUserModelId('app.xuannian.desktop');
+  app.setAppUserModelId('app.xuannian.desktop.rounded');
   app.setLoginItemSettings({ openAtLogin: true, path: process.execPath });
   Menu.setApplicationMenu(null);
   protectUserDataOnStartup();
@@ -4369,20 +4458,59 @@ ipcMain.handle('clipboard:copyText', (_event, text) => {
   return true;
 });
 
+function imageFromCopySource(value = '') {
+  const source = String(value || '');
+  if (!source) return { image: nativeImage.createEmpty(), sourceFilePath: '' };
+  if (/^file:\/\//i.test(source)) {
+    const filePath = parseFileUrl(source) || decodeURIComponent(source.replace(/^file:\/\/\/?/i, '')).replace(/\//g, path.sep);
+    return { image: nativeImage.createFromPath(filePath), sourceFilePath: filePath };
+  }
+  if (path.isAbsolute(source)) {
+    return { image: nativeImage.createFromPath(source), sourceFilePath: source };
+  }
+  return { image: nativeImage.createFromDataURL(source), sourceFilePath: '' };
+}
+
+function saveDragImageSource(value = '', name = '') {
+  const { image, sourceFilePath } = imageFromCopySource(value);
+  if (sourceFilePath && fs.existsSync(sourceFilePath) && isImageFile(sourceFilePath)) {
+    return { filePath: sourceFilePath, image: image && !image.isEmpty() ? image : nativeImage.createFromPath(sourceFilePath) };
+  }
+  if (!image || image.isEmpty()) return null;
+  const buffer = image.toPNG();
+  if (!buffer?.length) return null;
+  const hash = imageHashFromBuffer(buffer);
+  const folder = path.join(app.getPath('userData'), 'drag-images');
+  fs.mkdirSync(folder, { recursive: true });
+  const base = safeBaseName(name || 'image.png');
+  const stem = (path.basename(base, path.extname(base)) || 'image').slice(0, 80);
+  const filePath = path.join(folder, `${stem}-${hash.slice(0, 12)}.png`);
+  if (!fs.existsSync(filePath)) fs.writeFileSync(filePath, buffer);
+  return { filePath, image };
+}
+
+function startStickyImageDrag(event, dataUrl, name) {
+  const result = saveDragImageSource(dataUrl, name);
+  if (!result?.filePath) return false;
+  const icon = result.image.resize({ width: 96, height: 96, quality: 'best' });
+  event.sender.startDrag({
+    file: result.filePath,
+    icon: icon && !icon.isEmpty() ? icon : nativeImage.createFromPath(result.filePath),
+  });
+  return true;
+}
+
+ipcMain.on('sticky:startImageDrag', (event, dataUrl, name) => {
+  try {
+    startStickyImageDrag(event, dataUrl, name);
+  } catch (error) {
+    runtimeLog(`sticky image drag failed: ${error?.message || error}`);
+  }
+});
+
 ipcMain.handle('clipboard:copyImage', async (_event, dataUrl) => {
   if (!dataUrl) return false;
-  let image;
-  let sourceFilePath = '';
-  if (/^file:\/\//i.test(dataUrl)) {
-    const filePath = decodeURIComponent(dataUrl.replace(/^file:\/\/\/?/i, '')).replace(/\//g, path.sep);
-    sourceFilePath = filePath;
-    image = nativeImage.createFromPath(filePath);
-  } else if (path.isAbsolute(String(dataUrl))) {
-    sourceFilePath = String(dataUrl);
-    image = nativeImage.createFromPath(sourceFilePath);
-  } else {
-    image = nativeImage.createFromDataURL(dataUrl);
-  }
+  const { image } = imageFromCopySource(dataUrl);
   if (image.isEmpty()) return false;
   const buffer = image.toPNG();
   const imageHash = imageHashFromBuffer(buffer);
@@ -4412,6 +4540,37 @@ ipcMain.handle('quick:show', () => {
 });
 
 ipcMain.handle('quick:setEditorMode', (_event, enabled) => setQuickEditorMode(enabled));
+
+ipcMain.handle('quick:moveStart', (event, point) => {
+  if (!quickWindow || quickWindow.isDestroyed() || event.sender !== quickWindow.webContents) return false;
+  if (!Number.isFinite(point?.x) || !Number.isFinite(point?.y)) return false;
+  stopQuickOutsideCloseWatcher();
+  quickWindowMoveSession = {
+    cursor: { x: point.x, y: point.y },
+    bounds: quickWindow.getBounds(),
+    lastAt: 0,
+  };
+  return true;
+});
+
+ipcMain.on('quick:moveMove', (event, point) => {
+  if (!quickWindowMoveSession || !quickWindow || quickWindow.isDestroyed() || event.sender !== quickWindow.webContents) return;
+  if (!Number.isFinite(point?.x) || !Number.isFinite(point?.y)) return;
+  const now = Date.now();
+  if (quickWindowMoveSession.lastAt && now - quickWindowMoveSession.lastAt < 10) return;
+  quickWindowMoveSession.lastAt = now;
+  quickWindow.setPosition(
+    quickWindowMoveSession.bounds.x + Math.round(point.x - quickWindowMoveSession.cursor.x),
+    quickWindowMoveSession.bounds.y + Math.round(point.y - quickWindowMoveSession.cursor.y),
+    false,
+  );
+});
+
+ipcMain.on('quick:moveEnd', (event) => {
+  if (quickWindow && !quickWindow.isDestroyed() && event.sender !== quickWindow.webContents) return;
+  quickWindowMoveSession = null;
+  if (quickWindow && !quickWindow.isDestroyed() && quickWindow.isVisible()) startQuickOutsideCloseWatcher();
+});
 
 ipcMain.handle('quick:pasteToActiveTarget', () => pasteClipboardToActiveTarget());
 

@@ -10,7 +10,7 @@
     "dist:all": "node scripts/build.js portable nsis"
   },
   "build": {
-    "appId": "app.xuannian.desktop",
+    "appId": "app.xuannian.desktop.rounded",
     "productName": "玄念4.0",
     "compression": "maximum",
     "asar": true,
