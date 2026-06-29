@@ -10,10 +10,11 @@
     "dist:all": "node scripts/build.js portable nsis"
   },
   "build": {
-    "appId": "app.xuannian.desktop.rounded",
+    "appId": "app.xuannian.desktop",
     "productName": "玄念5.0",
     "compression": "maximum",
     "asar": true,
+    "disableAsarIntegrity": true,
     "afterPack": "scripts/afterPack.js",
     "electronLanguages": [
       "zh-CN"
