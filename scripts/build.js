@@ -90,6 +90,7 @@ try {
 
   const builder = path.join(projectDir, 'node_modules', '.bin', 'electron-builder.cmd');
   const electronDist = path.join(projectDir, 'node_modules', 'electron', 'dist');
+  const electronDistArg = fs.existsSync(electronDist) ? [`--config.electronDist=${electronDist}`] : [];
   const outputDir = process.env.XUANNIAN_BUILD_OUTPUT
     ? path.resolve(process.env.XUANNIAN_BUILD_OUTPUT)
     : '';
@@ -98,7 +99,7 @@ try {
     ...builderTargets,
     '--publish',
     'never',
-    `--config.electronDist=${electronDist}`,
+    ...electronDistArg,
     ...(outputDir ? [`--config.directories.output=${outputDir}`] : []),
   ], { shell: true });
 } finally {
