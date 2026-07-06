@@ -30,8 +30,15 @@ function run(command, args, options = {}) {
   if (result.status !== 0) process.exit(result.status || 1);
 }
 
-const shouldBuildHelper = !fs.existsSync(helperOutput)
-  || fs.statSync(helperSource).mtimeMs > fs.statSync(helperOutput).mtimeMs;
+const skipHelperBuild = process.env.XUANNIAN_SKIP_HELPER_BUILD === '1';
+if (skipHelperBuild && !fs.existsSync(helperOutput)) {
+  throw new Error(`Native helper is required but missing: ${helperOutput}`);
+}
+
+const shouldBuildHelper = !skipHelperBuild && (
+  !fs.existsSync(helperOutput)
+  || fs.statSync(helperSource).mtimeMs > fs.statSync(helperOutput).mtimeMs
+);
 
 if (shouldBuildHelper) {
   const csc = frameworkRoots.find((file) => fs.existsSync(file));

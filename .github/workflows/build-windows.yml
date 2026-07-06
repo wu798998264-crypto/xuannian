@@ -15,6 +15,7 @@ jobs:
     runs-on: windows-latest
     env:
       XUANNIAN_BUILD_OUTPUT: dist-win
+      XUANNIAN_SKIP_HELPER_BUILD: "1"
 
     steps:
       - name: Checkout
