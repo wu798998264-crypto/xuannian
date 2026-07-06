@@ -13,6 +13,11 @@ const helperOutput = path.join(projectDir, 'src', 'native', 'XuanNianClipboardHe
 const frameworkRoots = [
   path.join(process.env.WINDIR || 'C:\\Windows', 'Microsoft.NET', 'Framework64', 'v4.0.30319', 'csc.exe'),
   path.join(process.env.WINDIR || 'C:\\Windows', 'Microsoft.NET', 'Framework', 'v4.0.30319', 'csc.exe'),
+  path.join(process.env['ProgramFiles'] || 'C:\\Program Files', 'Microsoft Visual Studio', '2022', 'Enterprise', 'MSBuild', 'Current', 'Bin', 'Roslyn', 'csc.exe'),
+  path.join(process.env['ProgramFiles'] || 'C:\\Program Files', 'Microsoft Visual Studio', '2022', 'Professional', 'MSBuild', 'Current', 'Bin', 'Roslyn', 'csc.exe'),
+  path.join(process.env['ProgramFiles'] || 'C:\\Program Files', 'Microsoft Visual Studio', '2022', 'Community', 'MSBuild', 'Current', 'Bin', 'Roslyn', 'csc.exe'),
+  path.join(process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)', 'Microsoft Visual Studio', '2022', 'BuildTools', 'MSBuild', 'Current', 'Bin', 'Roslyn', 'csc.exe'),
+  path.join(process.env['ProgramFiles'] || 'C:\\Program Files', 'Microsoft Visual Studio', '2022', 'BuildTools', 'MSBuild', 'Current', 'Bin', 'Roslyn', 'csc.exe'),
 ];
 
 function run(command, args, options = {}) {
