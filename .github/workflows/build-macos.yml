@@ -109,19 +109,19 @@ jobs:
         with:
           tag_name: xuannian-5.0-macos-latest
           target_commitish: main
-          name: 玄念5.0 全平台最新版
+          name: XuanNian 5.0 all-platform latest
           body: |
-            直接下载对应系统的安装包，不需要解压 GitHub Actions 的 artifact zip。
+            Download the package for your system directly. You do not need to extract GitHub Actions artifact zip files.
 
-            Windows：
-            - 安装版：玄念5.0-安装包.exe
-            - 便携版：玄念5.0-便携版.exe
+            Windows:
+            - Installer: XuanNian-5.0.0-Setup.exe
+            - Portable: XuanNian-5.0.0-Portable.exe
 
-            macOS：
-            - Apple 芯片 M1/M2/M3/M4：XuanNian-5.0.0-arm64.dmg
-            - Intel Mac：XuanNian-5.0.0-x64.dmg
+            macOS:
+            - Apple silicon M1/M2/M3/M4: XuanNian-5.0.0-arm64.dmg
+            - Intel Mac: XuanNian-5.0.0-x64.dmg
 
-            注意：Windows 版本未使用代码签名证书，部分开启智能应用控制的电脑可能会拦截。macOS 版本未使用 Apple Developer ID 公证，首次打开如被系统拦截，请在“隐私与安全性”中允许打开。
+            Note: Windows builds are not signed with a paid code signing certificate, so Smart App Control may block them on some PCs. macOS builds are ad-hoc signed but not Apple notarized.
           files: |
             dist-mac/*.dmg
           overwrite_files: true
