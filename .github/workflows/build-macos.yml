@@ -109,16 +109,22 @@ jobs:
         with:
           tag_name: xuannian-5.0-macos-latest
           target_commitish: main
-          name: 玄念5.0 macOS 最新版
+          name: 玄念5.0 全平台最新版
           body: |
-            直接下载对应芯片的 DMG，不需要解压 GitHub Actions 的 artifact zip。
+            直接下载对应系统的安装包，不需要解压 GitHub Actions 的 artifact zip。
 
+            Windows：
+            - 安装版：玄念5.0-安装包.exe
+            - 便携版：玄念5.0-便携版.exe
+
+            macOS：
             - Apple 芯片 M1/M2/M3/M4：XuanNian-5.0.0-arm64.dmg
             - Intel Mac：XuanNian-5.0.0-x64.dmg
 
-            这是未使用 Apple Developer ID 公证的构建，首次打开如被系统拦截，请在“隐私与安全性”中允许打开。
+            注意：Windows 版本未使用代码签名证书，部分开启智能应用控制的电脑可能会拦截。macOS 版本未使用 Apple Developer ID 公证，首次打开如被系统拦截，请在“隐私与安全性”中允许打开。
           files: |
             dist-mac/*.dmg
+          overwrite_files: true
           draft: false
           prerelease: false
           make_latest: true

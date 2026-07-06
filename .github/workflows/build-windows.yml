@@ -1,0 +1,77 @@
+name: Build Windows package
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Build Windows installer and portable
+    runs-on: windows-latest
+    env:
+      XUANNIAN_BUILD_OUTPUT: dist-win
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build Windows packages
+        shell: pwsh
+        run: npm run dist:all
+
+      - name: List Windows packages
+        shell: pwsh
+        run: |
+          Get-ChildItem $env:XUANNIAN_BUILD_OUTPUT | Sort-Object LastWriteTime -Descending | Select-Object LastWriteTime,Length,Name | Format-Table -AutoSize
+          Get-AuthenticodeSignature -FilePath (Join-Path $env:XUANNIAN_BUILD_OUTPUT '玄念5.0-安装包.exe') | Format-List Status,SignatureType
+
+      - name: Upload Windows packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: xuannian-windows-packages
+          path: |
+            dist-win/*.exe
+            dist-win/*.blockmap
+            dist-win/latest.yml
+          if-no-files-found: error
+
+      - name: Publish direct Windows downloads
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: xuannian-5.0-macos-latest
+          target_commitish: main
+          name: 玄念5.0 全平台最新版
+          body: |
+            直接下载对应系统的安装包，不需要解压 GitHub Actions 的 artifact zip。
+
+            Windows：
+            - 安装版：玄念5.0-安装包.exe
+            - 便携版：玄念5.0-便携版.exe
+
+            macOS：
+            - Apple 芯片 M1/M2/M3/M4：XuanNian-5.0.0-arm64.dmg
+            - Intel Mac：XuanNian-5.0.0-x64.dmg
+
+            注意：Windows 版本未使用代码签名证书，部分开启智能应用控制的电脑可能会拦截。macOS 版本未使用 Apple Developer ID 公证，首次打开如被系统拦截，请在“隐私与安全性”中允许打开。
+          files: |
+            dist-win/*.exe
+            dist-win/*.blockmap
+            dist-win/latest.yml
+          overwrite_files: true
+          draft: false
+          prerelease: false
+          make_latest: true
