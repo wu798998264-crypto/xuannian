@@ -31,16 +31,22 @@ jobs:
         run: npm ci
 
       - name: Build Windows packages
+        id: build
+        continue-on-error: true
         shell: pwsh
-        run: npm run dist:all
+        run: |
+          npm run dist:all *>&1 | Tee-Object -FilePath windows-build-debug.log
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: List Windows packages
+        if: steps.build.outcome == 'success'
         shell: pwsh
         run: |
           Get-ChildItem $env:XUANNIAN_BUILD_OUTPUT | Sort-Object LastWriteTime -Descending | Select-Object LastWriteTime,Length,Name | Format-Table -AutoSize
           Get-AuthenticodeSignature -FilePath (Join-Path $env:XUANNIAN_BUILD_OUTPUT '玄念5.0-安装包.exe') | Format-List Status,SignatureType
 
       - name: Upload Windows packages
+        if: steps.build.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: xuannian-windows-packages
@@ -51,6 +57,7 @@ jobs:
           if-no-files-found: error
 
       - name: Publish direct Windows downloads
+        if: steps.build.outcome == 'success'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: xuannian-5.0-macos-latest
@@ -76,3 +83,21 @@ jobs:
           draft: false
           prerelease: false
           make_latest: true
+
+      - name: Publish Windows build debug log
+        if: steps.build.outcome != 'success'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: xuannian-5.0-macos-latest
+          target_commitish: main
+          name: 玄念5.0 全平台最新版
+          files: windows-build-debug.log
+          overwrite_files: true
+          draft: false
+          prerelease: false
+          make_latest: true
+
+      - name: Fail when Windows build failed
+        if: steps.build.outcome != 'success'
+        shell: pwsh
+        run: exit 1
