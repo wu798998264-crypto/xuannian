@@ -2,7 +2,7 @@
 
 Download page:
 
-https://github.com/wu798998264-crypto/xuannian-6.0.1/releases/tag/xuannian-6.0.1-latest
+https://github.com/wu798998264-crypto/xuannian/releases/tag/xuannian-6.0.1-latest
 
 ## Fix in 6.0.1
 

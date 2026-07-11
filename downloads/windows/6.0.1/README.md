@@ -4,7 +4,7 @@
 - XuanNian-6.0.1-Portable.exe: portable version.
 
 Main all-platform Release:
-https://github.com/wu798998264-crypto/xuannian-6.0.1/releases/tag/xuannian-6.0.1-latest
+https://github.com/wu798998264-crypto/xuannian/releases/tag/xuannian-6.0.1-latest
 
 Fix: restores prompts/favorites that appeared missing after updating to 6.0 by merging old data directories on startup.
 
