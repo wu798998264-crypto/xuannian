@@ -2,7 +2,7 @@
 
 Download page:
 
-https://github.com/wu798998264-crypto/xuannian/releases/tag/xuannian-6.0.1-latest
+https://github.com/wu798998264-crypto/xuannian-6.0.1/releases/tag/xuannian-6.0.1-latest
 
 ## Fix in 6.0.1
 
@@ -24,7 +24,7 @@ Installation:
 3. If you downloaded the portable version, put `XuanNian-6.0.1-Portable.exe` in a normal folder such as Desktop or `D:\Apps`, then double-click it.
 4. Do not run the portable version from inside a zip archive.
 
-Note: the Windows package is not signed with a paid code signing certificate. Some Windows PCs may show Smart App Control or publisher warnings.
+Note: Windows SmartScreen is controlled by Microsoft reputation checks. To reduce the blue warning window, publish builds signed with a trusted OV/EV code signing certificate using the `WINDOWS_CSC_LINK` and `WINDOWS_CSC_KEY_PASSWORD` repository secrets. Unsigned builds may still be blocked on some PCs.
 
 ## macOS
 

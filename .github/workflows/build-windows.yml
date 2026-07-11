@@ -16,6 +16,8 @@ jobs:
     env:
       XUANNIAN_BUILD_OUTPUT: dist-win
       XUANNIAN_SKIP_HELPER_BUILD: "1"
+      CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
+      CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
 
     steps:
       - name: Checkout
@@ -87,7 +89,7 @@ jobs:
             - macOS: download the DMG matching your Mac chip, open it, drag the app to Applications, then open it from Applications.
             - If macOS says the app is damaged because it is not notarized, run: sudo xattr -rd com.apple.quarantine "/Applications/玄念6.0.1.app"
 
-            Note: Windows builds are not signed with a paid code signing certificate, so Smart App Control may block them on some PCs. macOS builds are ad-hoc signed but not Apple notarized.
+            Note: Windows SmartScreen is controlled by Microsoft reputation checks. To reduce the blue warning window, publish builds signed with a trusted OV/EV code signing certificate using the WINDOWS_CSC_LINK and WINDOWS_CSC_KEY_PASSWORD repository secrets. Unsigned builds may still be blocked on some PCs. macOS builds are ad-hoc signed but not Apple notarized.
           files: release-win/*.exe
           overwrite_files: true
           draft: false
