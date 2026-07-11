@@ -107,19 +107,25 @@ jobs:
       - name: Publish direct DMG downloads
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: xuannian-5.0-macos-latest
+          tag_name: xuannian-6.0-latest
           target_commitish: main
-          name: XuanNian 5.0 all-platform latest
+          name: XuanNian 6.0 all-platform latest
           body: |
-            Download the package for your system directly. You do not need to extract GitHub Actions artifact zip files.
+            Download the package for your system directly from this Release. Do not download the GitHub Actions artifact zip unless you specifically need the raw CI artifact.
 
             Windows:
-            - Installer: XuanNian-5.0.0-Setup.exe
-            - Portable: XuanNian-5.0.0-Portable.exe
+            - Installer: XuanNian-6.0.0-Setup.exe
+            - Portable: XuanNian-6.0.0-Portable.exe
 
             macOS:
-            - Apple silicon M1/M2/M3/M4: XuanNian-5.0.0-arm64.dmg
-            - Intel Mac: XuanNian-5.0.0-x64.dmg
+            - Apple silicon M1/M2/M3/M4: XuanNian-6.0.0-arm64.dmg
+            - Intel Mac: XuanNian-6.0.0-x64.dmg
+
+            Installation:
+            - Windows installer: run XuanNian-6.0.0-Setup.exe and follow the installer.
+            - Windows portable: put XuanNian-6.0.0-Portable.exe in a normal folder such as Desktop or D:\Apps, then double-click it. Do not run it from inside a zip archive.
+            - macOS: download the DMG matching your Mac chip, open it, drag the app to Applications, then open it from Applications.
+            - If macOS says the app is damaged because it is not notarized, run: sudo xattr -rd com.apple.quarantine "/Applications/玄念6.0.app"
 
             Note: Windows builds are not signed with a paid code signing certificate, so Smart App Control may block them on some PCs. macOS builds are ad-hoc signed but not Apple notarized.
           files: |

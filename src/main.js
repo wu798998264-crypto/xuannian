@@ -74,6 +74,7 @@ let quickWindowMoveSession = null;
 let screenCapturerWarmup = null;
 let screenCapturerWarmupImage = null;
 let clipboardHelperRetryCount = 0;
+let dataCache = null;
 const recentClipboardDigests = new Map();
 const recentClipboardSequences = new Map();
 const pendingClipboardSequences = new Set();
@@ -118,6 +119,12 @@ function trayIconPath() {
   return appIconPath();
 }
 
+function startupExecutablePath() {
+  const portableExecutable = String(process.env.PORTABLE_EXECUTABLE_FILE || '').trim();
+  if (portableExecutable && fs.existsSync(portableExecutable)) return portableExecutable;
+  return process.execPath;
+}
+
 function appHtmlPath(fileName) {
   const candidates = [
     path.join(__dirname, '..', fileName),
@@ -150,17 +157,18 @@ function loadAppHtml(win, fileName, options = {}) {
 
 function attachPageDiagnostics(win, label) {
   if (!win || win.isDestroyed()) return;
-  win.webContents.on('dom-ready', () => {
-    runtimeLog(`${label} dom-ready ${win.webContents.getURL()}`);
-  });
-  win.webContents.on('did-finish-load', () => {
-    runtimeLog(`${label} did-finish-load ${win.webContents.getURL()}`);
-  });
   win.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
     runtimeLog(`${label} did-fail-load ${errorCode} ${errorDescription} ${validatedURL}`);
   });
   win.webContents.on('render-process-gone', (_event, details) => {
     runtimeLog(`${label} render-process-gone ${JSON.stringify(details || {})}`);
+  });
+  if (process.env.XUANNIAN_DEBUG_LOG !== '1') return;
+  win.webContents.on('dom-ready', () => {
+    runtimeLog(`${label} dom-ready ${win.webContents.getURL()}`);
+  });
+  win.webContents.on('did-finish-load', () => {
+    runtimeLog(`${label} did-finish-load ${win.webContents.getURL()}`);
   });
   win.webContents.on('console-message', (_event, level, message, line, sourceId) => {
     runtimeLog(`${label} console ${level} ${sourceId}:${line} ${message}`);
@@ -582,14 +590,14 @@ function createTray() {
   const iconPath = trayIconPath();
   const trayImage = iconPath ? nativeImage.createFromPath(iconPath) : nativeImage.createEmpty();
   tray = new Tray(trayImage.isEmpty() ? nativeImage.createEmpty() : trayImage);
-  tray.setToolTip('玄念5.0');
+  tray.setToolTip('玄念6.0');
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: '打开玄念5.0', click: showMainWindow },
+    { label: '打开玄念6.0', click: showMainWindow },
     { label: '打开快捷面板', click: showQuickWindow },
     { label: '设置', click: showSettingsWindow },
     { type: 'separator' },
     {
-      label: '退出玄念5.0',
+      label: '退出玄念6.0',
       click: () => {
         isQuitting = true;
         app.quit();
@@ -612,6 +620,11 @@ function readJson(file, fallback) {
 function writeJson(file, data, serialized = '') {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, serialized || JSON.stringify(data), 'utf8');
+}
+
+function cloneDataSnapshot(data) {
+  if (typeof structuredClone === 'function') return structuredClone(data);
+  return JSON.parse(JSON.stringify(data));
 }
 
 function dataContentWeight(data = {}) {
@@ -707,11 +720,13 @@ function candidateUserDataFiles() {
     'XuanNian3.0',
     'XuanNian4.0',
     'XuanNian5.0',
+    'XuanNian6.0',
     '玄念',
     '玄念2.0',
     '玄念3.0',
     '玄念4.0',
     '玄念5.0',
+    '玄念6.0',
     'app.xuannian.desktop',
     app.getName(),
   ].filter(Boolean));
@@ -1335,7 +1350,7 @@ function createQuickWindow() {
     skipTaskbar: true,
     alwaysOnTop: true,
     icon: appIconPath(),
-    title: '玄念5.0快捷面板',
+    title: '玄念6.0快捷面板',
     transparent: true,
     backgroundColor: '#00000000',
     webPreferences: {
@@ -1343,7 +1358,7 @@ function createQuickWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      backgroundThrottling: false,
+      backgroundThrottling: true,
     },
   });
   quickWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -1777,7 +1792,7 @@ function createStickyNoteWindow({ noteId = '', editNew = false, source = '', pre
     skipTaskbar: false,
     alwaysOnTop: true,
     icon: appIconPath(),
-    title: '玄念5.0便签',
+    title: '玄念6.0便签',
     transparent: true,
     backgroundColor: '#00000000',
     paintWhenInitiallyHidden: true,
@@ -1786,7 +1801,7 @@ function createStickyNoteWindow({ noteId = '', editNew = false, source = '', pre
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      backgroundThrottling: false,
+      backgroundThrottling: true,
     },
   });
   const webContentsId = win.webContents.id;
@@ -1854,7 +1869,7 @@ function createWindow() {
     minWidth: MAIN_WINDOW_MIN_WIDTH,
     minHeight: MAIN_WINDOW_MIN_HEIGHT,
     icon: appIconPath(),
-    title: '玄念5.0',
+    title: '玄念6.0',
     frame: process.platform === 'darwin',
     resizable: true,
     thickFrame: true,
@@ -2119,6 +2134,7 @@ function updateUninstallStoragePath(data) {
 }
 
 function loadData(options = {}) {
+  if (!options.localizeAssets && dataCache) return cloneDataSnapshot(dataCache);
   const base = readJson(userDataFile(), defaultData());
   const data = readJson(storageFileForData(base), base);
   const rawSettings = sanitizeSettings(data.settings);
@@ -2144,7 +2160,8 @@ function loadData(options = {}) {
     : [];
   const prepared = options.localizeAssets ? localizePersistentContent(merged) : merged;
   prepared.records = (prepared.records || []).map(normalizeClipboardRecord);
-  return prepared;
+  if (!options.localizeAssets) dataCache = prepared;
+  return cloneDataSnapshot(prepared);
 }
 
 function normalizeRetentionDays(value, fallback = DEFAULT_RECORD_RETENTION_DAYS) {
@@ -2292,7 +2309,8 @@ function saveData(data, options = {}) {
   if (path.resolve(storageFile).toLocaleLowerCase('en-US') !== path.resolve(primaryFile).toLocaleLowerCase('en-US')) {
     writeJson(storageFile, next, serialized);
   }
-  return next;
+  dataCache = next;
+  return cloneDataSnapshot(next);
 }
 
 function broadcastDataRefresh(data = null, options = {}) {
@@ -3979,7 +3997,7 @@ if (gotSingleInstanceLock) {
 app.whenReady().then(() => {
   runtimeLog(`app ready platform=${process.platform} arch=${process.arch} packaged=${app.isPackaged} appPath=${app.getAppPath()} resources=${process.resourcesPath || ''}`);
   app.setAppUserModelId('app.xuannian.desktop.rounded');
-  app.setLoginItemSettings({ openAtLogin: true, path: process.execPath });
+  app.setLoginItemSettings({ openAtLogin: true, path: startupExecutablePath() });
   Menu.setApplicationMenu(null);
   protectUserDataOnStartup();
   createWindow();
