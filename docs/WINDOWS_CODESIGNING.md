@@ -22,7 +22,7 @@ The Windows workflow supports certificate signing when these repository secrets 
 After these secrets are set, rerun the Windows packaging workflow and verify the result:
 
 ```powershell
-Get-AuthenticodeSignature .\XuanNian-6.0.1-Setup.exe
+Get-AuthenticodeSignature .\XuanNian-6.0.2-Setup.exe
 ```
 
 Expected result after real signing:

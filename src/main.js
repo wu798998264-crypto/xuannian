@@ -599,14 +599,14 @@ function createTray() {
   const iconPath = trayIconPath();
   const trayImage = iconPath ? nativeImage.createFromPath(iconPath) : nativeImage.createEmpty();
   tray = new Tray(trayImage.isEmpty() ? nativeImage.createEmpty() : trayImage);
-  tray.setToolTip('玄念6.0.1');
+  tray.setToolTip('玄念6.0.2');
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: '打开玄念6.0.1', click: showMainWindow },
+    { label: '打开玄念6.0.2', click: showMainWindow },
     { label: '打开快捷面板', click: showQuickWindow },
     { label: '设置', click: showSettingsWindow },
     { type: 'separator' },
     {
-      label: '退出玄念6.0.1',
+      label: '退出玄念6.0.2',
       click: () => {
         isQuitting = true;
         app.quit();
@@ -730,12 +730,16 @@ function candidateUserDataFiles() {
     'XuanNian4.0',
     'XuanNian5.0',
     'XuanNian6.0',
+    'XuanNian6.0.1',
+    'XuanNian6.0.2',
     '玄念',
     '玄念2.0',
     '玄念3.0',
     '玄念4.0',
     '玄念5.0',
     '玄念6.0',
+    '玄念6.0.1',
+    '玄念6.0.2',
     'app.xuannian.desktop',
     app.getName(),
   ].filter(Boolean));
@@ -1362,7 +1366,7 @@ function createQuickWindow() {
     skipTaskbar: true,
     alwaysOnTop: true,
     icon: appIconPath(),
-    title: '玄念6.0.1快捷面板',
+    title: '玄念6.0.2快捷面板',
     transparent: true,
     backgroundColor: '#00000000',
     webPreferences: {
@@ -1804,7 +1808,7 @@ function createStickyNoteWindow({ noteId = '', editNew = false, source = '', pre
     skipTaskbar: false,
     alwaysOnTop: true,
     icon: appIconPath(),
-    title: '玄念6.0.1便签',
+    title: '玄念6.0.2便签',
     transparent: true,
     backgroundColor: '#00000000',
     paintWhenInitiallyHidden: true,
@@ -1881,7 +1885,7 @@ function createWindow() {
     minWidth: MAIN_WINDOW_MIN_WIDTH,
     minHeight: MAIN_WINDOW_MIN_HEIGHT,
     icon: appIconPath(),
-    title: '玄念6.0.1',
+    title: '玄念6.0.2',
     frame: process.platform === 'darwin',
     resizable: true,
     thickFrame: true,

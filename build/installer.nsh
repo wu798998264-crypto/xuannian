@@ -43,45 +43,72 @@ Var XuanNianUpgradeStoragePath
 !macro customInit
   InitPluginsDir
   StrCpy $XuanNianUpgradeBackup "$PLUGINSDIR\xuannian-upgrade-backup"
-  !insertmacro BackupXuanNianData "$APPDATA\xuannian" "$XuanNianUpgradeBackup\default" DEFAULT
+  !insertmacro BackupXuanNianData "$APPDATA\玄念" "$XuanNianUpgradeBackup\stable" STABLE
+  !insertmacro BackupXuanNianData "$APPDATA\xuannian" "$XuanNianUpgradeBackup\legacy" LEGACY
 
   ReadRegStr $XuanNianUpgradeStoragePath HKCU "Software\XuanNian2.0" "StoragePath"
   ${If} $XuanNianUpgradeStoragePath != ""
+  ${AndIf} $XuanNianUpgradeStoragePath != "$APPDATA\玄念"
   ${AndIf} $XuanNianUpgradeStoragePath != "$APPDATA\xuannian"
     !insertmacro BackupXuanNianData "$XuanNianUpgradeStoragePath" "$XuanNianUpgradeBackup\custom" CUSTOM
   ${EndIf}
 !macroend
 
 !macro customInstall
-  !insertmacro RestoreXuanNianData "$XuanNianUpgradeBackup\default" "$APPDATA\xuannian" DEFAULT
+  !insertmacro RestoreXuanNianData "$XuanNianUpgradeBackup\stable" "$APPDATA\玄念" STABLE
+  !insertmacro RestoreXuanNianData "$XuanNianUpgradeBackup\legacy" "$APPDATA\xuannian" LEGACY
   ${If} $XuanNianUpgradeStoragePath != ""
+  ${AndIf} $XuanNianUpgradeStoragePath != "$APPDATA\玄念"
   ${AndIf} $XuanNianUpgradeStoragePath != "$APPDATA\xuannian"
     !insertmacro RestoreXuanNianData "$XuanNianUpgradeBackup\custom" "$XuanNianUpgradeStoragePath" CUSTOM
   ${EndIf}
+
+  Delete "$DESKTOP\玄念6.0.lnk"
+  Delete "$DESKTOP\玄念6.0.1.lnk"
+  Delete "$DESKTOP\玄念6.0.2.lnk"
+  Delete "$DESKTOP\XuanNian 6.0.lnk"
+  Delete "$DESKTOP\XuanNian 6.0.1.lnk"
+  Delete "$DESKTOP\XuanNian 6.0.2.lnk"
+  Delete "$SMPROGRAMS\玄念6.0.lnk"
+  Delete "$SMPROGRAMS\玄念6.0.1.lnk"
+  Delete "$SMPROGRAMS\玄念6.0.2.lnk"
+  Delete "$SMPROGRAMS\XuanNian 6.0.lnk"
+  Delete "$SMPROGRAMS\XuanNian 6.0.1.lnk"
+  Delete "$SMPROGRAMS\XuanNian 6.0.2.lnk"
+  RMDir "$SMPROGRAMS\玄念6.0"
+  RMDir "$SMPROGRAMS\玄念6.0.1"
+  RMDir "$SMPROGRAMS\玄念6.0.2"
 !macroend
 !endif
 
 !macro customUnInstall
-  ${If} ${isUpdated}
-    Goto keepData
-  ${EndIf}
+  DetailPrint "玄念卸载默认保留收藏文档、提示词、便签、灵感和附件。"
+!macroend
 
-  MessageBox MB_YESNO|MB_ICONQUESTION|MB_DEFBUTTON2 "是否同时删除玄念运行产生的数据、灵感、便签、快捷指令及转存附件？$\r$\n$\r$\n默认选择“否”，保留数据便于以后重新安装继续使用。" /SD IDNO IDNO keepData
+!macro customUnInstallSection
+  Section /o "删除收藏文档、提示词、便签、灵感和附件（默认不勾选）" SecDeleteXuanNianData
+    ${If} ${isUpdated}
+      Goto deleteDataDone
+    ${EndIf}
 
-  ReadRegStr $0 HKCU "Software\XuanNian2.0" "StoragePath"
-  RMDir /r "$APPDATA\xuannian"
+    MessageBox MB_YESNO|MB_ICONEXCLAMATION|MB_DEFBUTTON2 "确定要删除玄念收藏文档、提示词、便签、灵感、剪切板记录和转存附件吗？$\r$\n$\r$\n此操作不可恢复。默认建议不要删除。" /SD IDNO IDNO deleteDataDone
 
-  ${If} $0 != ""
-    Delete "$0\xuannian-data.json"
-    RMDir /r "$0\xuannian-assets"
-    RMDir "$0"
-  ${EndIf}
+    ReadRegStr $0 HKCU "Software\XuanNian2.0" "StoragePath"
+    RMDir /r "$APPDATA\玄念"
+    RMDir /r "$APPDATA\xuannian"
 
-  DeleteRegKey HKCU "Software\XuanNian2.0"
-  Goto dataChoiceDone
+    ${If} $0 != ""
+    ${AndIf} $0 != "$APPDATA\玄念"
+    ${AndIf} $0 != "$APPDATA\xuannian"
+      Delete "$0\xuannian-data.json"
+      RMDir /r "$0\xuannian-assets"
+      RMDir /r "$0\clipboard-images"
+      RMDir /r "$0\screenshots"
+      RMDir "$0"
+    ${EndIf}
 
-  keepData:
-  DeleteRegKey HKCU "Software\XuanNian2.0"
+    DeleteRegKey HKCU "Software\XuanNian2.0"
 
-  dataChoiceDone:
+    deleteDataDone:
+  SectionEnd
 !macroend
