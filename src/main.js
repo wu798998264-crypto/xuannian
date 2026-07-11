@@ -90,7 +90,16 @@ const MAIN_WINDOW_MIN_HEIGHT = 560;
 const RECENT_CACHE_LIMIT = 512;
 const SELF_CACHE_LIMIT = 256;
 const RESIZE_EDGES = new Set(['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw']);
+const STABLE_USER_DATA_DIR_NAME = '玄念';
 
+function configureStableUserDataPath() {
+  try {
+    const stableUserDataPath = path.join(app.getPath('appData'), STABLE_USER_DATA_DIR_NAME);
+    app.setPath('userData', stableUserDataPath);
+  } catch {}
+}
+
+configureStableUserDataPath();
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 if (!gotSingleInstanceLock) {
   app.quit();
@@ -590,14 +599,14 @@ function createTray() {
   const iconPath = trayIconPath();
   const trayImage = iconPath ? nativeImage.createFromPath(iconPath) : nativeImage.createEmpty();
   tray = new Tray(trayImage.isEmpty() ? nativeImage.createEmpty() : trayImage);
-  tray.setToolTip('玄念6.0');
+  tray.setToolTip('玄念6.0.1');
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: '打开玄念6.0', click: showMainWindow },
+    { label: '打开玄念6.0.1', click: showMainWindow },
     { label: '打开快捷面板', click: showQuickWindow },
     { label: '设置', click: showSettingsWindow },
     { type: 'separator' },
     {
-      label: '退出玄念6.0',
+      label: '退出玄念6.0.1',
       click: () => {
         isQuitting = true;
         app.quit();
@@ -736,6 +745,11 @@ function candidateUserDataFiles() {
   const primary = readJson(userDataFile(), null);
   const primaryStorage = primary?.settings?.storagePath;
   if (primaryStorage && path.isAbsolute(primaryStorage)) dirs.add(primaryStorage);
+  for (const dir of [...dirs]) {
+    const data = readJson(path.join(dir, 'xuannian-data.json'), null);
+    const storagePath = data?.settings?.storagePath;
+    if (storagePath && path.isAbsolute(storagePath)) dirs.add(storagePath);
+  }
   return [...dirs].map((dir) => path.join(dir, 'xuannian-data.json'));
 }
 
@@ -758,14 +772,12 @@ function protectUserDataOnStartup() {
   const currentRaw = readJson(primaryFile, null);
   backupStartupData(primaryFile);
   let merged = currentRaw && typeof currentRaw === 'object' ? currentRaw : defaultData();
-  const currentWeight = dataContentWeight(merged);
   let changed = false;
   for (const file of candidates) {
     if (file.toLocaleLowerCase('en-US') === primaryResolved) continue;
     const incoming = readJson(file, null);
     if (!incoming || typeof incoming !== 'object') continue;
-    const incomingWeight = dataContentWeight(incoming);
-    if (currentWeight > 0 && incomingWeight <= currentWeight + 5) continue;
+    backupStartupData(file);
     const beforeSerialized = JSON.stringify(merged);
     merged = mergeDataSnapshots(merged, incoming);
     if (JSON.stringify(merged) !== beforeSerialized) changed = true;
@@ -1350,7 +1362,7 @@ function createQuickWindow() {
     skipTaskbar: true,
     alwaysOnTop: true,
     icon: appIconPath(),
-    title: '玄念6.0快捷面板',
+    title: '玄念6.0.1快捷面板',
     transparent: true,
     backgroundColor: '#00000000',
     webPreferences: {
@@ -1792,7 +1804,7 @@ function createStickyNoteWindow({ noteId = '', editNew = false, source = '', pre
     skipTaskbar: false,
     alwaysOnTop: true,
     icon: appIconPath(),
-    title: '玄念6.0便签',
+    title: '玄念6.0.1便签',
     transparent: true,
     backgroundColor: '#00000000',
     paintWhenInitiallyHidden: true,
@@ -1869,7 +1881,7 @@ function createWindow() {
     minWidth: MAIN_WINDOW_MIN_WIDTH,
     minHeight: MAIN_WINDOW_MIN_HEIGHT,
     icon: appIconPath(),
-    title: '玄念6.0',
+    title: '玄念6.0.1',
     frame: process.platform === 'darwin',
     resizable: true,
     thickFrame: true,

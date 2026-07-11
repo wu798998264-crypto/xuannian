@@ -47,10 +47,10 @@ jobs:
           $portable = Get-ChildItem $env:XUANNIAN_BUILD_OUTPUT -Filter '*便携版.exe' | Select-Object -First 1
           if (-not $installer) { throw 'Windows installer EXE was not found.' }
           if (-not $portable) { throw 'Windows portable EXE was not found.' }
-          Copy-Item -LiteralPath $installer.FullName -Destination 'release-win/XuanNian-6.0.0-Setup.exe' -Force
-          Copy-Item -LiteralPath $portable.FullName -Destination 'release-win/XuanNian-6.0.0-Portable.exe' -Force
+          Copy-Item -LiteralPath $installer.FullName -Destination 'release-win/XuanNian-6.0.1-Setup.exe' -Force
+          Copy-Item -LiteralPath $portable.FullName -Destination 'release-win/XuanNian-6.0.1-Portable.exe' -Force
           Get-ChildItem release-win | Select-Object LastWriteTime,Length,Name | Format-Table -AutoSize
-          Get-AuthenticodeSignature -FilePath 'release-win/XuanNian-6.0.0-Setup.exe' | Format-List Status,SignatureType
+          Get-AuthenticodeSignature -FilePath 'release-win/XuanNian-6.0.1-Setup.exe' | Format-List Status,SignatureType
 
       - name: Upload Windows packages
         if: steps.build.outcome == 'success'
@@ -64,25 +64,28 @@ jobs:
         if: steps.build.outcome == 'success'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: xuannian-6.0-latest
+          tag_name: xuannian-6.0.1-latest
           target_commitish: main
-          name: XuanNian 6.0 all-platform latest
+          name: XuanNian 6.0.1 data migration fix
           body: |
             Download the package for your system directly from this Release. Do not download the GitHub Actions artifact zip unless you specifically need the raw CI artifact.
 
             Windows:
-            - Installer: XuanNian-6.0.0-Setup.exe
-            - Portable: XuanNian-6.0.0-Portable.exe
+            - Installer: XuanNian-6.0.1-Setup.exe
+            - Portable: XuanNian-6.0.1-Portable.exe
 
             macOS:
-            - Apple silicon M1/M2/M3/M4: XuanNian-6.0.0-arm64.dmg
-            - Intel Mac: XuanNian-6.0.0-x64.dmg
+            - Apple silicon M1/M2/M3/M4: XuanNian-6.0.1-arm64.dmg
+            - Intel Mac: XuanNian-6.0.1-x64.dmg
+
+            Fix in 6.0.1:
+            - Restores prompts/favorites that appeared missing after the 6.0 update by using a stable data directory and merging old version data directories on startup.
 
             Installation:
-            - Windows installer: run XuanNian-6.0.0-Setup.exe and follow the installer.
-            - Windows portable: put XuanNian-6.0.0-Portable.exe in a normal folder such as Desktop or D:\Apps, then double-click it. Do not run it from inside a zip archive.
+            - Windows installer: run XuanNian-6.0.1-Setup.exe and follow the installer.
+            - Windows portable: put XuanNian-6.0.1-Portable.exe in a normal folder such as Desktop or D:\Apps, then double-click it. Do not run it from inside a zip archive.
             - macOS: download the DMG matching your Mac chip, open it, drag the app to Applications, then open it from Applications.
-            - If macOS says the app is damaged because it is not notarized, run: sudo xattr -rd com.apple.quarantine "/Applications/玄念6.0.app"
+            - If macOS says the app is damaged because it is not notarized, run: sudo xattr -rd com.apple.quarantine "/Applications/玄念6.0.1.app"
 
             Note: Windows builds are not signed with a paid code signing certificate, so Smart App Control may block them on some PCs. macOS builds are ad-hoc signed but not Apple notarized.
           files: release-win/*.exe
@@ -95,9 +98,9 @@ jobs:
         if: steps.build.outcome != 'success'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: xuannian-6.0-latest
+          tag_name: xuannian-6.0.1-latest
           target_commitish: main
-          name: XuanNian 6.0 all-platform latest
+          name: XuanNian 6.0.1 data migration fix
           files: windows-build-debug.log
           overwrite_files: true
           draft: false
