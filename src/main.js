@@ -101,7 +101,7 @@ const RESIZE_EDGES = new Set(['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw']);
 const STABLE_USER_DATA_DIR_NAME = '玄念';
 const UPDATE_OWNER = 'wu798998264-crypto';
 const UPDATE_REPO = 'xuannian';
-const UPDATE_CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000;
+const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 let updateState = {
   status: 'idle',
   currentVersion: app.getVersion(),
