@@ -1,0 +1,190 @@
+name: Release XuanNian
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Build Windows installer and portable package
+    runs-on: windows-latest
+    env:
+      XUANNIAN_BUILD_OUTPUT: dist-win
+      XUANNIAN_SKIP_HELPER_BUILD: "1"
+      CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
+      CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Verify release version
+        shell: pwsh
+        run: |
+          $version = node -p "require('./package.json').version"
+          if ('${{ github.ref_type }}' -eq 'tag' -and '${{ github.ref_name }}' -ne "v$version") {
+            throw "Tag ${{ github.ref_name }} does not match package version v$version"
+          }
+      - name: Install dependencies
+        run: npm ci
+      - name: Build Windows packages
+        run: npm run dist:all
+      - name: Verify Windows update metadata
+        shell: pwsh
+        run: |
+          $version = node -p "require('./package.json').version"
+          $required = @(
+            "dist-win/XuanNian-$version-Setup.exe",
+            "dist-win/XuanNian-$version-Portable.exe",
+            "dist-win/latest.yml"
+          )
+          foreach ($file in $required) {
+            if (-not (Test-Path -LiteralPath $file)) { throw "Missing release file: $file" }
+          }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-windows
+          path: |
+            dist-win/XuanNian-*-Setup.exe
+            dist-win/XuanNian-*-Portable.exe
+            dist-win/latest.yml
+            dist-win/*.blockmap
+          if-no-files-found: error
+
+  build-macos:
+    name: Build macOS Intel and Apple silicon packages
+    runs-on: macos-latest
+    env:
+      CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+      CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Verify release version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./package.json').version")"
+          if [[ "${GITHUB_REF_TYPE}" == "tag" && "${GITHUB_REF_NAME}" != "v${version}" ]]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match package version v${version}" >&2
+            exit 1
+          fi
+      - name: Install dependencies
+        run: npm ci
+      - name: Create macOS icon
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/mac/icon.iconset
+          sips -z 16 16 src/xuannian-logo-256.png --out build/mac/icon.iconset/icon_16x16.png
+          sips -z 32 32 src/xuannian-logo-256.png --out build/mac/icon.iconset/icon_16x16@2x.png
+          sips -z 32 32 src/xuannian-logo-256.png --out build/mac/icon.iconset/icon_32x32.png
+          sips -z 64 64 src/xuannian-logo-256.png --out build/mac/icon.iconset/icon_32x32@2x.png
+          sips -z 128 128 src/xuannian-logo-256.png --out build/mac/icon.iconset/icon_128x128.png
+          sips -z 256 256 src/xuannian-logo-256.png --out build/mac/icon.iconset/icon_128x128@2x.png
+          sips -z 256 256 src/xuannian-logo-256.png --out build/mac/icon.iconset/icon_256x256.png
+          sips -z 512 512 src/xuannian-logo-256.png --out build/mac/icon.iconset/icon_256x256@2x.png
+          sips -z 512 512 src/xuannian-logo-256.png --out build/mac/icon.iconset/icon_512x512.png
+          sips -z 1024 1024 src/xuannian-logo-256.png --out build/mac/icon.iconset/icon_512x512@2x.png
+          iconutil -c icns build/mac/icon.iconset -o build/mac/icon.icns
+      - name: Create macOS builder config
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require('fs');
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          const build = JSON.parse(JSON.stringify(pkg.build || {}));
+          build.directories = { ...(build.directories || {}), output: 'dist-mac' };
+          build.files = [
+            'index.html', 'quick.html', 'sticky.html', 'screenshot-select.html',
+            'src/**/*', '!src/native/*.cs', '!src/native/*.exe', '!src/xuannian-logo.png', 'package.json',
+          ];
+          delete build.asarUnpack;
+          delete build.extraResources;
+          delete build.win;
+          delete build.nsis;
+          delete build.portable;
+          const signed = Boolean(process.env.CSC_LINK);
+          build.mac = {
+            icon: 'build/mac/icon.icns',
+            category: 'public.app-category.productivity',
+            ...(signed ? {} : { identity: '-' }),
+            hardenedRuntime: signed,
+            gatekeeperAssess: false,
+            target: ['dmg', 'zip'],
+            artifactName: 'XuanNian-${version}-${arch}.${ext}',
+          };
+          build.dmg = { artifactName: 'XuanNian-${version}-${arch}.dmg' };
+          fs.writeFileSync('build/electron-builder.mac.generated.json', JSON.stringify(build, null, 2));
+          NODE
+      - name: Build macOS packages
+        run: npx electron-builder --mac dmg zip --x64 --arm64 --publish never --config build/electron-builder.mac.generated.json
+      - name: Verify macOS packages and update metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f dist-mac/latest-mac.yml
+          test -n "$(find dist-mac -maxdepth 1 -name 'XuanNian-*-x64.dmg' -print -quit)"
+          test -n "$(find dist-mac -maxdepth 1 -name 'XuanNian-*-arm64.dmg' -print -quit)"
+          test -n "$(find dist-mac -maxdepth 1 -name 'XuanNian-*-x64.zip' -print -quit)"
+          test -n "$(find dist-mac -maxdepth 1 -name 'XuanNian-*-arm64.zip' -print -quit)"
+          for dmg in dist-mac/*.dmg; do hdiutil verify "$dmg"; done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-macos
+          path: |
+            dist-mac/XuanNian-*.dmg
+            dist-mac/XuanNian-*.zip
+            dist-mac/latest-mac.yml
+            dist-mac/*.blockmap
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    needs: [build-windows, build-macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: release
+          merge-multiple: true
+      - name: List release assets
+        run: find release -maxdepth 1 -type f -printf '%f\n' | sort
+      - name: Publish 6.1.0
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v6.1.0
+          target_commitish: main
+          name: 玄念 6.1.0
+          body: |
+            玄念 6.1.0 新增跨平台更新提醒与按系统下载能力。
+
+            - Windows 安装版：在软件内检查、下载并重启安装。
+            - Windows 便携版：只下载 Windows 便携版文件，不会下载 macOS 包。
+            - macOS：依据 Apple silicon / Intel 架构读取 macOS 更新元数据，不会下载 Windows 包。
+            - 更新继续使用稳定的应用标识和数据目录，不删除剪切板记录、收藏与转存附件。
+
+            Windows 下载：
+            - `XuanNian-6.1.0-Setup.exe`
+            - `XuanNian-6.1.0-Portable.exe`
+
+            macOS 下载：
+            - Apple silicon：`XuanNian-6.1.0-arm64.dmg`
+            - Intel：`XuanNian-6.1.0-x64.dmg`
+          files: release/*
+          draft: false
+          prerelease: false
+          make_latest: true
+          overwrite_files: true

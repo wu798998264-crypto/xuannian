@@ -1,7 +1,7 @@
 {
   "name": "xuannian",
-  "version": "6.0.2",
-  "description": "玄念本地剪切板、便签与灵感工具",
+  "version": "6.1.0",
+  "description": "玄念本地剪切板、收藏与置顶便签工具",
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
@@ -45,17 +45,28 @@
     },
     "portable": {
       "unpackDirName": false,
-      "artifactName": "玄念6.0.2-便携版.exe"
+      "artifactName": "XuanNian-${version}-Portable.exe"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "include": "build/installer.nsh",
-      "artifactName": "玄念6.0.2-安装包.exe"
-    }
+      "artifactName": "XuanNian-${version}-Setup.exe"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "wu798998264-crypto",
+        "repo": "xuannian",
+        "releaseType": "release"
+      }
+    ]
   },
   "devDependencies": {
     "electron": "^42.4.0",
     "electron-builder": "^26.15.3"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
   }
 }

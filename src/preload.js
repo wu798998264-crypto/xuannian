@@ -287,6 +287,21 @@ contextBridge.exposeInMainWorld('nativeAPI', {
     if (!result.ok) return { ...result.data.settings, __error: result.reason };
     return result.data.settings;
   },
+  async getUpdateState() {
+    return ipcRenderer.invoke('update:getState');
+  },
+  async checkForUpdates() {
+    return ipcRenderer.invoke('update:check');
+  },
+  async downloadUpdate() {
+    return ipcRenderer.invoke('update:download');
+  },
+  async installUpdate() {
+    return ipcRenderer.invoke('update:install');
+  },
+  onUpdateState(callback) {
+    ipcRenderer.on('update:state', (_event, nextState) => callback(nextState || {}));
+  },
   async setAlwaysOnTop(enabled) {
     return ipcRenderer.invoke('window:setAlwaysOnTop', enabled);
   },

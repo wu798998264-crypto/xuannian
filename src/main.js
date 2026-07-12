@@ -2,8 +2,10 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
-const { execFile, execFileSync, spawn } = require('child_process');
+const https = require('https');
+const { execFile, execFileSync, spawn, spawnSync } = require('child_process');
 const { Tray } = require('electron');
+const { autoUpdater } = require('electron-updater');
 
 let mainWindow;
 let quickWindow;
@@ -39,6 +41,12 @@ const STICKY_FREE_GRID_DEFAULT_WIDTH =
 const STICKY_FREE_GRID_DEFAULT_HEIGHT = 360;
 let tray;
 let isQuitting = false;
+let updateCheckTimer = null;
+let updateCheckInFlight = false;
+let installedUpdaterInitialized = false;
+let portableUpdateDownload = null;
+let lastUpdateLogKey = '';
+let lastUpdateBroadcastAt = 0;
 let alwaysOnTop = false;
 let quickHotkey = 'Ctrl+Alt+X';
 let screenshotHotkey = 'Ctrl+Alt+A';
@@ -91,6 +99,22 @@ const RECENT_CACHE_LIMIT = 512;
 const SELF_CACHE_LIMIT = 256;
 const RESIZE_EDGES = new Set(['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw']);
 const STABLE_USER_DATA_DIR_NAME = '玄念';
+const UPDATE_OWNER = 'wu798998264-crypto';
+const UPDATE_REPO = 'xuannian';
+const UPDATE_CHECK_INTERVAL_MS = 12 * 60 * 60 * 1000;
+let updateState = {
+  status: 'idle',
+  currentVersion: app.getVersion(),
+  version: '',
+  percent: 0,
+  message: '',
+  releaseNotes: '',
+  portable: process.platform === 'win32' && !!process.env.PORTABLE_EXECUTABLE_FILE,
+  manualInstall: false,
+  platform: process.platform,
+  supported: ['win32', 'darwin'].includes(process.platform),
+  downloadedFile: '',
+};
 
 function configureStableUserDataPath() {
   try {
@@ -221,6 +245,278 @@ function runtimeLog(message) {
     }
     fs.appendFileSync(file, `[${new Date().toISOString()}] ${message}\n`);
   } catch {}
+}
+
+function publicUpdateState() {
+  return { ...updateState };
+}
+
+function setUpdateState(patch = {}) {
+  const previousStatus = updateState.status;
+  updateState = { ...updateState, ...patch, currentVersion: app.getVersion() };
+  const progressBucket = updateState.status === 'downloading' ? Math.floor(Number(updateState.percent || 0) / 10) : '';
+  const logKey = `${updateState.status}:${progressBucket}:${updateState.version || ''}:${updateState.status === 'error' ? updateState.message : ''}`;
+  if (logKey !== lastUpdateLogKey) {
+    lastUpdateLogKey = logKey;
+    runtimeLog(`update state ${updateState.status} current=${updateState.currentVersion} next=${updateState.version || '-'} ${updateState.message || ''}`);
+  }
+  const now = Date.now();
+  if (updateState.status === 'downloading' && previousStatus === 'downloading' && Number(updateState.percent || 0) < 100 && now - lastUpdateBroadcastAt < 120) {
+    return publicUpdateState();
+  }
+  lastUpdateBroadcastAt = now;
+  if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+    mainWindow.webContents.send('update:state', publicUpdateState());
+  }
+  return publicUpdateState();
+}
+
+function normalizeReleaseNotes(notes) {
+  if (Array.isArray(notes)) return notes.map((item) => item?.note || item?.version || '').filter(Boolean).join('\n');
+  return String(notes || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function compareVersions(left, right) {
+  const parse = (value) => String(value || '').replace(/^v/i, '').split('-')[0].split('.').map((part) => Number(part) || 0);
+  const a = parse(left);
+  const b = parse(right);
+  for (let index = 0; index < Math.max(a.length, b.length, 3); index += 1) {
+    if ((a[index] || 0) !== (b[index] || 0)) return (a[index] || 0) > (b[index] || 0) ? 1 : -1;
+  }
+  return 0;
+}
+
+function requestJson(url, redirects = 0) {
+  return new Promise((resolve, reject) => {
+    const request = https.get(url, {
+      headers: {
+        Accept: 'application/vnd.github+json',
+        'User-Agent': `XuanNian/${app.getVersion()}`,
+        'X-GitHub-Api-Version': '2022-11-28',
+      },
+    }, (response) => {
+      const location = response.headers.location;
+      if (location && response.statusCode >= 300 && response.statusCode < 400 && redirects < 6) {
+        response.resume();
+        requestJson(new URL(location, url).toString(), redirects + 1).then(resolve, reject);
+        return;
+      }
+      let body = '';
+      response.setEncoding('utf8');
+      response.on('data', (chunk) => { body += chunk; });
+      response.on('end', () => {
+        if (response.statusCode < 200 || response.statusCode >= 300) {
+          reject(new Error(`GitHub 返回 ${response.statusCode}`));
+          return;
+        }
+        try {
+          resolve(JSON.parse(body));
+        } catch {
+          reject(new Error('更新信息格式无效'));
+        }
+      });
+    });
+    request.setTimeout(20000, () => request.destroy(new Error('检查更新超时')));
+    request.on('error', reject);
+  });
+}
+
+function downloadFile(url, destination, onProgress, redirects = 0) {
+  return new Promise((resolve, reject) => {
+    const request = https.get(url, {
+      headers: { 'User-Agent': `XuanNian/${app.getVersion()}` },
+    }, (response) => {
+      const location = response.headers.location;
+      if (location && response.statusCode >= 300 && response.statusCode < 400 && redirects < 8) {
+        response.resume();
+        downloadFile(new URL(location, url).toString(), destination, onProgress, redirects + 1).then(resolve, reject);
+        return;
+      }
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        response.resume();
+        reject(new Error(`下载更新失败（${response.statusCode}）`));
+        return;
+      }
+      const temporary = `${destination}.download`;
+      const total = Number(response.headers['content-length'] || 0);
+      let received = 0;
+      fs.mkdirSync(path.dirname(destination), { recursive: true });
+      const output = fs.createWriteStream(temporary);
+      response.on('data', (chunk) => {
+        received += chunk.length;
+        if (total > 0) onProgress?.(Math.min(100, (received / total) * 100));
+      });
+      response.pipe(output);
+      output.on('finish', () => {
+        output.close(() => {
+          try {
+            if (fs.existsSync(destination)) fs.unlinkSync(destination);
+            fs.renameSync(temporary, destination);
+            resolve(destination);
+          } catch (error) {
+            reject(error);
+          }
+        });
+      });
+      output.on('error', (error) => {
+        response.destroy();
+        try { fs.unlinkSync(temporary); } catch {}
+        reject(error);
+      });
+    });
+    request.setTimeout(30000, () => request.destroy(new Error('下载更新超时')));
+    request.on('error', reject);
+  });
+}
+
+function hasTrustedMacSignature() {
+  if (process.platform !== 'darwin' || !app.isPackaged) return false;
+  try {
+    const result = spawnSync('/usr/bin/codesign', ['-dv', '--verbose=4', process.execPath], { encoding: 'utf8' });
+    const details = `${result.stdout || ''}\n${result.stderr || ''}`;
+    return /Authority=Developer ID Application/i.test(details) && !/Signature=adhoc/i.test(details);
+  } catch {
+    return false;
+  }
+}
+
+async function checkManualPackageUpdate() {
+  const release = await requestJson(`https://api.github.com/repos/${UPDATE_OWNER}/${UPDATE_REPO}/releases/latest`);
+  const version = String(release?.tag_name || release?.name || '').replace(/^v/i, '').trim();
+  if (!version || compareVersions(version, app.getVersion()) <= 0) {
+    portableUpdateDownload = null;
+    return setUpdateState({ status: 'current', version: '', percent: 0, message: '当前已是最新版本', releaseNotes: '', downloadedFile: '' });
+  }
+  const assets = Array.isArray(release.assets) ? release.assets : [];
+  const expectedMacArch = process.arch === 'arm64' ? 'arm64' : 'x64';
+  const asset = process.platform === 'darwin'
+    ? assets.find((item) => new RegExp(`^XuanNian-\\d+\\.\\d+\\.\\d+-${expectedMacArch}\\.dmg$`, 'i').test(String(item?.name || '')))
+    : (assets.find((item) => /^XuanNian-\d+\.\d+\.\d+-Portable\.exe$/i.test(String(item?.name || '')))
+      || assets.find((item) => /便携版\.exe$/i.test(String(item?.name || ''))));
+  if (!asset?.browser_download_url) {
+    throw new Error(process.platform === 'darwin' ? `发布页中没有找到 ${expectedMacArch} 版 macOS 安装包` : '发布页中没有找到 Windows 便携版更新包');
+  }
+  portableUpdateDownload = { version, name: asset.name, url: asset.browser_download_url };
+  return setUpdateState({
+    status: 'available',
+    version,
+    percent: 0,
+    message: `发现新版本 ${version}`,
+    releaseNotes: normalizeReleaseNotes(release.body),
+    downloadedFile: '',
+  });
+}
+
+function initializeInstalledUpdater() {
+  if (installedUpdaterInitialized) return;
+  installedUpdaterInitialized = true;
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = false;
+  autoUpdater.allowPrerelease = false;
+  autoUpdater.logger = {
+    info: (message) => runtimeLog(`updater ${message}`),
+    warn: (message) => runtimeLog(`updater warning ${message}`),
+    error: (message) => runtimeLog(`updater error ${message}`),
+    debug: (message) => runtimeLog(`updater debug ${message}`),
+  };
+  autoUpdater.on('checking-for-update', () => setUpdateState({ status: 'checking', message: '正在检查更新…', percent: 0 }));
+  autoUpdater.on('update-available', (info) => setUpdateState({
+    status: 'available',
+    version: info?.version || '',
+    message: `发现新版本 ${info?.version || ''}`.trim(),
+    releaseNotes: normalizeReleaseNotes(info?.releaseNotes),
+    percent: 0,
+    downloadedFile: '',
+  }));
+  autoUpdater.on('update-not-available', () => setUpdateState({ status: 'current', version: '', message: '当前已是最新版本', releaseNotes: '', percent: 0, downloadedFile: '' }));
+  autoUpdater.on('download-progress', (progress) => setUpdateState({
+    status: 'downloading',
+    percent: Math.max(0, Math.min(100, Number(progress?.percent || 0))),
+    message: '正在下载更新…',
+  }));
+  autoUpdater.on('update-downloaded', (info) => setUpdateState({
+    status: 'downloaded',
+    version: info?.version || updateState.version,
+    percent: 100,
+    message: '更新已下载，重启后即可完成安装',
+  }));
+  autoUpdater.on('error', (error) => {
+    updateCheckInFlight = false;
+    setUpdateState({ status: 'error', message: error?.message || '更新失败，请稍后重试' });
+  });
+}
+
+async function checkForAppUpdates() {
+  if (!app.isPackaged || !updateState.supported) {
+    return setUpdateState({ status: 'current', message: app.isPackaged ? '当前系统暂不支持自动更新' : '开发预览版不检查更新' });
+  }
+  if (updateCheckInFlight || updateState.status === 'downloading') return publicUpdateState();
+  updateCheckInFlight = true;
+  setUpdateState({ status: 'checking', message: '正在检查更新…', percent: 0 });
+  try {
+    if (updateState.manualInstall) {
+      return await checkManualPackageUpdate();
+    }
+    initializeInstalledUpdater();
+    await autoUpdater.checkForUpdates();
+    return publicUpdateState();
+  } catch (error) {
+    return setUpdateState({ status: 'error', message: error?.message || '检查更新失败，请稍后重试' });
+  } finally {
+    updateCheckInFlight = false;
+  }
+}
+
+async function downloadAppUpdate() {
+  if (updateState.status === 'downloaded') return publicUpdateState();
+  if (updateState.status !== 'available') return checkForAppUpdates();
+  try {
+    setUpdateState({ status: 'downloading', message: '正在下载更新…', percent: 0 });
+    if (updateState.manualInstall) {
+      if (!portableUpdateDownload?.url) throw new Error('更新地址已失效，请重新检查更新');
+      const destination = path.join(app.getPath('downloads'), portableUpdateDownload.name);
+      await downloadFile(portableUpdateDownload.url, destination, (percent) => {
+        setUpdateState({ status: 'downloading', percent, message: process.platform === 'darwin' ? '正在下载 macOS 更新…' : '正在下载 Windows 便携版更新…' });
+      });
+      return setUpdateState({
+        status: 'downloaded',
+        percent: 100,
+        downloadedFile: destination,
+        message: process.platform === 'darwin' ? 'macOS 更新已下载，可以打开安装包' : '便携版更新已下载，请关闭当前版本后运行新文件',
+      });
+    }
+    initializeInstalledUpdater();
+    await autoUpdater.downloadUpdate();
+    return publicUpdateState();
+  } catch (error) {
+    return setUpdateState({ status: 'error', message: error?.message || '下载更新失败，请稍后重试' });
+  }
+}
+
+function installAppUpdate() {
+  if (updateState.status !== 'downloaded') return false;
+  if (updateState.manualInstall) {
+    if (updateState.downloadedFile && fs.existsSync(updateState.downloadedFile)) {
+      if (process.platform === 'darwin') shell.openPath(updateState.downloadedFile);
+      else shell.showItemInFolder(updateState.downloadedFile);
+      return true;
+    }
+    return false;
+  }
+  backupStartupData(storageFileForData(loadData()));
+  isQuitting = true;
+  autoUpdater.quitAndInstall(false, true);
+  return true;
+}
+
+function initializeAutoUpdater() {
+  const portable = process.platform === 'win32' && !!process.env.PORTABLE_EXECUTABLE_FILE;
+  const manualInstall = portable || (process.platform === 'darwin' && !hasTrustedMacSignature());
+  updateState = { ...updateState, currentVersion: app.getVersion(), portable, manualInstall };
+  if (app.isPackaged && updateState.supported && !manualInstall) initializeInstalledUpdater();
+  setTimeout(() => checkForAppUpdates(), 12000);
+  updateCheckTimer = setInterval(() => checkForAppUpdates(), UPDATE_CHECK_INTERVAL_MS);
+  updateCheckTimer.unref?.();
 }
 
 process.on('uncaughtException', (error) => {
@@ -599,14 +895,14 @@ function createTray() {
   const iconPath = trayIconPath();
   const trayImage = iconPath ? nativeImage.createFromPath(iconPath) : nativeImage.createEmpty();
   tray = new Tray(trayImage.isEmpty() ? nativeImage.createEmpty() : trayImage);
-  tray.setToolTip('玄念6.0.2');
+  tray.setToolTip(`玄念${app.getVersion()}`);
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: '打开玄念6.0.2', click: showMainWindow },
+    { label: `打开玄念${app.getVersion()}`, click: showMainWindow },
     { label: '打开快捷面板', click: showQuickWindow },
     { label: '设置', click: showSettingsWindow },
     { type: 'separator' },
     {
-      label: '退出玄念6.0.2',
+      label: `退出玄念${app.getVersion()}`,
       click: () => {
         isQuitting = true;
         app.quit();
@@ -1366,7 +1662,7 @@ function createQuickWindow() {
     skipTaskbar: true,
     alwaysOnTop: true,
     icon: appIconPath(),
-    title: '玄念6.0.2快捷面板',
+    title: `玄念${app.getVersion()}快捷面板`,
     transparent: true,
     backgroundColor: '#00000000',
     webPreferences: {
@@ -1808,7 +2104,7 @@ function createStickyNoteWindow({ noteId = '', editNew = false, source = '', pre
     skipTaskbar: false,
     alwaysOnTop: true,
     icon: appIconPath(),
-    title: '玄念6.0.2便签',
+    title: `玄念${app.getVersion()}便签`,
     transparent: true,
     backgroundColor: '#00000000',
     paintWhenInitiallyHidden: true,
@@ -1885,7 +2181,7 @@ function createWindow() {
     minWidth: MAIN_WINDOW_MIN_WIDTH,
     minHeight: MAIN_WINDOW_MIN_HEIGHT,
     icon: appIconPath(),
-    title: '玄念6.0.2',
+    title: `玄念${app.getVersion()}`,
     frame: process.platform === 'darwin',
     resizable: true,
     thickFrame: true,
@@ -4026,6 +4322,7 @@ app.whenReady().then(() => {
   mainWindow.setAlwaysOnTop(alwaysOnTop);
   registerAppHotkeys(data.settings);
   startClipboardWatcher();
+  initializeAutoUpdater();
 });
 }
 
@@ -4036,6 +4333,10 @@ app.on('before-quit', () => {
 
 app.on('will-quit', () => {
   runtimeLog('will-quit');
+  if (updateCheckTimer) {
+    clearInterval(updateCheckTimer);
+    updateCheckTimer = null;
+  }
   globalShortcut.unregisterAll();
   stopKeyboardHotkeyHook();
   stopMouseHotkeyHook();
@@ -4048,6 +4349,11 @@ app.on('will-quit', () => {
 });
 
 ipcMain.handle('data:load', () => loadData());
+
+ipcMain.handle('update:getState', () => publicUpdateState());
+ipcMain.handle('update:check', () => checkForAppUpdates());
+ipcMain.handle('update:download', () => downloadAppUpdate());
+ipcMain.handle('update:install', () => installAppUpdate());
 
 ipcMain.handle('records:save', (_event, records = []) => {
   const data = loadData();
