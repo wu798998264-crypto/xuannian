@@ -335,6 +335,16 @@ contextBridge.exposeInMainWorld('nativeAPI', {
   async selectStorageFolder(currentPath) {
     return ipcRenderer.invoke('dialog:selectStorageFolder', currentPath || '');
   },
+  async exportUserDataPackage() {
+    return ipcRenderer.invoke('data:exportPackage');
+  },
+  async importUserDataPackage() {
+    cache = null;
+    return ipcRenderer.invoke('data:importPackage');
+  },
+  async revealUserDataFolder() {
+    return ipcRenderer.invoke('data:revealFolder');
+  },
   async pickInspirationFiles() {
     return ipcRenderer.invoke('dialog:pickInspirationFiles');
   },

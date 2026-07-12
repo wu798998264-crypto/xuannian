@@ -3015,6 +3015,198 @@ function appStorageRoot(data = null) {
   return app.getPath('userData');
 }
 
+function currentStorageRoot() {
+  return appStorageRoot(loadData());
+}
+
+function copyPathRecursive(source, target) {
+  if (!source || !target || !fs.existsSync(source)) return;
+  const stat = fs.statSync(source);
+  if (stat.isDirectory()) {
+    fs.mkdirSync(target, { recursive: true });
+    for (const entry of fs.readdirSync(source)) {
+      copyPathRecursive(path.join(source, entry), path.join(target, entry));
+    }
+    return;
+  }
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.copyFileSync(source, target);
+}
+
+function exportFileNameStamp() {
+  const now = new Date();
+  const pad = (value) => String(value).padStart(2, '0');
+  return [
+    now.getFullYear(),
+    pad(now.getMonth() + 1),
+    pad(now.getDate()),
+    '-',
+    pad(now.getHours()),
+    pad(now.getMinutes()),
+    pad(now.getSeconds()),
+  ].join('');
+}
+
+function createZipFromDirectory(sourceDir, zipPath) {
+  if (fs.existsSync(zipPath)) fs.rmSync(zipPath, { force: true });
+  if (process.platform === 'win32') {
+    execFileSync('tar.exe', ['-a', '-c', '-f', zipPath, '-C', sourceDir, '.'], {
+      windowsHide: true,
+      timeout: 120000,
+    });
+    return;
+  }
+  execFileSync('zip', ['-qry', zipPath, '.'], {
+    cwd: sourceDir,
+    timeout: 120000,
+  });
+}
+
+function extractZipToDirectory(zipPath, targetDir) {
+  fs.mkdirSync(targetDir, { recursive: true });
+  if (process.platform === 'win32') {
+    execFileSync('tar.exe', ['-xf', zipPath, '-C', targetDir], {
+      windowsHide: true,
+      timeout: 120000,
+    });
+    return;
+  }
+  execFileSync('unzip', ['-q', zipPath, '-d', targetDir], {
+    timeout: 120000,
+  });
+}
+
+function findExportedDataFile(rootDir) {
+  const stack = [rootDir];
+  while (stack.length) {
+    const dir = stack.pop();
+    let entries = [];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isFile() && entry.name === 'xuannian-data.json') return full;
+      if (entry.isDirectory()) stack.push(full);
+    }
+  }
+  return '';
+}
+
+function rewriteImportedStoragePath(value, storageRoot) {
+  if (typeof value !== 'string' || !value) return value;
+  const normalized = value.replace(/\\/g, '/');
+  const filePrefix = /^file:\/\//i.test(normalized) ? 'file:///' : '';
+  const raw = normalized.replace(/^file:\/\/\/?/i, '');
+  const markers = ['/xuannian-assets/', '/clipboard-images/', '/screenshots/', '/drag-images/'];
+  for (const marker of markers) {
+    const index = raw.toLowerCase().indexOf(marker);
+    if (index === -1) continue;
+    const relative = raw.slice(index + 1).split('/').filter(Boolean);
+    const localPath = path.join(storageRoot, ...relative);
+    return filePrefix ? `file:///${localPath.replace(/\\/g, '/')}` : localPath;
+  }
+  return value;
+}
+
+function rewriteImportedDataPaths(value, storageRoot) {
+  if (Array.isArray(value)) return value.map((item) => rewriteImportedDataPaths(item, storageRoot));
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [
+      key,
+      key === 'storagePath' ? item : rewriteImportedDataPaths(item, storageRoot),
+    ]));
+  }
+  return rewriteImportedStoragePath(value, storageRoot);
+}
+
+async function exportUserDataPackage(ownerWindow = mainWindow) {
+  const data = loadData();
+  saveData(data, { skipLocalizeAssets: true });
+  const storageRoot = appStorageRoot(data);
+  const defaultPath = path.join(app.getPath('desktop'), `玄念收藏备份-${exportFileNameStamp()}.zip`);
+  const result = await dialog.showSaveDialog(ownerWindow || mainWindow, {
+    title: '导出玄念收藏数据包',
+    defaultPath,
+    filters: [{ name: 'ZIP 压缩包', extensions: ['zip'] }],
+  });
+  if (result.canceled || !result.filePath) return { ok: false, canceled: true };
+
+  const stagingRoot = fs.mkdtempSync(path.join(app.getPath('temp'), 'xuannian-export-'));
+  const packageRoot = path.join(stagingRoot, '玄念收藏数据包');
+  fs.mkdirSync(packageRoot, { recursive: true });
+  const entries = [
+    'xuannian-data.json',
+    'xuannian-assets',
+    'clipboard-images',
+    'screenshots',
+    'drag-images',
+  ];
+  for (const entry of entries) {
+    copyPathRecursive(path.join(storageRoot, entry), path.join(packageRoot, entry));
+  }
+  fs.writeFileSync(path.join(packageRoot, 'README.txt'), [
+    '玄念收藏数据包',
+    '',
+    '此压缩包用于迁移玄念收藏、提示词、便签、灵感、附件和相关图片数据。',
+    `导出时间：${new Date().toLocaleString()}`,
+    `原始数据目录：${storageRoot}`,
+    '',
+    '恢复到新电脑时，请先关闭玄念，再把压缩包内文件复制到新电脑的玄念数据目录。',
+    '默认数据目录：',
+    'Windows: %APPDATA%\\玄念',
+    'macOS: ~/Library/Application Support/玄念',
+  ].join('\r\n'), 'utf8');
+  createZipFromDirectory(packageRoot, result.filePath);
+  fs.rmSync(stagingRoot, { recursive: true, force: true });
+  return { ok: true, filePath: result.filePath, storageRoot };
+}
+
+async function importUserDataPackage(ownerWindow = mainWindow) {
+  const result = await dialog.showOpenDialog(ownerWindow || mainWindow, {
+    title: '导入玄念收藏数据包',
+    filters: [{ name: 'ZIP 压缩包', extensions: ['zip'] }],
+    properties: ['openFile'],
+  });
+  if (result.canceled || !result.filePaths?.[0]) return { ok: false, canceled: true };
+
+  const zipPath = result.filePaths[0];
+  const stagingRoot = fs.mkdtempSync(path.join(app.getPath('temp'), 'xuannian-import-'));
+  try {
+    extractZipToDirectory(zipPath, stagingRoot);
+    const dataFile = findExportedDataFile(stagingRoot);
+    if (!dataFile) return { ok: false, reason: '导入包里没有找到 xuannian-data.json。' };
+
+    const packageRoot = path.dirname(dataFile);
+    const importedRaw = readJson(dataFile, null);
+    if (!importedRaw || typeof importedRaw !== 'object') {
+      return { ok: false, reason: '导入包里的数据文件无法读取。' };
+    }
+
+    const current = loadData();
+    const storageRoot = appStorageRoot(current);
+    for (const entry of ['xuannian-assets', 'clipboard-images', 'screenshots', 'drag-images']) {
+      copyPathRecursive(path.join(packageRoot, entry), path.join(storageRoot, entry));
+    }
+
+    const imported = rewriteImportedDataPaths(importedRaw, storageRoot);
+    const merged = mergeDataSnapshots(current, imported);
+    const saved = saveData(merged, { skipLocalizeAssets: true });
+    sendDataChanged(saved);
+    return {
+      ok: true,
+      filePath: zipPath,
+      storageRoot,
+      notes: Array.isArray(imported.notes) ? imported.notes.length : 0,
+      inspirations: Array.isArray(imported.inspirations) ? imported.inspirations.length : 0,
+    };
+  } finally {
+    fs.rmSync(stagingRoot, { recursive: true, force: true });
+  }
+}
+
 function attachmentStorageDir(data = null, scope = 'attachments') {
   return path.join(appStorageRoot(data), 'xuannian-assets', scope);
 }
@@ -4725,6 +4917,25 @@ ipcMain.handle('dialog:selectStorageFolder', async (_event, currentPath = '') =>
     properties: ['openDirectory', 'createDirectory'],
   });
   return result.canceled ? '' : result.filePaths[0];
+});
+
+ipcMain.handle('data:exportPackage', async (event) => {
+  const result = await exportUserDataPackage(BrowserWindow.fromWebContents(event.sender));
+  if (result?.ok && result.filePath) shell.showItemInFolder(result.filePath);
+  return result;
+});
+
+ipcMain.handle('data:importPackage', async (event) => {
+  return importUserDataPackage(BrowserWindow.fromWebContents(event.sender));
+});
+
+ipcMain.handle('data:revealFolder', () => {
+  const storageRoot = currentStorageRoot();
+  fs.mkdirSync(storageRoot, { recursive: true });
+  const dataFile = path.join(storageRoot, 'xuannian-data.json');
+  if (fs.existsSync(dataFile)) shell.showItemInFolder(dataFile);
+  else shell.openPath(storageRoot);
+  return { ok: true, folder: storageRoot, dataFile };
 });
 
 ipcMain.handle('dialog:pickInspirationFiles', (event) => {

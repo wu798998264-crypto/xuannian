@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>玄念6.1.1</title>
+  <title>玄念6.1.2</title>
   <link rel="icon" href="src/xuannian-logo-256.png" />
   <style>
     :root{
@@ -931,6 +931,12 @@
             <input class="field-input" id="settingStorage" placeholder="本地存储路径" />
             <button class="ghost-btn" id="browseStorage">浏览</button>
           </div>
+          <div class="settings-inline">
+            <button class="ghost-btn" id="exportUserData" type="button">收藏导出</button>
+            <button class="ghost-btn" id="importUserData" type="button">收藏导入</button>
+            <button class="ghost-btn" id="revealUserData" type="button">打开数据文件夹</button>
+          </div>
+          <small class="setting-hint">导出包包含收藏、提示词、便签、灵感、附件和相关图片；导入会自动合并，不覆盖当前收藏。</small>
         </div>
         <div class="setting-card">
           <span>剪切板保存时间（天）</span>
@@ -1247,7 +1253,7 @@ function createBrowserFallbackAPI(){
     async deleteInspiration(id){ const data=read(); data.inspirations=data.inspirations.filter(x=>x.id!==id); write(data); return data.inspirations; },
     async getSettings(){ return read().settings; },
     async saveSettings(settings){ const data=read(); data.settings={...data.settings,...settings}; write(data); return data.settings; },
-    async getUpdateState(){ return {status:'current',currentVersion:'6.1.1',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false}; },
+    async getUpdateState(){ return {status:'current',currentVersion:'6.1.2',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false}; },
     async checkForUpdates(){ return this.getUpdateState(); },
     async downloadUpdate(){ return this.getUpdateState(); },
     async installUpdate(){ return false; },
@@ -1341,6 +1347,9 @@ function createUnifiedAPI(nativeApi, fallback){
     deleteInspiration: (id)=> nativeApi.deleteInspiration ? nativeApi.deleteInspiration(id) : fallback.deleteInspiration(id),
     getSettings: ()=> nativeApi.getSettings ? nativeApi.getSettings() : fallback.getSettings(),
     saveSettings: (settings)=> nativeApi.saveSettings ? nativeApi.saveSettings(settings) : fallback.saveSettings(settings),
+    exportUserDataPackage: ()=> nativeApi.exportUserDataPackage ? nativeApi.exportUserDataPackage() : Promise.resolve({ok:false, reason:'预览环境不支持导出'}),
+    importUserDataPackage: ()=> nativeApi.importUserDataPackage ? nativeApi.importUserDataPackage() : Promise.resolve({ok:false, reason:'预览环境不支持导入'}),
+    revealUserDataFolder: ()=> nativeApi.revealUserDataFolder ? nativeApi.revealUserDataFolder() : Promise.resolve({ok:false, reason:'预览环境不支持打开文件夹'}),
     getUpdateState: ()=> nativeApi.getUpdateState ? nativeApi.getUpdateState() : fallback.getUpdateState(),
     checkForUpdates: ()=> nativeApi.checkForUpdates ? nativeApi.checkForUpdates() : fallback.checkForUpdates(),
     downloadUpdate: ()=> nativeApi.downloadUpdate ? nativeApi.downloadUpdate() : fallback.downloadUpdate(),
@@ -1591,6 +1600,9 @@ function bindEvents(){
     if(!added) toast('未检测到新的可读取文本');
   });
   $('#browseStorage').addEventListener('click', browseStoragePath);
+  $('#exportUserData')?.addEventListener('click', exportUserDataPackage);
+  $('#importUserData')?.addEventListener('click', importUserDataPackage);
+  $('#revealUserData')?.addEventListener('click', revealUserDataFolder);
   $('#clearClipboardCache').addEventListener('click', clearClipboardCache);
   $('#showQuickGuide')?.addEventListener('click', showQuickPanelGuide);
   $('#replayOnboarding')?.addEventListener('click', replayOnboarding);
@@ -3839,6 +3851,39 @@ async function browseStoragePath(){
   toast('预览环境已禁用文件夹浏览，请手动输入路径或在桌面版中选择');
 }
 
+async function exportUserDataPackage(){
+  const result=await api.exportUserDataPackage?.();
+  if(result?.ok){
+    toast('收藏数据包已导出');
+    return;
+  }
+  if(result?.canceled) return;
+  await showInfoModal({title:'导出失败', message:result?.reason || '未能导出收藏数据包，请确认磁盘权限后重试。'});
+}
+
+async function importUserDataPackage(){
+  const confirmed=await showConfirmModal({
+    title:'导入收藏数据包',
+    message:'导入会把数据包里的收藏、提示词、便签、灵感和附件合并到当前玄念数据中，不会覆盖现有收藏。导入前建议先导出一份备份。',
+    confirmText:'选择导入包',
+  });
+  if(!confirmed) return;
+  const result=await api.importUserDataPackage?.();
+  if(result?.ok){
+    await loadData();
+    renderNoteProjects(); renderNotes(); renderStickyNotes(); renderClipboard();
+    toast('收藏数据包已导入并合并');
+    return;
+  }
+  if(result?.canceled) return;
+  await showInfoModal({title:'导入失败', message:result?.reason || '未能导入收藏数据包，请确认选择的是玄念导出的 zip 文件。'});
+}
+
+async function revealUserDataFolder(){
+  const result=await api.revealUserDataFolder?.();
+  if(!result?.ok) toast(result?.reason || '无法打开数据文件夹');
+}
+
 function normalizeHotkey(value){
   const raw=String(value || '').trim();
   if(!raw) return '';
@@ -4144,7 +4189,7 @@ function showUpdateDialog(){
   showModal(`
     <div data-update-dialog>
       <div class="modal-header"><h3>软件更新</h3><button class="modal-close" id="closeModal">×</button></div>
-      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '6.1.1')}</b><span>${update.version?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
+      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '6.1.2')}</b><span>${update.version?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
       <div class="modal-message">${escapeHtml(updateStatusText())}</div>
       ${busy||downloaded?`<div class="update-progress"><span style="width:${downloaded?100:progress}%"></span></div>`:''}
       ${update.releaseNotes?`<div class="update-notes">${escapeHtml(update.releaseNotes)}</div>`:''}
