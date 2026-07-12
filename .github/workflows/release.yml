@@ -151,6 +151,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          version="$(node -p "require('./package.json').version")"
           test -f dist-mac/latest-mac.yml
           test -n "$(find dist-mac -maxdepth 1 -name 'XuanNian-*-x64.dmg' -print -quit)"
           test -n "$(find dist-mac -maxdepth 1 -name 'XuanNian-*-arm64.dmg' -print -quit)"
