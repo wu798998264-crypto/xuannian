@@ -60,9 +60,6 @@ jobs:
   build-macos:
     name: Build macOS Intel and Apple silicon packages
     runs-on: macos-latest
-    env:
-      CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
-      CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -114,12 +111,11 @@ jobs:
           delete build.win;
           delete build.nsis;
           delete build.portable;
-          const signed = Boolean(process.env.CSC_LINK);
           build.mac = {
             icon: 'build/mac/icon.icns',
             category: 'public.app-category.productivity',
-            ...(signed ? {} : { identity: '-' }),
-            hardenedRuntime: signed,
+            identity: '-',
+            hardenedRuntime: false,
             gatekeeperAssess: false,
             target: ['dmg', 'zip'],
             artifactName: 'XuanNian-${version}-${arch}.${ext}',
