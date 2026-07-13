@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>玄念6.1.3快捷面板</title>
+  <title>玄念6.1.4快捷面板</title>
   <style>
     :root{--panel:#fff;--soft:#f6f6f6;--text:#262626;--muted:#888;--line:#e9e9e9;--black:#242424;--blue:#2d7dff;--green:#42b95d;--yellow:#d9a21e;--purple:#9c68e8;--scroll-track:#f0f0f0;--scroll-thumb:#cfcfcf}
     body.dark{--panel:#242424;--soft:#303030;--text:#f4f4f4;--muted:#aaa;--line:#3f3f3f;--black:#efefef;--scroll-track:#303030;--scroll-thumb:#666}
@@ -32,6 +32,10 @@
     .bar.image{background:var(--green)}.bar.link{background:var(--yellow)}.bar.file{background:var(--purple)}
     .title{font-size:14px;font-weight:900;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     .text{font-size:13px;line-height:1.5;margin-top:4px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+    .text.color-code-row{display:flex;align-items:center;gap:9px;-webkit-line-clamp:initial;-webkit-box-orient:initial}
+    .color-swatch{width:42px;height:42px;flex:0 0 42px;border-radius:10px;border:1px solid var(--line);box-shadow:inset 0 0 0 1px rgba(255,255,255,.32);background-image:linear-gradient(45deg,#d9d9d9 25%,transparent 25%),linear-gradient(-45deg,#d9d9d9 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#d9d9d9 75%),linear-gradient(-45deg,transparent 75%,#d9d9d9 75%);background-size:10px 10px;background-position:0 0,0 5px,5px -5px,-5px 0}
+    .color-swatch-fill{display:block;width:100%;height:100%;border-radius:9px}
+    .color-code-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     .time{font-size:11px;color:var(--muted);margin-top:6px}
     .item-actions{display:flex;align-items:center;gap:6px}
     .icon-btn{width:30px;height:30px;border-radius:10px;border:1px solid var(--line);background:var(--panel);color:var(--muted);display:grid;place-items:center;cursor:pointer}
@@ -163,6 +167,17 @@
     const state = { records: [], projects: [], notes: [], stickyProjects: [], stickyNotes: [], pinnedIds: new Set(), projectId: null, tab: savedQuickTab==='notes'?'notes':'clipboard', clipType: 'all', hotkeyParts: [], settings: {}, videoThumbObserver: null };
     const labels = { text:'文本', image:'图片', link:'链接', file:'文件' };
     function escapeHtml(str=''){ return String(str).replace(/[&<>'"]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[m])); }
+    function colorCodeFromText(text=''){
+      const value=String(text || '').trim();
+      const match=value.match(/^#?([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i);
+      return match ? `#${match[1]}` : '';
+    }
+    function renderColorAwareText(text=''){
+      const color=colorCodeFromText(text);
+      const label=escapeHtml(text);
+      if(!color) return `<div class="text">${label}</div>`;
+      return `<div class="text color-code-row"><span class="color-swatch" aria-hidden="true"><span class="color-swatch-fill" style="background:${color}"></span></span><span class="color-code-text">${label}</span></div>`;
+    }
     function nowText(ts){ const d=new Date(ts||Date.now()); return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; }
     function toast(message){
       const el=$('#quickToast');
@@ -574,7 +589,7 @@
         return `
         <div class="item" data-record="${item.id}">
           <div class="bar ${item.type}"></div>
-          <div class="item-main"><div class="item-head"><div class="title">${labels[item.type] || '文本'}</div></div>${['image','file'].includes(item.type) ? `${renderRecordThumbs(item)}${mediaText}` : `<div class="text">${escapeHtml(item.content || '')}</div>`}<div class="time">${nowText(item.createdAt)}</div></div>
+          <div class="item-main"><div class="item-head"><div class="title">${labels[item.type] || '文本'}</div></div>${['image','file'].includes(item.type) ? `${renderRecordThumbs(item)}${mediaText}` : renderColorAwareText(item.content || '')}<div class="time">${nowText(item.createdAt)}</div></div>
           <div class="item-actions"><button class="icon-btn ${isRecordPinned(item.id)?'active':''}" data-pin-record="${item.id}" title="${isRecordPinned(item.id)?'取消置顶':'置顶为便签'}">${iconSvg(isRecordPinned(item.id)?'pinOff':'pin')}</button><button class="icon-btn" data-favorite-record="${item.id}" title="收藏">${iconSvg('bookmark')}</button></div>
         </div>`;
       }).join('') : '<div class="empty">暂无剪切板记录</div>';

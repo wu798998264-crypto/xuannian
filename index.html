@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>玄念6.1.3</title>
+  <title>玄念6.1.4</title>
   <link rel="icon" href="src/xuannian-logo-256.png" />
   <style>
     :root{
@@ -257,6 +257,10 @@
     #clipboardList .type-bar{min-height:42px;height:100%;align-self:stretch}
     #clipboardList .record-head{margin-bottom:4px;min-height:18px}
     #clipboardList .record-title{font-size:14px;line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+    #clipboardList .record-title.color-code-row{display:flex;align-items:center;gap:10px;-webkit-line-clamp:initial;-webkit-box-orient:initial}
+    .color-swatch{width:38px;height:38px;flex:0 0 38px;border-radius:10px;border:1px solid var(--line);box-shadow:inset 0 0 0 1px rgba(255,255,255,.32);background-image:linear-gradient(45deg,#d9d9d9 25%,transparent 25%),linear-gradient(-45deg,#d9d9d9 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#d9d9d9 75%),linear-gradient(-45deg,transparent 75%,#d9d9d9 75%);background-size:10px 10px;background-position:0 0,0 5px,5px -5px,-5px 0}
+    .color-swatch-fill{display:block;width:100%;height:100%;border-radius:9px}
+    .color-code-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     #clipboardList .record-time{margin-left:auto;color:var(--muted);font-size:11px;font-weight:600;white-space:nowrap}
     #clipboardList .record-sub{margin-top:4px;font-size:11px}
     #clipboardList .record-actions{gap:8px;padding-top:0}
@@ -1090,6 +1094,17 @@ function nowText(ts){
   return d.toDateString()===new Date().toDateString() ? `今天 ${h}:${m}` : `${d.getMonth()+1}/${d.getDate()} ${h}:${m}`;
 }
 function escapeHtml(str=''){ return String(str).replace(/[&<>'"]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[m])); }
+function colorCodeFromText(text=''){
+  const value=String(text || '').trim();
+  const match=value.match(/^#?([0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i);
+  return match ? `#${match[1]}` : '';
+}
+function renderColorAwareText(text=''){
+  const color=colorCodeFromText(text);
+  const label=escapeHtml(text);
+  if(!color) return `<div class="record-title">${label}</div>`;
+  return `<div class="record-title color-code-row"><span class="color-swatch" aria-hidden="true"><span class="color-swatch-fill" style="background:${color}"></span></span><span class="color-code-text">${label}</span></div>`;
+}
 function inferType(text=''){
   const value=String(text).trim();
   if(/^https?:\/\//i.test(value)) return 'link';
@@ -1253,7 +1268,7 @@ function createBrowserFallbackAPI(){
     async deleteInspiration(id){ const data=read(); data.inspirations=data.inspirations.filter(x=>x.id!==id); write(data); return data.inspirations; },
     async getSettings(){ return read().settings; },
     async saveSettings(settings){ const data=read(); data.settings={...data.settings,...settings}; write(data); return data.settings; },
-    async getUpdateState(){ return {status:'current',currentVersion:'6.1.3',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false}; },
+    async getUpdateState(){ return {status:'current',currentVersion:'6.1.4',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false}; },
     async checkForUpdates(){ return this.getUpdateState(); },
     async downloadUpdate(){ return this.getUpdateState(); },
     async installUpdate(){ return false; },
@@ -2011,7 +2026,7 @@ function renderClipboard(){
         <div class="record-head"><span class="record-type ${item.type}">${typeLabels[item.type]||item.type}</span><span class="record-time">${nowText(item.createdAt)}</span></div>
         ${item.type==='image' && !hasMultipleImages ? `<img class="thumb previewable-image" loading="lazy" data-preview-image="${escapeHtml(item.preview||'')}" src="${escapeHtml(item.preview||'')}" alt="预览" />` : ''}
         ${item.type==='file' || hasMultipleImages ? renderClipboardFileThumbs(item) : ''}
-        ${item.type==='image' ? (imageText?`<div class="record-title">${escapeHtml(imageText)}</div>`:'') : `<div class="record-title">${escapeHtml(item.content || '')}</div>`}
+        ${item.type==='image' ? (imageText ? renderColorAwareText(imageText) : '') : renderColorAwareText(item.content || '')}
         ${item.type!=='image' && item.sizeText ? `<div class="record-sub">${escapeHtml(item.sizeText)}</div>` : ''}
       </div>
       <div class="record-actions">
@@ -4189,7 +4204,7 @@ function showUpdateDialog(){
   showModal(`
     <div data-update-dialog>
       <div class="modal-header"><h3>软件更新</h3><button class="modal-close" id="closeModal">×</button></div>
-      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '6.1.3')}</b><span>${update.version?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
+      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '6.1.4')}</b><span>${update.version?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
       <div class="modal-message">${escapeHtml(updateStatusText())}</div>
       ${busy||downloaded?`<div class="update-progress"><span style="width:${downloaded?100:progress}%"></span></div>`:''}
       ${update.releaseNotes?`<div class="update-notes">${escapeHtml(update.releaseNotes)}</div>`:''}
