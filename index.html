@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>玄念6.1.4</title>
+  <title>玄念6.1.5</title>
   <link rel="icon" href="src/xuannian-logo-256.png" />
   <style>
     :root{
@@ -1105,6 +1105,10 @@ function renderColorAwareText(text=''){
   if(!color) return `<div class="record-title">${label}</div>`;
   return `<div class="record-title color-code-row"><span class="color-swatch" aria-hidden="true"><span class="color-swatch-fill" style="background:${color}"></span></span><span class="color-code-text">${label}</span></div>`;
 }
+function visibleNoteTitle(title=''){
+  const value=String(title || '').trim();
+  return value === '未命名收藏' ? '' : value;
+}
 function inferType(text=''){
   const value=String(text).trim();
   if(/^https?:\/\//i.test(value)) return 'link';
@@ -1268,7 +1272,7 @@ function createBrowserFallbackAPI(){
     async deleteInspiration(id){ const data=read(); data.inspirations=data.inspirations.filter(x=>x.id!==id); write(data); return data.inspirations; },
     async getSettings(){ return read().settings; },
     async saveSettings(settings){ const data=read(); data.settings={...data.settings,...settings}; write(data); return data.settings; },
-    async getUpdateState(){ return {status:'current',currentVersion:'6.1.4',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false}; },
+    async getUpdateState(){ return {status:'current',currentVersion:'6.1.5',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false}; },
     async checkForUpdates(){ return this.getUpdateState(); },
     async downloadUpdate(){ return this.getUpdateState(); },
     async installUpdate(){ return false; },
@@ -2136,15 +2140,12 @@ function notePayloadFromRecord(record, projectId){
   if(record.type==='image' && record.preview && !attachments.length){
     attachments=[{kind:'image',name:'剪切板图片',dataUrl:record.preview}];
   }
-  const firstFileName=files[0] ? String(files[0]).split(/[\\/]/).pop() : '';
   const recordText=String(record.content || '').trim();
   const content=recordText && recordText!=='图片内容' && !files.some(filePath=>String(filePath)===recordText) ? recordText : '';
   return {
     projectId,
     type:'text',
-    title: record.type==='text'
-      ? (String(record.content || '').slice(0,18) || '未命名收藏')
-      : (record.type==='file' ? (firstFileName || '文件记录') : (record.type==='image' ? '图片记录' : `${typeLabels[record.type]||record.type}记录`)),
+    title: '',
     content: ['image','file'].includes(record.type) ? content : (record.content || ''),
     note:'',
     attachments,
@@ -2387,11 +2388,12 @@ function renderNotes(){
   list.innerHTML=items.length ? items.map(item=>{
     const displayContent=noteDisplayContent(item);
     const attachments=renderNoteAttachments(item.attachments||[]);
+    const title=visibleNoteTitle(item.title);
     return `
     <article class="record copyable draggable-card" draggable="true" data-note-card="${item.id}" data-drag-note="${item.id}" title="点击复制；长按拖动可排序或移动分类">
       <div class="type-bar text"></div>
       <div>
-        <div class="record-head"><span class="note-card-title">${escapeHtml(item.title || '收藏')}</span><span class="record-time">${nowText(item.createdAt)}</span></div>
+        <div class="record-head">${title ? `<span class="note-card-title">${escapeHtml(title)}</span>` : ''}<span class="record-time">${nowText(item.createdAt)}</span></div>
         <div class="note-body">${attachments}${displayContent ? `<div class="record-title" data-copy-note-content="${item.id}">${escapeHtml(displayContent)}</div>` : ''}</div>
       </div>
       <div class="record-actions">
@@ -4204,7 +4206,7 @@ function showUpdateDialog(){
   showModal(`
     <div data-update-dialog>
       <div class="modal-header"><h3>软件更新</h3><button class="modal-close" id="closeModal">×</button></div>
-      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '6.1.4')}</b><span>${update.version?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
+      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '6.1.5')}</b><span>${update.version?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
       <div class="modal-message">${escapeHtml(updateStatusText())}</div>
       ${busy||downloaded?`<div class="update-progress"><span style="width:${downloaded?100:progress}%"></span></div>`:''}
       ${update.releaseNotes?`<div class="update-notes">${escapeHtml(update.releaseNotes)}</div>`:''}
@@ -4619,9 +4621,6 @@ function showNoteEditorModal(noteId=null, preset=null){
     if(!payload.title && !payload.content && !payload.attachments.length){
       toast('请输入收藏内容或添加附件');
       return;
-    }
-    if(!payload.title){
-      payload.title=payload.attachments[0] ? attachmentLabel(payload.attachments[0]) : '未命名收藏';
     }
     if(editing){
       state.notes=await api.updateNote(editing.id, payload);

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>玄念6.1.4快捷面板</title>
+  <title>玄念6.1.5快捷面板</title>
   <style>
     :root{--panel:#fff;--soft:#f6f6f6;--text:#262626;--muted:#888;--line:#e9e9e9;--black:#242424;--blue:#2d7dff;--green:#42b95d;--yellow:#d9a21e;--purple:#9c68e8;--scroll-track:#f0f0f0;--scroll-thumb:#cfcfcf}
     body.dark{--panel:#242424;--soft:#303030;--text:#f4f4f4;--muted:#aaa;--line:#3f3f3f;--black:#efefef;--scroll-track:#303030;--scroll-thumb:#666}
@@ -178,6 +178,10 @@
       if(!color) return `<div class="text">${label}</div>`;
       return `<div class="text color-code-row"><span class="color-swatch" aria-hidden="true"><span class="color-swatch-fill" style="background:${color}"></span></span><span class="color-code-text">${label}</span></div>`;
     }
+    function visibleNoteTitle(title=''){
+      const value=String(title || '').trim();
+      return value === '未命名收藏' ? '' : value;
+    }
     function nowText(ts){ const d=new Date(ts||Date.now()); return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`; }
     function toast(message){
       const el=$('#quickToast');
@@ -278,12 +282,6 @@
     function recordFiles(record){
       return (Array.isArray(record?.files) && record.files.length ? record.files : (record?.type==='file' ? parseFilePathsFromText(record.content) : [])).filter(Boolean);
     }
-    function suggestedRecordTitle(record, files=[]){
-      if(record?.type==='text') return String(record.content||'').slice(0,18) || '未命名收藏';
-      if(record?.type==='file') return files[0] ? String(files[0]).split(/[\\/]/).pop() : '文件记录';
-      if(record?.type==='image') return '图片记录';
-      return `${labels[record?.type]||record?.type||'内容'}记录`;
-    }
     async function saveRecordToProject(recordId, projectId, titleOverride=''){
       const record=state.records.find(item=>item.id===recordId);
       if(!record || !projectId || !api.addNote) return;
@@ -292,13 +290,12 @@
       if(record.type==='image' && record.preview && !attachments.length){
         attachments=[{kind:'image',name:'剪切板图片',dataUrl:record.preview}];
       }
-      const firstFileName=files[0] ? String(files[0]).split(/[\\/]/).pop() : '';
       const recordText=String(record.content || '').trim();
       const content=recordText && recordText!=='图片内容' && !files.some(filePath=>String(filePath)===recordText) ? recordText : '';
       await api.addNote({
         projectId,
         type:'text',
-        title:String(titleOverride || '').trim() || suggestedRecordTitle(record, files),
+        title:String(titleOverride || '').trim(),
         content:['image','file'].includes(record.type) ? content : (record.content || ''),
         note:'',
         attachments,
@@ -359,9 +356,8 @@
     function showFavoriteTitleDialog(recordId, projectId){
       const record=state.records.find(item=>item.id===recordId);
       if(!record) return;
-      const files=recordFiles(record);
       $('#pickerTitle').textContent='设置收藏标题';
-      $('#pickerList').innerHTML=`<input class="picker-input" id="favoriteTitleInput" value="${escapeHtml(suggestedRecordTitle(record, files))}" placeholder="收藏标题" /><div class="picker-actions"><button id="cancelFavoriteTitle">取消</button><button class="primary" id="confirmFavoriteTitle">保存</button></div>`;
+      $('#pickerList').innerHTML=`<input class="picker-input" id="favoriteTitleInput" value="" placeholder="收藏标题，不填则不显示" /><div class="picker-actions"><button id="cancelFavoriteTitle">取消</button><button class="primary" id="confirmFavoriteTitle">保存</button></div>`;
       $('#picker').classList.add('show');
       $('#cancelFavoriteTitle').onclick=()=>$('#picker').classList.remove('show');
       $('#confirmFavoriteTitle').onclick=async()=>{
@@ -661,9 +657,10 @@
       const items = state.notes.filter(n=>!state.projectId || n.projectId===state.projectId).sort((a,b)=>(a.order||0)-(b.order||0));
       $('#noteList').innerHTML = items.length ? items.map(item=>{
         const displayContent=noteDisplayContent(item);
+        const title=visibleNoteTitle(item.title);
         return `<div class="item" data-note="${item.id}">
           <div class="bar text"></div>
-          <div class="item-main"><div class="item-head"><div class="title">${escapeHtml(item.title || '收藏')}</div></div>${renderNoteThumbs(item)}${displayContent ? `<div class="text">${escapeHtml(displayContent)}</div>` : ''}</div>
+          <div class="item-main">${title ? `<div class="item-head"><div class="title">${escapeHtml(title)}</div></div>` : ''}${renderNoteThumbs(item)}${displayContent ? `<div class="text">${escapeHtml(displayContent)}</div>` : ''}</div>
           <div class="item-actions"><button class="icon-btn ${state.pinnedIds.has(item.id)?'active':''}" data-pin-note="${item.id}" title="${state.pinnedIds.has(item.id)?'取消置顶':'置顶'}">${iconSvg(state.pinnedIds.has(item.id)?'pinOff':'pin')}</button></div>
         </div>`;
       }).join('') : '<div class="empty">当前分类暂无收藏</div>';
