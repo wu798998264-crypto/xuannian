@@ -1,6 +1,6 @@
 {
   "name": "xuannian",
-  "version": "6.1.7",
+  "version": "6.1.8",
   "description": "玄念本地剪切板、收藏与置顶便签工具",
   "main": "src/main.js",
   "scripts": {
