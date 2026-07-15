@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>玄念6.1.6快捷面板</title>
+  <title>玄念6.1.7快捷面板</title>
   <style>
     :root{--panel:#fff;--soft:#f6f6f6;--text:#262626;--muted:#888;--line:#e9e9e9;--black:#242424;--blue:#2d7dff;--green:#42b95d;--yellow:#d9a21e;--purple:#9c68e8;--scroll-track:#f0f0f0;--scroll-thumb:#cfcfcf}
     body.dark{--panel:#242424;--soft:#303030;--text:#f4f4f4;--muted:#aaa;--line:#3f3f3f;--black:#efefef;--scroll-track:#303030;--scroll-thumb:#666}
@@ -17,6 +17,10 @@
     .tab{border:0;border-radius:12px;background:transparent;color:var(--muted);font-weight:900;font-size:15px;cursor:pointer}
     .tab.active{background:var(--black);color:#fff}
     body.dark .tab.active{color:#1f1f1f}
+    .quick-search-row{padding:0 12px 8px;border-bottom:1px solid var(--line);display:flex;justify-content:center}
+    .quick-search{width:min(260px,100%);height:30px;border:1px solid var(--line);border-radius:10px;background:var(--soft);color:var(--text);padding:0 10px;font:inherit;font-size:12px;font-weight:700;outline:none}
+    .quick-search::placeholder{color:var(--muted);font-weight:700}
+    .quick-search:focus{border-color:var(--muted);background:var(--panel)}
     .body{position:relative;flex:1;min-height:0;display:flex}
     .pane{display:none;flex:1;min-width:0;min-height:0}
     .pane.active{display:flex;flex-direction:column}
@@ -146,6 +150,7 @@
       <button class="tab active" data-tab="clipboard">剪切板</button>
       <button class="tab" data-tab="notes">收藏</button>
     </div>
+    <div class="quick-search-row"><input class="quick-search" id="quickSearchInput" type="search" placeholder="搜索剪切板" autocomplete="off" /></div>
     <div class="body">
       <section class="pane active" id="clipboardPane"><div class="filters" id="recordFilters"><button class="filter active" data-filter="all">全部</button><button class="filter" data-filter="text">文本</button><button class="filter" data-filter="image">图片</button><button class="filter" data-filter="link">链接</button><button class="filter" data-filter="file">文件</button></div><div class="list" id="recordList"></div></section>
       <section class="pane" id="notesPane">
@@ -164,7 +169,7 @@
     const $$ = (s) => Array.from(document.querySelectorAll(s));
     const api = window.nativeAPI || {};
     const savedQuickTab=localStorage.getItem('xuannian.quick.tab');
-    const state = { records: [], projects: [], notes: [], stickyProjects: [], stickyNotes: [], pinnedIds: new Set(), projectId: null, tab: savedQuickTab==='notes'?'notes':'clipboard', clipType: 'all', hotkeyParts: [], settings: {}, videoThumbObserver: null };
+    const state = { records: [], projects: [], notes: [], stickyProjects: [], stickyNotes: [], pinnedIds: new Set(), projectId: null, tab: savedQuickTab==='notes'?'notes':'clipboard', clipType: 'all', quickSearch: '', hotkeyParts: [], settings: {}, videoThumbObserver: null };
     const labels = { text:'文本', image:'图片', link:'链接', file:'文件' };
     function escapeHtml(str=''){ return String(str).replace(/[&<>'"]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[m])); }
     function colorCodeFromText(text=''){
@@ -198,6 +203,8 @@
       $$('.tab').forEach(btn=>btn.classList.toggle('active', btn.dataset.tab===tab));
       $('#clipboardPane').classList.toggle('active', tab==='clipboard');
       $('#notesPane').classList.toggle('active', tab==='notes');
+      const search=$('#quickSearchInput');
+      if(search) search.placeholder=tab==='clipboard' ? '搜索剪切板' : '搜索收藏';
       renderActiveTab();
     }
     function renderActiveTab(){
@@ -509,6 +516,21 @@
       const image=(item?.attachments || []).find(attachment=>attachment?.kind==='image' && (attachment.dataUrl || attachment.preview || attachment.path));
       return image ? imageSrc(image) : '';
     }
+    function normalizedSearch(){
+      return String(state.quickSearch || '').trim().toLowerCase();
+    }
+    function attachmentSearchText(attachments=[]){
+      return (attachments || []).map(item=>[item?.name,item?.path,item?.ext,item?.kind].filter(Boolean).join(' ')).join(' ');
+    }
+    function recordMatchesSearch(item, query){
+      if(!query) return true;
+      const files=(Array.isArray(item?.files) ? item.files : []).join(' ');
+      return [labels[item?.type] || item?.type, item?.content, item?.sizeText, files].filter(Boolean).join(' ').toLowerCase().includes(query);
+    }
+    function noteMatchesSearch(item, query){
+      if(!query) return true;
+      return [visibleNoteTitle(item?.title), item?.content, item?.note, attachmentSearchText(item?.attachments)].filter(Boolean).join(' ').toLowerCase().includes(query);
+    }
     function renderRecordThumbs(item){
       const files=(Array.isArray(item?.files) ? item.files : []).filter(Boolean).slice(0,8);
       if(files.length){
@@ -579,7 +601,11 @@
     }
     function renderRecords(){
       $$('.filter').forEach(btn=>btn.classList.toggle('active', btn.dataset.filter===state.clipType));
-      const items = state.records.filter(item=>state.clipType==='all' || item.type===state.clipType).slice(0,80);
+      const query=normalizedSearch();
+      const items = state.records
+        .filter(item=>state.clipType==='all' || item.type===state.clipType)
+        .filter(item=>recordMatchesSearch(item, query))
+        .slice(0,80);
       $('#recordList').innerHTML = items.length ? items.map(item=>{
         const mediaText=item.type==='image' && item.content && item.content!=='图片内容' ? `<div class="text">${escapeHtml(item.content || '')}</div>` : '';
         return `
@@ -588,7 +614,7 @@
           <div class="item-main"><div class="item-head"><div class="title">${labels[item.type] || '文本'}</div></div>${['image','file'].includes(item.type) ? `${renderRecordThumbs(item)}${mediaText}` : renderColorAwareText(item.content || '')}<div class="time">${nowText(item.createdAt)}</div></div>
           <div class="item-actions"><button class="icon-btn ${isRecordPinned(item.id)?'active':''}" data-pin-record="${item.id}" title="${isRecordPinned(item.id)?'取消置顶':'置顶为便签'}">${iconSvg(isRecordPinned(item.id)?'pinOff':'pin')}</button><button class="icon-btn" data-favorite-record="${item.id}" title="收藏">${iconSvg('bookmark')}</button></div>
         </div>`;
-      }).join('') : '<div class="empty">暂无剪切板记录</div>';
+      }).join('') : `<div class="empty">${query ? '没有匹配的剪切板记录' : '暂无剪切板记录'}</div>`;
       $('#recordList').onclick=(event)=>{
         const pin=event.target.closest('[data-pin-record]');
         if(pin){ event.stopPropagation(); toggleRecordPin(pin.dataset.pinRecord); return; }
@@ -654,7 +680,11 @@
       }).join('')}</div>`;
     }
     function renderNotes(){
-      const items = state.notes.filter(n=>!state.projectId || n.projectId===state.projectId).sort((a,b)=>(a.order||0)-(b.order||0));
+      const query=normalizedSearch();
+      const items = state.notes
+        .filter(n=>!state.projectId || n.projectId===state.projectId)
+        .filter(item=>noteMatchesSearch(item, query))
+        .sort((a,b)=>(a.order||0)-(b.order||0));
       $('#noteList').innerHTML = items.length ? items.map(item=>{
         const displayContent=noteDisplayContent(item);
         const title=visibleNoteTitle(item.title);
@@ -663,7 +693,7 @@
           <div class="item-main">${title ? `<div class="item-head"><div class="title">${escapeHtml(title)}</div></div>` : ''}${renderNoteThumbs(item)}${displayContent ? `<div class="text">${escapeHtml(displayContent)}</div>` : ''}</div>
           <div class="item-actions"><button class="icon-btn ${state.pinnedIds.has(item.id)?'active':''}" data-pin-note="${item.id}" title="${state.pinnedIds.has(item.id)?'取消置顶':'置顶'}">${iconSvg(state.pinnedIds.has(item.id)?'pinOff':'pin')}</button></div>
         </div>`;
-      }).join('') : '<div class="empty">当前分类暂无收藏</div>';
+      }).join('') : `<div class="empty">${query ? '没有匹配的收藏' : '当前分类暂无收藏'}</div>`;
       $('#noteList').onclick=async(event)=>{
         const pin=event.target.closest('[data-pin-note]');
         if(pin){
@@ -1003,6 +1033,10 @@
     }
     bindQuickDragStrip();
     $$('.tab').forEach(btn=>btn.onclick=()=>switchTab(btn.dataset.tab));
+    $('#quickSearchInput').addEventListener('input', event=>{
+      state.quickSearch=event.target.value;
+      renderActiveTab();
+    });
     $('#picker').addEventListener('click', event=>{ if(event.target.id==='picker') $('#picker').classList.remove('show'); });
     $('#recordFilters').onclick=(event)=>{
       const btn=event.target.closest('[data-filter]');

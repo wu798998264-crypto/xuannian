@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>玄念6.1.6</title>
+  <title>玄念6.1.7</title>
   <link rel="icon" href="src/xuannian-logo-256.png" />
   <style>
     :root{
@@ -470,6 +470,11 @@
     .about-video{border:1px solid var(--line);border-radius:18px;background:var(--panel);padding:18px;display:flex;align-items:center;justify-content:space-between;gap:16px}
     .about-video b{display:block;font-size:16px;margin-bottom:6px}
     .about-video p{margin:0;color:var(--muted);font-size:13px;line-height:1.6}
+    .sponsor-card{border:1px solid var(--line);border-radius:18px;background:var(--panel);padding:20px;display:grid;grid-template-columns:minmax(0,1fr) 150px;gap:18px;align-items:center}
+    .sponsor-card h2{margin:0 0 8px;font-size:18px}
+    .sponsor-card p{margin:0;color:var(--muted);font-size:13px;line-height:1.75}
+    .sponsor-note{margin-top:8px!important;font-size:12px!important}
+    .sponsor-qrcode{width:150px;height:150px;border-radius:14px;border:1px solid var(--line);background:#fff;object-fit:contain;padding:8px;justify-self:end}
     .about-footer{margin:0;text-align:center;color:var(--muted);font-size:13px;line-height:1.7}
 
     .chat-shell{flex:1;min-height:0;border:1px solid var(--line);border-radius:18px;background:var(--panel);display:flex;flex-direction:column;overflow:hidden}
@@ -756,6 +761,8 @@
       .categorized-view .note-main{padding:20px 14px 12px}
       .categorized-view .note-sidebar-inner{padding:20px 8px 10px}
       .about-video{align-items:flex-start;flex-direction:column}
+      .sponsor-card{grid-template-columns:1fr}
+      .sponsor-qrcode{justify-self:center}
       #noteList .record{gap:10px;padding:14px 10px}
       #noteList .record-actions{gap:6px;flex-direction:column}
       #noteList .icon-btn{width:32px;height:32px;border-radius:10px}
@@ -1020,6 +1027,15 @@
           </div>
           <button class="black-btn" type="button" data-open-url="https://www.bilibili.com/video/BV1g7jQ66EWv/?share_source=copy_web&amp;vd_source=715365844a77c07609da32295a3cd5a8">打开教学视频</button>
         </article>
+        <article class="sponsor-card">
+          <div>
+            <h2>赞助支持</h2>
+            <p>如果玄念对你有帮助，欢迎扫码随意赞助。金额不限，心意即可。</p>
+            <p>你的支持会用于后续功能优化、跨平台打包和长期维护。感谢每一位支持玄念的朋友。</p>
+            <p class="sponsor-note">赞助完全自愿，不影响任何功能使用。</p>
+          </div>
+          <img class="sponsor-qrcode" src="src/sponsor-qrcode.png" alt="赞助二维码" />
+        </article>
         <p class="about-footer">更新版本，功能反馈请关注开发者抖音或微信！</p>
       </div>
     </section>
@@ -1273,7 +1289,7 @@ function createBrowserFallbackAPI(){
     async deleteInspiration(id){ const data=read(); data.inspirations=data.inspirations.filter(x=>x.id!==id); write(data); return data.inspirations; },
     async getSettings(){ return read().settings; },
     async saveSettings(settings){ const data=read(); data.settings={...data.settings,...settings}; write(data); return data.settings; },
-    async getUpdateState(){ return {status:'current',currentVersion:'6.1.6',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false}; },
+    async getUpdateState(){ return {status:'current',currentVersion:'6.1.7',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false}; },
     async checkForUpdates(){ return this.getUpdateState(); },
     async downloadUpdate(){ return this.getUpdateState(); },
     async installUpdate(){ return false; },
@@ -4207,7 +4223,7 @@ function showUpdateDialog(){
   showModal(`
     <div data-update-dialog>
       <div class="modal-header"><h3>软件更新</h3><button class="modal-close" id="closeModal">×</button></div>
-      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '6.1.6')}</b><span>${update.version?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
+      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '6.1.7')}</b><span>${update.version?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
       <div class="modal-message">${escapeHtml(updateStatusText())}</div>
       <p class="update-network-tip">提示：开启 VPN 后再检测更新，结果会更加准确。</p>
       ${busy||downloaded?`<div class="update-progress"><span style="width:${downloaded?100:progress}%"></span></div>`:''}
