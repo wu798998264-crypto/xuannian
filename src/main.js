@@ -6,6 +6,11 @@ const https = require('https');
 const { execFile, execFileSync, spawn, spawnSync } = require('child_process');
 const { Tray } = require('electron');
 const { autoUpdater } = require('electron-updater');
+const {
+  CoalescedAtomicJsonWriter,
+  readJsonWithRecoverySync,
+  writeJsonAtomicSync,
+} = require('./data-persistence');
 
 let mainWindow;
 let quickWindow;
@@ -83,6 +88,16 @@ let screenCapturerWarmup = null;
 let screenCapturerWarmupImage = null;
 let clipboardHelperRetryCount = 0;
 let dataCache = null;
+const dataWriter = new CoalescedAtomicJsonWriter({
+  onError: (error) => runtimeLog(`data persistence failed: ${error?.stack || error}`),
+});
+const recordsWriter = new CoalescedAtomicJsonWriter({
+  onError: (error) => runtimeLog(`clipboard journal persistence failed: ${error?.stack || error}`),
+});
+let lastPreparedDataWrite = null;
+let lastPreparedRecordsWrite = null;
+let quitAfterDataFlush = false;
+let quitFlushInProgress = false;
 const fileIconCache = new Map();
 const recentClipboardDigests = new Map();
 const recentClipboardSequences = new Map();
@@ -100,6 +115,7 @@ const RECENT_CACHE_LIMIT = 512;
 const SELF_CACHE_LIMIT = 256;
 const FILE_ICON_CACHE_LIMIT = 256;
 const STARTUP_MIGRATION_STATE_FILE = 'xuannian-migration-state.json';
+const RECORDS_JOURNAL_FILE = 'xuannian-records.json';
 const RESIZE_EDGES = new Set(['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw']);
 const STABLE_USER_DATA_DIR_NAME = '玄念';
 const UPDATE_OWNER = 'wu798998264-crypto';
@@ -925,6 +941,12 @@ function readJson(file, fallback) {
   }
 }
 
+function readDataJson(file, fallback) {
+  return readJsonWithRecoverySync(file, fallback, {
+    onRecover: ({ backupFile }) => runtimeLog(`restored data file from backup: ${backupFile}`),
+  });
+}
+
 function writeJson(file, data, serialized = '') {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.writeFileSync(file, serialized || JSON.stringify(data), 'utf8');
@@ -1058,11 +1080,11 @@ function candidateUserDataFiles() {
   const dirs = new Set([app.getPath('userData')]);
   for (const name of names) dirs.add(path.join(appData, name));
   for (const registryPath of registryStoragePaths()) dirs.add(registryPath);
-  const primary = readJson(userDataFile(), null);
+  const primary = readDataJson(userDataFile(), null);
   const primaryStorage = primary?.settings?.storagePath;
   if (primaryStorage && path.isAbsolute(primaryStorage)) dirs.add(primaryStorage);
   for (const dir of [...dirs]) {
-    const data = readJson(path.join(dir, 'xuannian-data.json'), null);
+    const data = readDataJson(path.join(dir, 'xuannian-data.json'), null);
     const storagePath = data?.settings?.storagePath;
     if (storagePath && path.isAbsolute(storagePath)) dirs.add(storagePath);
   }
@@ -1085,7 +1107,7 @@ function protectUserDataOnStartup() {
   const primaryFile = userDataFile();
   const primaryResolved = path.resolve(primaryFile).toLocaleLowerCase('en-US');
   const candidates = [...new Set(candidateUserDataFiles().map((file) => path.resolve(file)))];
-  const currentRaw = readJson(primaryFile, null);
+  const currentRaw = readDataJson(primaryFile, null);
   const migrationState = readJson(startupMigrationStateFile(), { version: 1, files: {} });
   const migratedFiles = migrationState && typeof migrationState.files === 'object' ? migrationState.files : {};
   const pendingCandidates = [];
@@ -1094,7 +1116,7 @@ function protectUserDataOnStartup() {
     if (key === primaryResolved) continue;
     const fingerprint = startupMigrationFingerprint(file);
     if (!fingerprint || migratedFiles[key] === fingerprint) continue;
-    const incoming = readJson(file, null);
+    const incoming = readDataJson(file, null);
     if (!incoming || typeof incoming !== 'object') continue;
     pendingCandidates.push({ file, key, fingerprint, incoming });
   }
@@ -1109,7 +1131,8 @@ function protectUserDataOnStartup() {
     migratedFiles[key] = fingerprint;
   }
   if (!currentRaw || changed) {
-    saveData(merged, { skipLocalizeAssets: true });
+    merged = applyRecordsJournal(merged);
+    saveData(merged, { skipLocalizeAssets: true, sync: true, clone: false });
   }
   if (pendingCandidates.length) {
     writeJson(startupMigrationStateFile(), { version: 1, files: migratedFiles });
@@ -2475,10 +2498,31 @@ function updateUninstallStoragePath(data) {
   ], { windowsHide: true }, () => {});
 }
 
+function recordsJournalTargets(data) {
+  return dataPersistenceTargets(data).map((file) => path.join(path.dirname(file), RECORDS_JOURNAL_FILE));
+}
+
+function applyRecordsJournal(data) {
+  const currentRevision = Number(data?.persistence?.recordsRevision || 0);
+  let latest = null;
+  for (const file of recordsJournalTargets(data)) {
+    const journal = readDataJson(file, null);
+    const revision = Number(journal?.revision || 0);
+    if (!Array.isArray(journal?.records) || revision <= currentRevision || revision <= Number(latest?.revision || 0)) continue;
+    latest = journal;
+  }
+  if (!latest) return data;
+  return {
+    ...data,
+    records: latest.records,
+    persistence: { ...(data.persistence || {}), recordsRevision: latest.revision },
+  };
+}
+
 function loadData(options = {}) {
-  if (!options.localizeAssets && dataCache) return cloneDataSnapshot(dataCache);
-  const base = readJson(userDataFile(), defaultData());
-  const data = readJson(storageFileForData(base), base);
+  if (!options.localizeAssets && dataCache) return options.clone === false ? dataCache : cloneDataSnapshot(dataCache);
+  const base = readDataJson(userDataFile(), defaultData());
+  const data = readDataJson(storageFileForData(base), base);
   const rawSettings = sanitizeSettings(data.settings);
   const settings = { ...defaultData().settings, ...rawSettings };
   if (!rawSettings.quickMenuHotkey || rawSettings.quickMenuHotkey === 'Shift+X') {
@@ -2500,10 +2544,10 @@ function loadData(options = {}) {
       order: Number(item.order || 0) || index + 1,
     }))
     : [];
-  const prepared = options.localizeAssets ? localizePersistentContent(merged) : merged;
+  const prepared = applyRecordsJournal(options.localizeAssets ? localizePersistentContent(merged) : merged);
   prepared.records = (prepared.records || []).map(normalizeClipboardRecord);
   if (!options.localizeAssets) dataCache = prepared;
-  return cloneDataSnapshot(prepared);
+  return options.clone === false ? prepared : cloneDataSnapshot(prepared);
 }
 
 function normalizeRetentionDays(value, fallback = DEFAULT_RECORD_RETENTION_DAYS) {
@@ -2637,27 +2681,108 @@ function pruneSavedData(data) {
   return next;
 }
 
-function saveData(data, options = {}) {
+function dataPersistenceTargets(data) {
+  const primaryFile = userDataFile();
+  const storageFile = storageFileForData(data);
+  const targets = [primaryFile];
+  if (path.resolve(storageFile).toLocaleLowerCase('en-US') !== path.resolve(primaryFile).toLocaleLowerCase('en-US')) {
+    targets.push(storageFile);
+  }
+  return targets;
+}
+
+function loadMutableData() {
+  if (!dataCache) loadData({ clone: false });
+  return dataCache;
+}
+
+function saveRecordsDataWithPersistence(data) {
+  const revision = Math.max(Date.now(), Number(data?.persistence?.recordsRevision || 0) + 1);
+  const next = pruneSavedData({
+    ...data,
+    persistence: { ...(data.persistence || {}), recordsRevision: revision },
+  });
+  const targets = recordsJournalTargets(next);
+  const serialized = JSON.stringify({ version: 1, revision, records: next.records });
+  lastPreparedRecordsWrite = { targets, serialized };
+  const persistence = recordsWriter.enqueue(targets, serialized);
+  persistence.catch(() => {});
+  dataCache = next;
+  return { data: next, persistence };
+}
+
+function saveRecordsData(data) {
+  return saveRecordsDataWithPersistence(data).data;
+}
+
+async function saveRecordsDataDurable(data) {
+  const saved = saveRecordsDataWithPersistence(data);
+  await saved.persistence;
+  return saved.data;
+}
+
+function saveDataWithPersistence(data, options = {}) {
   const base = normalizeLegacyStickyData({ ...data, settings: { ...defaultData().settings, ...sanitizeSettings(data.settings) } });
+  const currentRecordsRevision = Number(dataCache?.persistence?.recordsRevision || 0);
+  base.persistence = {
+    ...(base.persistence || {}),
+    recordsRevision: Math.max(Date.now(), currentRecordsRevision + 1, Number(base.persistence?.recordsRevision || 0) + 1),
+  };
   const repairedNotes = repairProjectList(base.noteProjects, base.notes, 'cp');
   base.noteProjects = repairedNotes.projects;
   base.notes = repairedNotes.items;
   const persistent = options.skipLocalizeAssets ? base : localizePersistentContent(base);
   const next = pruneSavedData(persistent);
   const serialized = JSON.stringify(next);
-  const primaryFile = userDataFile();
-  const storageFile = storageFileForData(next);
-  writeJson(primaryFile, next, serialized);
-  if (path.resolve(storageFile).toLocaleLowerCase('en-US') !== path.resolve(primaryFile).toLocaleLowerCase('en-US')) {
-    writeJson(storageFile, next, serialized);
+  const targets = dataPersistenceTargets(next);
+  lastPreparedDataWrite = { targets, serialized };
+  let persistence;
+  if (options.sync) {
+    for (const target of targets) writeJsonAtomicSync(target, serialized);
+    persistence = Promise.resolve();
+  } else {
+    persistence = dataWriter.enqueue(targets, serialized);
+    persistence.catch(() => {});
   }
   dataCache = next;
-  return cloneDataSnapshot(next);
+  return { data: options.clone === false ? next : cloneDataSnapshot(next), persistence };
+}
+
+function saveData(data, options = {}) {
+  return saveDataWithPersistence(data, options).data;
+}
+
+async function saveDataDurable(data, options = {}) {
+  const saved = saveDataWithPersistence(data, options);
+  await saved.persistence;
+  return saved.data;
+}
+
+async function flushDataWrites(timeoutMs = 5000) {
+  if (!dataWriter.hasPending() && !recordsWriter.hasPending()) return;
+  let timeout;
+  try {
+    await Promise.race([
+      Promise.all([dataWriter.flush(), recordsWriter.flush()]),
+      new Promise((_, reject) => {
+        timeout = setTimeout(() => reject(new Error('Timed out while flushing user data')), timeoutMs);
+      }),
+    ]);
+  } catch (error) {
+    runtimeLog(`data flush fallback: ${error?.stack || error}`);
+    const pendingWrites = [lastPreparedDataWrite, lastPreparedRecordsWrite].filter(Boolean);
+    if (!pendingWrites.length) throw error;
+    for (const write of pendingWrites) {
+      for (const target of write.targets) writeJsonAtomicSync(target, write.serialized);
+    }
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function broadcastDataRefresh(data = null, options = {}) {
   dataRevision += 1;
-  const next = data || loadData();
+  const next = data || loadData({ clone: false });
   if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed() && mainWindow.isVisible()) {
     if (options.recordsOnly) mainWindow.webContents.send('native-clipboard-records', next.records);
     else mainWindow.webContents.send('native-data-refresh');
@@ -2943,7 +3068,7 @@ async function backupStickyDraftToClipboard(payload = {}) {
   }
   lastClipboardDigest = fileDigest || imageDigest || textDigest;
 
-  const data = loadData();
+  const data = loadMutableData();
   if (useFileClipboard) {
     const record = clipboardRecordFromPayload({ type: 'files', files: attachmentFiles, action: 'copy', text });
     if (record) {
@@ -2973,7 +3098,7 @@ async function backupStickyDraftToClipboard(payload = {}) {
       source: 'sticky-backup',
     }, imageDigest);
   }
-  const saved = saveData(data, { skipLocalizeAssets: true });
+  const saved = await saveRecordsDataDurable(data);
   sendDataChanged(saved);
   return { ok: true, text: !!text, image: !!image, files: attachmentFiles.length };
 }
@@ -3154,8 +3279,8 @@ function rewriteImportedDataPaths(value, storageRoot) {
 }
 
 async function exportUserDataPackage(ownerWindow = mainWindow) {
-  const data = loadData();
-  saveData(data, { skipLocalizeAssets: true });
+  const data = loadData({ clone: false });
+  await saveDataDurable(data, { skipLocalizeAssets: true, clone: false });
   const storageRoot = appStorageRoot(data);
   const defaultPath = path.join(app.getPath('desktop'), `玄念收藏备份-${exportFileNameStamp()}.zip`);
   const result = await dialog.showSaveDialog(ownerWindow || mainWindow, {
@@ -3224,7 +3349,7 @@ async function importUserDataPackage(ownerWindow = mainWindow) {
 
     const imported = rewriteImportedDataPaths(importedRaw, storageRoot);
     const merged = mergeDataSnapshots(current, imported);
-    const saved = saveData(merged, { skipLocalizeAssets: true });
+    const saved = await saveDataDurable(merged, { skipLocalizeAssets: true, clone: false });
     sendDataChanged(saved);
     return {
       ok: true,
@@ -4082,7 +4207,7 @@ async function captureClipboardToData(payload = null, options = {}) {
     }
     if (isSelfClipboardDigest(baseDigest) || isSelfClipboardDigest(digest)) return false;
     if (!sequence && digest === lastClipboardDigest) return false;
-    const data = loadData();
+    const data = loadMutableData();
     lastClipboardDigest = digest;
     if (sequence) {
       lastCapturedClipboardSequence = sequence;
@@ -4090,7 +4215,7 @@ async function captureClipboardToData(payload = null, options = {}) {
     }
     rememberDigest(digest);
     moveExistingClipboardRecordToTop(data, record, digest);
-    const saved = saveData(data, { skipLocalizeAssets: true });
+    const saved = saveRecordsData(data);
     sendDataChanged(saved);
     return true;
   } finally {
@@ -4322,7 +4447,7 @@ async function captureScreenFallback() {
 
 function addClipboardRecord(record) {
   record = normalizeClipboardRecord(record);
-  const data = loadData();
+  const data = loadMutableData();
   const digest = record.clipboardDigest || `${record.type}:${record.preview || record.content || Date.now()}`;
   const exists = data.records.some((item) => (
     item.clipboardDigest === digest ||
@@ -4339,7 +4464,7 @@ function addClipboardRecord(record) {
       ...withRecordRetention(record, data.settings),
       clipboardDigest: digest,
     });
-    const saved = saveData(data, { skipLocalizeAssets: true });
+    const saved = saveRecordsData(data);
     sendDataChanged(saved);
   }
   return data.records;
@@ -4532,26 +4657,39 @@ if (gotSingleInstanceLock) {
 app.whenReady().then(() => {
   runtimeLog(`app ready platform=${process.platform} arch=${process.arch} packaged=${app.isPackaged} appPath=${app.getAppPath()} resources=${process.resourcesPath || ''}`);
   app.setAppUserModelId('app.xuannian.desktop.rounded');
-  app.setLoginItemSettings({ openAtLogin: true, path: startupExecutablePath() });
   Menu.setApplicationMenu(null);
   protectUserDataOnStartup();
   createWindow();
   createTray();
   scheduleQuickWindowPrewarm(40);
   scheduleStickyDraftPrewarm(80);
-  const data = loadData();
+  const data = loadData({ clone: false });
   updateUninstallStoragePath(data);
   alwaysOnTop = !!data.settings.alwaysOnTop;
   mainWindow.setAlwaysOnTop(alwaysOnTop);
   registerAppHotkeys(data.settings);
   startClipboardWatcher();
   initializeAutoUpdater();
+  setTimeout(() => {
+    if (!isQuitting) app.setLoginItemSettings({ openAtLogin: true, path: startupExecutablePath() });
+  }, 1200);
 });
 }
 
-app.on('before-quit', () => {
+app.on('before-quit', (event) => {
   runtimeLog('before-quit');
   isQuitting = true;
+  if (quitAfterDataFlush || (!dataWriter.hasPending() && !recordsWriter.hasPending())) return;
+  event.preventDefault();
+  stopClipboardWatcher();
+  if (quitFlushInProgress) return;
+  quitFlushInProgress = true;
+  flushDataWrites()
+    .catch((error) => runtimeLog(`data flush before quit failed: ${error?.stack || error}`))
+    .finally(() => {
+      quitAfterDataFlush = true;
+      app.quit();
+    });
 });
 
 app.on('will-quit', () => {
@@ -4571,23 +4709,23 @@ app.on('will-quit', () => {
   }
 });
 
-ipcMain.handle('data:load', () => loadData());
+ipcMain.handle('data:load', () => loadData({ clone: false }));
 
 ipcMain.handle('update:getState', () => publicUpdateState());
 ipcMain.handle('update:check', () => checkForAppUpdates());
 ipcMain.handle('update:download', () => downloadAppUpdate());
 ipcMain.handle('update:install', () => installAppUpdate());
 
-ipcMain.handle('records:save', (_event, records = []) => {
-  const data = loadData();
+ipcMain.handle('records:save', async (_event, records = []) => {
+  const data = loadMutableData();
   data.records = Array.isArray(records) ? records.map(normalizeClipboardRecord) : [];
-  const saved = saveData(data, { skipLocalizeAssets: true });
+  const saved = await saveRecordsDataDurable(data);
   sendDataChanged(saved);
   return saved.records;
 });
 
-ipcMain.handle('data:save', (_event, data) => {
-  const current = loadData();
+ipcMain.handle('data:save', async (_event, data) => {
+  const current = loadData({ clone: false });
   const incomingSettings = { ...current.settings, ...sanitizeSettings(data.settings) };
   const settingsChanged = JSON.stringify(incomingSettings) !== JSON.stringify(current.settings || {});
   const stickyRefreshNeeded =
@@ -4617,7 +4755,7 @@ ipcMain.handle('data:save', (_event, data) => {
       return { ok: false, reason: '快捷键已被其他软件占用，请换一个组合键。', data: current };
     }
   }
-  const saved = saveData({ ...data, settings: incomingSettings });
+  const saved = await saveDataDurable({ ...data, settings: incomingSettings }, { clone: false });
   updateUninstallStoragePath(saved);
   broadcastDataRefresh(saved, { notifySticky: stickyRefreshNeeded });
   if (settingsChanged) notifySettingsChanged(saved.settings);

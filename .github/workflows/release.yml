@@ -39,6 +39,8 @@ jobs:
         run: npm ci
       - name: Run performance regression checks
         run: npm run test:performance
+      - name: Run Electron runtime endurance probe
+        run: npm run test:runtime
       - name: Build Windows packages
         run: npm run dist:all
       - name: Verify Windows update metadata

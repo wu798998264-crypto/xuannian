@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>玄念6.1.10</title>
+  <title>玄念6.1.11</title>
   <link rel="icon" href="src/xuannian-logo-256.png" />
   <style>
     :root{
@@ -233,6 +233,7 @@
     .record.saved .icon-btn.favorite{color:#d3a300;background:#fff8da;border-color:#f1dfa0}
     body.dark .record.saved .icon-btn.favorite{background:#4d4523;border-color:#6c5a16;color:#ffd862}
     .empty{padding:70px 20px;text-align:center;color:var(--muted)}
+    .virtual-spacer{width:100%;height:0;pointer-events:none;visibility:hidden}
     .icon-btn.favorited{color:#d3a300;background:#fff8da;border-color:#f1dfa0}
     body.dark .icon-btn.favorited{background:#4d4523;border-color:#6c5a16;color:#ffd862}
     .menu-wrap{position:relative}
@@ -1065,6 +1066,10 @@ const state = {
   clipType: 'all',
   records: [],
   clipboardRenderLimit: 60,
+  noteVirtualStart: -1,
+  pendingNoteScrollId: '',
+  noteFilterCache: null,
+  renderFrames: {},
   noteProjects: [],
   notes: [],
   stickyProjects: [],
@@ -1099,10 +1104,21 @@ const state = {
 const nativeFileIconCache = new Map();
 const nativeFileIconRequests = new Map();
 const NATIVE_FILE_ICON_CACHE_LIMIT = 256;
+const NOTE_ROW_HEIGHT = 146;
+const NOTE_WINDOW_SIZE = 64;
+const NOTE_WINDOW_OVERSCAN = 8;
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
 const typeLabels = { all:'全部', text:'文本', image:'图片', link:'链接', file:'文件' };
+
+function scheduleRenderFrame(key, callback){
+  if(state.renderFrames[key]) cancelAnimationFrame(state.renderFrames[key]);
+  state.renderFrames[key]=requestAnimationFrame(()=>{
+    state.renderFrames[key]=null;
+    callback();
+  });
+}
 
 function uid(prefix='id'){ return `${prefix}_${Date.now()}_${Math.random().toString(16).slice(2,8)}`; }
 function noteItemsSource(){ return state.notes; }
@@ -1292,7 +1308,7 @@ function createBrowserFallbackAPI(){
     async deleteInspiration(id){ const data=read(); data.inspirations=data.inspirations.filter(x=>x.id!==id); write(data); return data.inspirations; },
     async getSettings(){ return read().settings; },
     async saveSettings(settings){ const data=read(); data.settings={...data.settings,...settings}; write(data); return data.settings; },
-    async getUpdateState(){ return {status:'current',currentVersion:'6.1.10',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false}; },
+    async getUpdateState(){ return {status:'current',currentVersion:'6.1.11',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false}; },
     async checkForUpdates(){ return this.getUpdateState(); },
     async downloadUpdate(){ return this.getUpdateState(); },
     async installUpdate(){ return false; },
@@ -1626,11 +1642,18 @@ function bindEvents(){
     hidePageCoach();
     action?.();
   });
-  $('#clipboardSearch').addEventListener('input', ()=>{ state.clipboardRenderLimit=60; renderClipboard(); });
-  $('#noteSearch').addEventListener('input', renderNotes);
-  $('#stickySearch').addEventListener('input', renderStickyNotes);
+  $('#clipboardSearch').addEventListener('input', ()=>{
+    state.clipboardRenderLimit=60;
+    scheduleRenderFrame('clipboard-search', renderClipboard);
+  });
+  $('#noteSearch').addEventListener('input', ()=>{
+    $('#noteList').scrollTop=0;
+    state.noteVirtualStart=-1;
+    scheduleRenderFrame('note-search', renderNotes);
+  });
+  $('#stickySearch').addEventListener('input', ()=>scheduleRenderFrame('sticky-search', renderStickyNotes));
   $('#clearClipboardSearch').addEventListener('click', ()=>{ $('#clipboardSearch').value=''; state.clipboardRenderLimit=60; renderClipboard(); });
-  $('#clearNoteSearch').addEventListener('click', ()=>{ $('#noteSearch').value=''; renderNotes(); });
+  $('#clearNoteSearch').addEventListener('click', ()=>{ $('#noteSearch').value=''; $('#noteList').scrollTop=0; state.noteVirtualStart=-1; renderNotes(); });
   $('#clearStickySearch').addEventListener('click', ()=>{ $('#stickySearch').value=''; renderStickyNotes(); });
   $('#closeAllStickyBtn').addEventListener('click', async()=>{
     const result=await api.closeAllStickyNotes();
@@ -1651,6 +1674,12 @@ function bindEvents(){
     if(state.clipboardRenderLimit>=total) return;
     state.clipboardRenderLimit=Math.min(total,state.clipboardRenderLimit+60);
     renderClipboard();
+  });
+  $('#noteList').addEventListener('scroll', ()=>{
+    scheduleRenderFrame('note-scroll', ()=>{
+      const start=Math.max(0,Math.floor($('#noteList').scrollTop/NOTE_ROW_HEIGHT)-NOTE_WINDOW_OVERSCAN);
+      if(start!==state.noteVirtualStart) renderNotes();
+    });
   });
   $('#manualClipboardRead')?.addEventListener('click', async ()=>{
     const added=await captureClipboardNow(true);
@@ -2393,7 +2422,13 @@ function renderNoteProjects(){
     state.activeNoteProject=projects[0]?.id || null;
   }
   wrap.innerHTML=projects.map(p=>`<button class="project-item ${p.id===state.activeNoteProject?'active':''}" draggable="true" data-drag-project="note" data-project-id="${p.id}" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</button>`).join('');
-  $$('[data-project-id]').forEach(btn=>btn.onclick=()=>{ state.activeNoteProject=btn.dataset.projectId; renderNoteProjects(); renderNotes(); });
+  $$('[data-project-id]').forEach(btn=>btn.onclick=()=>{
+    state.activeNoteProject=btn.dataset.projectId;
+    $('#noteList').scrollTop=0;
+    state.noteVirtualStart=-1;
+    renderNoteProjects();
+    renderNotes();
+  });
   bindCategoryDropTargets('note');
   bindProjectDragSort('note');
 }
@@ -2413,10 +2448,15 @@ function renderStickyProjects(){
 
 function filteredNotes(){
   const q=$('#noteSearch') ? $('#noteSearch').value.trim().toLowerCase() : '';
-  return noteItemsSource()
+  const source=noteItemsSource();
+  const key=`${state.activeNoteProject || ''}\n${q}`;
+  if(state.noteFilterCache?.source===source && state.noteFilterCache.key===key) return state.noteFilterCache.items;
+  const items=source
     .filter(x=>x.projectId===state.activeNoteProject)
     .filter(x=> !q || String(x.title||'').toLowerCase().includes(q) || String(x.content||'').toLowerCase().includes(q) || (x.note||'').toLowerCase().includes(q))
     .sort((a,b)=>Number(a.order||9999)-Number(b.order||9999) || Number(b.createdAt||0)-Number(a.createdAt||0));
+  state.noteFilterCache={source,key,items};
+  return items;
 }
 
 function filteredStickyNotes(){
@@ -2441,8 +2481,21 @@ function noteDisplayContent(item){
 function renderNotes(){
   resetVideoThumbObserver();
   const list=$('#noteList');
-  const items=filteredNotes();
-  list.innerHTML=items.length ? items.map(item=>{
+  const allItems=filteredNotes();
+  if(state.pendingNoteScrollId){
+    const targetIndex=allItems.findIndex(item=>item.id===state.pendingNoteScrollId);
+    if(targetIndex>=0) list.scrollTop=targetIndex*NOTE_ROW_HEIGHT;
+    state.pendingNoteScrollId='';
+  }
+  const desiredStart=Math.max(0,Math.floor(list.scrollTop/NOTE_ROW_HEIGHT)-NOTE_WINDOW_OVERSCAN);
+  const start=Math.min(desiredStart,Math.max(0,allItems.length-NOTE_WINDOW_SIZE));
+  const end=Math.min(allItems.length,start+NOTE_WINDOW_SIZE);
+  const items=allItems.slice(start,end);
+  state.noteVirtualStart=start;
+  const topSpacer=start ? `<div class="virtual-spacer" style="height:${start*NOTE_ROW_HEIGHT}px"></div>` : '';
+  const bottomCount=Math.max(0,allItems.length-end);
+  const bottomSpacer=bottomCount ? `<div class="virtual-spacer" style="height:${bottomCount*NOTE_ROW_HEIGHT}px"></div>` : '';
+  list.innerHTML=allItems.length ? `${topSpacer}${items.map(item=>{
     const displayContent=noteDisplayContent(item);
     const attachments=renderNoteAttachments(item.attachments||[]);
     const title=visibleNoteTitle(item.title);
@@ -2459,7 +2512,7 @@ function renderNotes(){
         <button class="icon-btn" data-delete-note="${item.id}" title="删除">${iconSvg('delete')}</button>
       </div>
     </article>`;
-  }).join('') : `<div class="empty">当前分类暂无收藏，可点击右上角“新建收藏”添加。</div>`;
+  }).join('')}${bottomSpacer}` : `<div class="empty">当前分类暂无收藏，可点击右上角“新建收藏”添加。</div>`;
   list.onclick=async(event)=>{
     if(event.target.closest('.record-actions,.previewable-image')) return;
     const card=event.target.closest('[data-note-card]');
@@ -4263,7 +4316,7 @@ function showUpdateDialog(){
   showModal(`
     <div data-update-dialog>
       <div class="modal-header"><h3>软件更新</h3><button class="modal-close" id="closeModal">×</button></div>
-      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '6.1.10')}</b><span>${update.version?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
+      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '6.1.11')}</b><span>${update.version?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
       <div class="modal-message">${escapeHtml(updateStatusText())}</div>
       <p class="update-network-tip">提示：开启 VPN 后再检测更新，结果会更加准确。</p>
       ${busy||downloaded?`<div class="update-progress"><span style="width:${downloaded?100:progress}%"></span></div>`:''}
@@ -4682,8 +4735,11 @@ function showNoteEditorModal(noteId=null, preset=null){
     }
     if(editing){
       state.notes=await api.updateNote(editing.id, payload);
+      state.pendingNoteScrollId=editing.id;
     }else{
+      const previousIds=new Set(state.notes.map(item=>item.id));
       state.notes=await api.addNote(payload);
+      state.pendingNoteScrollId=state.notes.find(item=>!previousIds.has(item.id))?.id || '';
     }
     state.activeNoteProject=payload.projectId;
     state.pendingNoteAttachments=[];

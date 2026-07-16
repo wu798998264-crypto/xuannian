@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>玄念6.1.10快捷面板</title>
+  <title>玄念6.1.11快捷面板</title>
   <style>
     :root{--panel:#fff;--soft:#f6f6f6;--text:#262626;--muted:#888;--line:#e9e9e9;--black:#242424;--blue:#2d7dff;--green:#42b95d;--yellow:#d9a21e;--purple:#9c68e8;--scroll-track:#f0f0f0;--scroll-thumb:#cfcfcf}
     body.dark{--panel:#242424;--soft:#303030;--text:#f4f4f4;--muted:#aaa;--line:#3f3f3f;--black:#efefef;--scroll-track:#303030;--scroll-thumb:#666}
@@ -30,6 +30,8 @@
     body.dark .filter.active{color:#1f1f1f}
     .list{flex:1;min-height:0;overflow-y:auto;padding:12px;scrollbar-gutter:stable}
     .item{display:grid;grid-template-columns:4px minmax(0,1fr) auto;gap:10px;padding:12px;border:1px solid var(--line);border-radius:14px;background:var(--soft);margin-bottom:10px;cursor:pointer;content-visibility:auto;contain-intrinsic-size:auto 84px}
+    #noteList .item{height:142px;min-height:142px;overflow:hidden}
+    .virtual-spacer{width:100%;height:0;pointer-events:none;visibility:hidden}
     .item-main{min-width:0}
     .item-head{display:flex;align-items:center;justify-content:space-between;gap:8px}
     .bar{border-radius:999px;min-height:42px;background:var(--blue)}
@@ -169,7 +171,10 @@
     const $$ = (s) => Array.from(document.querySelectorAll(s));
     const api = window.nativeAPI || {};
     const savedQuickTab=localStorage.getItem('xuannian.quick.tab');
-    const state = { records: [], projects: [], notes: [], stickyProjects: [], stickyNotes: [], pinnedIds: new Set(), projectId: null, tab: savedQuickTab==='notes'?'notes':'clipboard', clipType: 'all', quickSearch: '', hotkeyParts: [], settings: {}, videoThumbObserver: null };
+    const state = { records: [], projects: [], notes: [], stickyProjects: [], stickyNotes: [], pinnedIds: new Set(), projectId: null, tab: savedQuickTab==='notes'?'notes':'clipboard', clipType: 'all', quickSearch: '', hotkeyParts: [], settings: {}, videoThumbObserver: null, noteVirtualStart: -1, renderFrame: null, noteFilterCache: null };
+    const QUICK_NOTE_ROW_HEIGHT=152;
+    const QUICK_NOTE_WINDOW_SIZE=36;
+    const QUICK_NOTE_OVERSCAN=5;
     const labels = { text:'文本', image:'图片', link:'链接', file:'文件' };
     function escapeHtml(str=''){ return String(str).replace(/[&<>'"]/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[m])); }
     function colorCodeFromText(text=''){
@@ -634,7 +639,13 @@
     }
     function renderProjects(){
       $('#projectList').innerHTML = state.projects.map(p=>`<button class="project ${p.id===state.projectId?'active':''}" data-project="${p.id}">${escapeHtml(p.name)}</button>`).join('');
-      $$('[data-project]').forEach(btn=>btn.onclick=()=>{ state.projectId=btn.dataset.project; renderProjects(); renderNotes(); });
+      $$('[data-project]').forEach(btn=>btn.onclick=()=>{
+        state.projectId=btn.dataset.project;
+        $('#noteList').scrollTop=0;
+        state.noteVirtualStart=-1;
+        renderProjects();
+        renderNotes();
+      });
     }
     function noteDisplayContent(item){
       const content=String(item?.content || '').trim();
@@ -688,11 +699,27 @@
     function renderNotes(){
       resetVideoThumbObserver();
       const query=normalizedSearch();
-      const items = state.notes
-        .filter(n=>!state.projectId || n.projectId===state.projectId)
-        .filter(item=>noteMatchesSearch(item, query))
-        .sort((a,b)=>(a.order||0)-(b.order||0));
-      $('#noteList').innerHTML = items.length ? items.map(item=>{
+      const cacheKey=`${state.projectId || ''}\n${query}`;
+      let allItems=state.noteFilterCache?.source===state.notes && state.noteFilterCache.key===cacheKey
+        ? state.noteFilterCache.items
+        : null;
+      if(!allItems){
+        allItems=state.notes
+          .filter(n=>!state.projectId || n.projectId===state.projectId)
+          .filter(item=>noteMatchesSearch(item, query))
+          .sort((a,b)=>(a.order||0)-(b.order||0));
+        state.noteFilterCache={source:state.notes,key:cacheKey,items:allItems};
+      }
+      const list=$('#noteList');
+      const desiredStart=Math.max(0,Math.floor(list.scrollTop/QUICK_NOTE_ROW_HEIGHT)-QUICK_NOTE_OVERSCAN);
+      const start=Math.min(desiredStart,Math.max(0,allItems.length-QUICK_NOTE_WINDOW_SIZE));
+      const end=Math.min(allItems.length,start+QUICK_NOTE_WINDOW_SIZE);
+      const items=allItems.slice(start,end);
+      state.noteVirtualStart=start;
+      const topSpacer=start ? `<div class="virtual-spacer" style="height:${start*QUICK_NOTE_ROW_HEIGHT}px"></div>` : '';
+      const bottomCount=Math.max(0,allItems.length-end);
+      const bottomSpacer=bottomCount ? `<div class="virtual-spacer" style="height:${bottomCount*QUICK_NOTE_ROW_HEIGHT}px"></div>` : '';
+      list.innerHTML = allItems.length ? `${topSpacer}${items.map(item=>{
         const displayContent=noteDisplayContent(item);
         const title=visibleNoteTitle(item.title);
         return `<div class="item" data-note="${item.id}">
@@ -700,7 +727,7 @@
           <div class="item-main">${title ? `<div class="item-head"><div class="title">${escapeHtml(title)}</div></div>` : ''}${renderNoteThumbs(item)}${displayContent ? `<div class="text">${escapeHtml(displayContent)}</div>` : ''}</div>
           <div class="item-actions"><button class="icon-btn ${state.pinnedIds.has(item.id)?'active':''}" data-pin-note="${item.id}" title="${state.pinnedIds.has(item.id)?'取消置顶':'置顶'}">${iconSvg(state.pinnedIds.has(item.id)?'pinOff':'pin')}</button></div>
         </div>`;
-      }).join('') : `<div class="empty">${query ? '没有匹配的收藏' : '当前分类暂无收藏'}</div>`;
+      }).join('')}${bottomSpacer}` : `<div class="empty">${query ? '没有匹配的收藏' : '当前分类暂无收藏'}</div>`;
       $('#noteList').onclick=async(event)=>{
         const pin=event.target.closest('[data-pin-note]');
         if(pin){
@@ -1041,9 +1068,25 @@
     }
     bindQuickDragStrip();
     $$('.tab').forEach(btn=>btn.onclick=()=>switchTab(btn.dataset.tab));
+    $('#noteList').addEventListener('scroll', ()=>{
+      if(state.renderFrame) cancelAnimationFrame(state.renderFrame);
+      state.renderFrame=requestAnimationFrame(()=>{
+        state.renderFrame=null;
+        const start=Math.max(0,Math.floor($('#noteList').scrollTop/QUICK_NOTE_ROW_HEIGHT)-QUICK_NOTE_OVERSCAN);
+        if(start!==state.noteVirtualStart) renderNotes();
+      });
+    });
     $('#quickSearchInput').addEventListener('input', event=>{
       state.quickSearch=event.target.value;
-      renderActiveTab();
+      if(state.tab==='notes'){
+        $('#noteList').scrollTop=0;
+        state.noteVirtualStart=-1;
+      }
+      if(state.renderFrame) cancelAnimationFrame(state.renderFrame);
+      state.renderFrame=requestAnimationFrame(()=>{
+        state.renderFrame=null;
+        renderActiveTab();
+      });
     });
     $('#picker').addEventListener('click', event=>{ if(event.target.id==='picker') $('#picker').classList.remove('show'); });
     $('#recordFilters').onclick=(event)=>{

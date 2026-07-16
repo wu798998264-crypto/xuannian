@@ -1,11 +1,12 @@
 {
   "name": "xuannian",
-  "version": "6.1.10",
+  "version": "6.1.11",
   "description": "玄念本地剪切板、收藏与置顶便签工具",
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
-    "test:performance": "node tests/performance-smoke.js",
+    "test:performance": "node tests/performance-smoke.js && node tests/persistence-stress.js",
+    "test:runtime": "electron tests/electron-runtime-probe.js",
     "dist": "node scripts/build.js portable",
     "dist:installer": "node scripts/build.js nsis",
     "dist:all": "node scripts/build.js portable nsis"
