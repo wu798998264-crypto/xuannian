@@ -83,6 +83,7 @@ let screenCapturerWarmup = null;
 let screenCapturerWarmupImage = null;
 let clipboardHelperRetryCount = 0;
 let dataCache = null;
+const fileIconCache = new Map();
 const recentClipboardDigests = new Map();
 const recentClipboardSequences = new Map();
 const pendingClipboardSequences = new Set();
@@ -97,6 +98,8 @@ const MAIN_WINDOW_MIN_WIDTH = 560;
 const MAIN_WINDOW_MIN_HEIGHT = 560;
 const RECENT_CACHE_LIMIT = 512;
 const SELF_CACHE_LIMIT = 256;
+const FILE_ICON_CACHE_LIMIT = 256;
+const STARTUP_MIGRATION_STATE_FILE = 'xuannian-migration-state.json';
 const RESIZE_EDGES = new Set(['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw']);
 const STABLE_USER_DATA_DIR_NAME = '玄念';
 const UPDATE_OWNER = 'wu798998264-crypto';
@@ -927,6 +930,19 @@ function writeJson(file, data, serialized = '') {
   fs.writeFileSync(file, serialized || JSON.stringify(data), 'utf8');
 }
 
+function startupMigrationStateFile() {
+  return path.join(app.getPath('userData'), STARTUP_MIGRATION_STATE_FILE);
+}
+
+function startupMigrationFingerprint(filePath) {
+  try {
+    const stat = fs.statSync(filePath);
+    return `${stat.size}:${Math.round(stat.mtimeMs)}`;
+  } catch {
+    return '';
+  }
+}
+
 function cloneDataSnapshot(data) {
   if (typeof structuredClone === 'function') return structuredClone(data);
   return JSON.parse(JSON.stringify(data));
@@ -1070,20 +1086,33 @@ function protectUserDataOnStartup() {
   const primaryResolved = path.resolve(primaryFile).toLocaleLowerCase('en-US');
   const candidates = [...new Set(candidateUserDataFiles().map((file) => path.resolve(file)))];
   const currentRaw = readJson(primaryFile, null);
-  backupStartupData(primaryFile);
-  let merged = currentRaw && typeof currentRaw === 'object' ? currentRaw : defaultData();
-  let changed = false;
+  const migrationState = readJson(startupMigrationStateFile(), { version: 1, files: {} });
+  const migratedFiles = migrationState && typeof migrationState.files === 'object' ? migrationState.files : {};
+  const pendingCandidates = [];
   for (const file of candidates) {
-    if (file.toLocaleLowerCase('en-US') === primaryResolved) continue;
+    const key = file.toLocaleLowerCase('en-US');
+    if (key === primaryResolved) continue;
+    const fingerprint = startupMigrationFingerprint(file);
+    if (!fingerprint || migratedFiles[key] === fingerprint) continue;
     const incoming = readJson(file, null);
     if (!incoming || typeof incoming !== 'object') continue;
+    pendingCandidates.push({ file, key, fingerprint, incoming });
+  }
+  if (!currentRaw || pendingCandidates.length) backupStartupData(primaryFile);
+  let merged = currentRaw && typeof currentRaw === 'object' ? currentRaw : defaultData();
+  let changed = false;
+  for (const { file, key, fingerprint, incoming } of pendingCandidates) {
     backupStartupData(file);
     const beforeSerialized = JSON.stringify(merged);
     merged = mergeDataSnapshots(merged, incoming);
     if (JSON.stringify(merged) !== beforeSerialized) changed = true;
+    migratedFiles[key] = fingerprint;
   }
   if (!currentRaw || changed) {
     saveData(merged, { skipLocalizeAssets: true });
+  }
+  if (pendingCandidates.length) {
+    writeJson(startupMigrationStateFile(), { version: 1, files: migratedFiles });
   }
 }
 
@@ -1665,12 +1694,13 @@ function createQuickWindow() {
     title: `玄念${app.getVersion()}快捷面板`,
     transparent: true,
     backgroundColor: '#00000000',
+    paintWhenInitiallyHidden: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      backgroundThrottling: true,
+      backgroundThrottling: false,
     },
   });
   quickWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -2629,8 +2659,8 @@ function broadcastDataRefresh(data = null, options = {}) {
   dataRevision += 1;
   const next = data || loadData();
   if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed() && mainWindow.isVisible()) {
-    mainWindow.webContents.send('native-clipboard-records', next.records);
-    if (!options.recordsOnly) mainWindow.webContents.send('native-data-refresh');
+    if (options.recordsOnly) mainWindow.webContents.send('native-clipboard-records', next.records);
+    else mainWindow.webContents.send('native-data-refresh');
   }
   scheduleQuickWindowWarmRefresh(next, options);
   if (!options.recordsOnly && options.notifySticky !== false) notifyStickyWindowsDataRefresh();
@@ -2641,8 +2671,8 @@ function scheduleQuickWindowWarmRefresh(data, options = {}) {
   const send = () => {
     quickWindowWarmRefreshTimer = null;
     if (!isQuickWindowUsable()) return;
-    sendQuickWindow('native-clipboard-records', data.records || []);
-    if (!options.recordsOnly && quickWindow.isVisible()) sendQuickWindow('quick:refresh');
+    if (options.recordsOnly) sendQuickWindow('native-clipboard-records', data.records || []);
+    else sendQuickWindow('quick:refresh');
     quickWindowRevision = dataRevision;
     quickWindowDataDirty = false;
   };
@@ -2656,6 +2686,7 @@ function scheduleQuickWindowWarmRefresh(data, options = {}) {
   }
   clearTimeout(quickWindowWarmRefreshTimer);
   quickWindowDataDirty = true;
+  quickWindowWarmRefreshTimer = setTimeout(send, options.recordsOnly ? 120 : 60);
 }
 
 function stopClipboardWatcher() {
@@ -2676,9 +2707,9 @@ function startClipboardPollingTimers({ nativeBackstop = false } = {}) {
   if (!nativeBackstop) pollImageClipboard();
   clipboardTimer = setInterval(() => {
     captureClipboardToData(readFastClipboardPayload()).catch(() => {});
-  }, nativeBackstop ? 1600 : 1000);
-  fileClipboardTimer = setInterval(pollFileClipboard, nativeBackstop ? 2400 : 2500);
-  imageClipboardTimer = setInterval(pollImageClipboard, nativeBackstop ? 3200 : 3500);
+  }, nativeBackstop ? 5000 : 1000);
+  fileClipboardTimer = setInterval(pollFileClipboard, nativeBackstop ? 12000 : 2500);
+  imageClipboardTimer = setInterval(pollImageClipboard, nativeBackstop ? 15000 : 3500);
 }
 
 function copyFileToClipboard(filePaths, action = 'copy', text = '', options = {}) {
@@ -4963,18 +4994,36 @@ ipcMain.handle('file:showInFolder', (_event, filePath) => {
 
 ipcMain.handle('file:getIcon', async (_event, filePath) => {
   if (!filePath || !path.isAbsolute(String(filePath)) || !fs.existsSync(filePath)) return '';
-  try {
-    const image = await app.getFileIcon(String(filePath), { size: 'large' });
-    if (!image || image.isEmpty()) return '';
-    const size = image.getSize();
-    const target = 128;
-    const normalized = (size.width < target || size.height < target)
-      ? image.resize({ width: target, height: target, quality: 'best' })
-      : image;
-    return normalized && !normalized.isEmpty() ? normalized.toDataURL() : image.toDataURL();
-  } catch {
+  const resolvedPath = path.resolve(String(filePath));
+  const cacheKey = resolvedPath.toLocaleLowerCase('en-US');
+  const cached = fileIconCache.get(cacheKey);
+  if (cached) {
+    fileIconCache.delete(cacheKey);
+    fileIconCache.set(cacheKey, cached);
+    return cached;
+  }
+  const pending = app.getFileIcon(resolvedPath, { size: 'large' })
+    .then((image) => {
+      if (!image || image.isEmpty()) return '';
+      const size = image.getSize();
+      const target = 128;
+      const normalized = (size.width < target || size.height < target)
+        ? image.resize({ width: target, height: target, quality: 'best' })
+        : image;
+      return normalized && !normalized.isEmpty() ? normalized.toDataURL() : image.toDataURL();
+    })
+    .catch(() => '');
+  fileIconCache.set(cacheKey, pending);
+  trimMapSize(fileIconCache, FILE_ICON_CACHE_LIMIT);
+  const dataUrl = await pending;
+  if (!dataUrl) {
+    if (fileIconCache.get(cacheKey) === pending) fileIconCache.delete(cacheKey);
     return '';
   }
+  fileIconCache.delete(cacheKey);
+  fileIconCache.set(cacheKey, dataUrl);
+  trimMapSize(fileIconCache, FILE_ICON_CACHE_LIMIT);
+  return dataUrl;
 });
 
 ipcMain.handle('attachments:localizeForCopy', (_event, attachments = [], scope = 'notes') => {

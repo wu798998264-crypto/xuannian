@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>玄念6.1.8</title>
+  <title>玄念6.1.9</title>
   <link rel="icon" href="src/xuannian-logo-256.png" />
   <style>
     :root{
@@ -1096,6 +1096,9 @@ const state = {
   clipboardLearningCount: 0,
   lastNativeRecordId: '',
 };
+const nativeFileIconCache = new Map();
+const nativeFileIconRequests = new Map();
+const NATIVE_FILE_ICON_CACHE_LIMIT = 256;
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
@@ -1289,7 +1292,7 @@ function createBrowserFallbackAPI(){
     async deleteInspiration(id){ const data=read(); data.inspirations=data.inspirations.filter(x=>x.id!==id); write(data); return data.inspirations; },
     async getSettings(){ return read().settings; },
     async saveSettings(settings){ const data=read(); data.settings={...data.settings,...settings}; write(data); return data.settings; },
-    async getUpdateState(){ return {status:'current',currentVersion:'6.1.8',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false}; },
+    async getUpdateState(){ return {status:'current',currentVersion:'6.1.9',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false}; },
     async checkForUpdates(){ return this.getUpdateState(); },
     async downloadUpdate(){ return this.getUpdateState(); },
     async installUpdate(){ return false; },
@@ -1399,16 +1402,26 @@ function createUnifiedAPI(nativeApi, fallback){
 }
 
 async function init(){
-  state.records=await api.getRecords();
-  state.noteProjects=await api.getNoteProjects();
-  state.notes=await api.getNotes();
-  state.stickyProjects=await api.getStickyProjects();
-  state.stickyNotes=await api.getStickyNotes();
-  state.pinnedStickyIds=new Set(await api.getPinnedStickyIds());
+  const [records,noteProjects,notes,stickyProjects,stickyNotes,pinnedStickyIds,settings,update] = await Promise.all([
+    api.getRecords(),
+    api.getNoteProjects(),
+    api.getNotes(),
+    api.getStickyProjects(),
+    api.getStickyNotes(),
+    api.getPinnedStickyIds(),
+    api.getSettings(),
+    api.getUpdateState(),
+  ]);
+  state.records=records;
+  state.noteProjects=noteProjects;
+  state.notes=notes;
+  state.stickyProjects=stickyProjects;
+  state.stickyNotes=stickyNotes;
+  state.pinnedStickyIds=new Set(pinnedStickyIds);
   state.inspirationCategories=[];
   state.inspirations=[];
-  state.settings=await api.getSettings();
-  state.update=await api.getUpdateState();
+  state.settings=settings;
+  state.update=update;
   state.lastNativeRecordId=state.records[0]?.id||'';
   state.activeNoteProject=state.noteProjects[0]?.id || null;
   state.activeStickyProject=state.stickyProjects[0]?.id || null;
@@ -1432,10 +1445,18 @@ async function init(){
     }
   });
   window.nativeAPI?.onDataRefresh?.(async()=>{
-    state.noteProjects=await api.getNoteProjects();
-    state.notes=await api.getNotes();
-    state.stickyProjects=await api.getStickyProjects();
-    state.stickyNotes=await api.getStickyNotes();
+    const [records,noteProjects,notes,stickyProjects,stickyNotes] = await Promise.all([
+      api.getRecords(),
+      api.getNoteProjects(),
+      api.getNotes(),
+      api.getStickyProjects(),
+      api.getStickyNotes(),
+    ]);
+    state.records=records;
+    state.noteProjects=noteProjects;
+    state.notes=notes;
+    state.stickyProjects=stickyProjects;
+    state.stickyNotes=stickyNotes;
     state.inspirationCategories=[];
     state.inspirations=[];
     if(!state.activeStickyProject || !state.stickyProjects.some(item=>item.id===state.activeStickyProject)){
@@ -2000,7 +2021,26 @@ function hydrateNativeFileIcons(root=document){
     const filePath=el.dataset.iconPath;
     if(!filePath || el.dataset.iconLoaded) return;
     el.dataset.iconLoaded='1';
-    const dataUrl=await window.nativeAPI.getFileIcon(filePath).catch(()=>'');
+    let dataUrl=nativeFileIconCache.get(filePath) || '';
+    if(dataUrl){
+      nativeFileIconCache.delete(filePath);
+      nativeFileIconCache.set(filePath,dataUrl);
+    }
+    if(!dataUrl){
+      let request=nativeFileIconRequests.get(filePath);
+      if(!request){
+        request=window.nativeAPI.getFileIcon(filePath).catch(()=>'').finally(()=>nativeFileIconRequests.delete(filePath));
+        nativeFileIconRequests.set(filePath,request);
+      }
+      dataUrl=await request;
+      if(dataUrl){
+        nativeFileIconCache.delete(filePath);
+        nativeFileIconCache.set(filePath,dataUrl);
+        while(nativeFileIconCache.size>NATIVE_FILE_ICON_CACHE_LIMIT){
+          nativeFileIconCache.delete(nativeFileIconCache.keys().next().value);
+        }
+      }
+    }
     if(!dataUrl) return;
     el.innerHTML='';
     const img=document.createElement('img');
@@ -4223,7 +4263,7 @@ function showUpdateDialog(){
   showModal(`
     <div data-update-dialog>
       <div class="modal-header"><h3>软件更新</h3><button class="modal-close" id="closeModal">×</button></div>
-      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '6.1.8')}</b><span>${update.version?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
+      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '6.1.9')}</b><span>${update.version?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
       <div class="modal-message">${escapeHtml(updateStatusText())}</div>
       <p class="update-network-tip">提示：开启 VPN 后再检测更新，结果会更加准确。</p>
       ${busy||downloaded?`<div class="update-progress"><span style="width:${downloaded?100:progress}%"></span></div>`:''}

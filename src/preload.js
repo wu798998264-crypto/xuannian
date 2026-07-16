@@ -1,10 +1,40 @@
 const { contextBridge, ipcRenderer, clipboard, webUtils } = require('electron');
 
 let cache = null;
+let cacheLoadPromise = null;
+let cacheGeneration = 0;
+
+function replaceCache(data) {
+  cacheGeneration += 1;
+  cache = data;
+  cacheLoadPromise = null;
+  return cache;
+}
+
+function invalidateCache() {
+  cacheGeneration += 1;
+  cache = null;
+  cacheLoadPromise = null;
+}
 
 async function load() {
-  if (!cache) cache = await ipcRenderer.invoke('data:load');
-  return cache;
+  if (cache) return cache;
+  if (cacheLoadPromise) return cacheLoadPromise;
+  const generation = cacheGeneration;
+  let trackedPromise;
+  trackedPromise = ipcRenderer.invoke('data:load')
+    .then((data) => {
+      if (generation === cacheGeneration && !cache) cache = data;
+      if (generation !== cacheGeneration && cacheLoadPromise && cacheLoadPromise !== trackedPromise) {
+        return cacheLoadPromise;
+      }
+      return cache || data;
+    })
+    .finally(() => {
+      if (cacheLoadPromise === trackedPromise) cacheLoadPromise = null;
+    });
+  cacheLoadPromise = trackedPromise;
+  return trackedPromise;
 }
 
 async function save(data) {
@@ -13,7 +43,7 @@ async function save(data) {
     settings: data?.settings ? Object.fromEntries(Object.entries(data.settings).filter(([key]) => key !== '__error')) : data?.settings,
   };
   const result = await ipcRenderer.invoke('data:save', cleanData);
-  cache = result.data;
+  replaceCache(result.data);
   if (!result.ok) {
     return { ok: false, reason: result.reason, data: cache };
   }
@@ -57,7 +87,7 @@ contextBridge.exposeInMainWorld('nativeAPI', {
     const nextRecords = await ipcRenderer.invoke('records:save', records);
     const data = await load();
     data.records = nextRecords;
-    cache = data;
+    replaceCache(data);
     return nextRecords;
   },
   async addRecord(record) {
@@ -339,7 +369,7 @@ contextBridge.exposeInMainWorld('nativeAPI', {
     return ipcRenderer.invoke('data:exportPackage');
   },
   async importUserDataPackage() {
-    cache = null;
+    invalidateCache();
     return ipcRenderer.invoke('data:importPackage');
   },
   async revealUserDataFolder() {
@@ -381,7 +411,7 @@ contextBridge.exposeInMainWorld('nativeAPI', {
   },
   async backupStickyToClipboard(payload) {
     const result = await ipcRenderer.invoke('sticky:backupClipboard', payload || {});
-    cache = await ipcRenderer.invoke('data:load');
+    replaceCache(await ipcRenderer.invoke('data:load'));
     return result;
   },
   async closeAllStickyNotes() {
@@ -464,20 +494,20 @@ contextBridge.exposeInMainWorld('nativeAPI', {
     ipcRenderer.on('native-clipboard-records', (_event, records) => {
       load().then((data) => {
         data.records = records;
-        cache = data;
+        replaceCache(data);
         callback(records);
       });
     });
   },
   onQuickRefresh(callback) {
     ipcRenderer.on('quick:refresh', () => {
-      cache = null;
+      invalidateCache();
       callback();
     });
   },
   onDataRefresh(callback) {
     ipcRenderer.on('native-data-refresh', () => {
-      cache = null;
+      invalidateCache();
       callback();
     });
   },

@@ -1063,9 +1063,14 @@
     }
     async function loadData(){
       const quickNewSticky=state.source==='sticky' && !state.id;
-      state.notes=quickNewSticky || state.source!=='sticky' ? (await api.getNotes?.() || []) : (await api.getStickyNotes?.() || []);
-      state.projects=quickNewSticky || state.source!=='sticky' ? (await api.getNoteProjects?.() || []) : (await api.getStickyProjects?.() || []);
-      const settings=await api.getSettings();
+      const useFavoriteData=quickNewSticky || state.source!=='sticky';
+      const [notes,projects,settings]=await Promise.all([
+        useFavoriteData ? (api.getNotes?.() || []) : (api.getStickyNotes?.() || []),
+        useFavoriteData ? (api.getNoteProjects?.() || []) : (api.getStickyProjects?.() || []),
+        api.getSettings(),
+      ]);
+      state.notes=notes;
+      state.projects=projects;
       applySettings(settings||{});
       if(state.temporarySaved&&!state.id){
         render();

@@ -37,6 +37,8 @@ jobs:
           }
       - name: Install dependencies
         run: npm ci
+      - name: Run performance regression checks
+        run: npm run test:performance
       - name: Build Windows packages
         run: npm run dist:all
       - name: Verify Windows update metadata
@@ -99,6 +101,8 @@ jobs:
           fi
       - name: Install dependencies
         run: npm ci
+      - name: Run performance regression checks
+        run: npm run test:performance
       - name: Create macOS icon
         shell: bash
         run: |
