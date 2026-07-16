@@ -13,7 +13,7 @@ function removeVerifiedTempDirectory(directory) {
   if (!resolved.startsWith(tempRoot) || !path.basename(resolved).startsWith('xuannian-runtime-probe-')) {
     throw new Error(`Refusing to remove unexpected probe directory: ${resolved}`);
   }
-  fs.rmSync(resolved, { recursive: true, force: true });
+  fs.rmSync(resolved, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
 }
 
 async function waitForRenderer(window, expression, timeoutMs = 10000) {
@@ -178,14 +178,19 @@ async function run() {
   window.destroy();
 }
 
+async function cleanUpAndExit(code) {
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  try {
+    removeVerifiedTempDirectory(tempDirectory);
+  } catch (error) {
+    console.warn(`runtime probe cleanup warning: ${error.message}`);
+  }
+  app.exit(code);
+}
+
 run()
-  .then(() => app.quit())
+  .then(() => cleanUpAndExit(0))
   .catch((error) => {
     console.error(error);
-    removeVerifiedTempDirectory(tempDirectory);
-    app.exit(1);
+    cleanUpAndExit(1);
   });
-
-app.on('will-quit', () => {
-  removeVerifiedTempDirectory(tempDirectory);
-});

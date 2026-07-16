@@ -40,6 +40,7 @@ jobs:
       - name: Run performance regression checks
         run: npm run test:performance
       - name: Run Electron runtime endurance probe
+        timeout-minutes: 5
         run: npm run test:runtime
       - name: Build Windows packages
         run: npm run dist:all
