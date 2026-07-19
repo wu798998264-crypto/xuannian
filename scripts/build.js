@@ -19,6 +19,12 @@ const nativeHelpers = [
     output: path.join(projectDir, 'src', 'native', 'XuanNianFileSearchHelper.exe'),
     references: ['System.Windows.Forms.dll', 'System.Web.Extensions.dll'],
   },
+  {
+    source: path.join(projectDir, 'src', 'native', 'XuanNianSearchSetup.cs'),
+    output: path.join(projectDir, 'src', 'native', 'XuanNianSearchSetup.exe'),
+    references: [],
+    icon: path.join(projectDir, 'src', 'xuannian-logo.ico'),
+  },
 ];
 const frameworkRoots = [
   path.join(process.env.WINDIR || 'C:\\Windows', 'Microsoft.NET', 'Framework64', 'v4.0.30319', 'csc.exe'),
@@ -64,6 +70,7 @@ if (helpersToBuild.length) {
       '/optimize+',
       '/platform:anycpu',
       ...helper.references.map((reference) => `/reference:${reference}`),
+      ...(helper.icon ? [`/win32icon:${helper.icon}`] : []),
       `/out:${helper.output}`,
       helper.source,
     ]);

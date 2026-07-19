@@ -66,6 +66,14 @@ jobs:
           if ($metadata -match 'Portable\.exe') {
             throw 'latest.yml must never point installed users to the portable package.'
           }
+          $searchSetup = 'dist-win/win-unpacked/resources/native/玄念全盘查找初始化.exe'
+          if (-not (Test-Path -LiteralPath $searchSetup)) {
+            throw 'Packaged XuanNian search initialization helper is missing.'
+          }
+          $searchSetupInfo = [Diagnostics.FileVersionInfo]::GetVersionInfo((Resolve-Path -LiteralPath $searchSetup))
+          if ($searchSetupInfo.ProductName -ne '玄念' -or $searchSetupInfo.FileDescription -ne '玄念全盘查找初始化') {
+            throw 'Search initialization helper does not contain the expected XuanNian branding.'
+          }
       - uses: actions/upload-artifact@v4
         with:
           name: release-windows
@@ -266,10 +274,9 @@ jobs:
 
           ## 本次更新
 
-          - 全盘查找新增文档、图片、视频、音频筛选，筛选条件直接由 Everything 或 Spotlight 执行；文档覆盖常见文本、PDF、Office/WPS、OpenDocument、iWork 和电子书格式。
-          - 图片和视频结果新增系统缩略图；结果先显示，缩略图只按可见区域异步加载，并发限制为 3、缓存限制为 192 项。
-          - 鼠标悬浮缩略图可自动放大预览，鼠标离开、滚动、切换页面或重新搜索时自动关闭。
-          - 设置页为截图快捷键和全盘查找快捷键增加可点击的感叹号说明。
+          - Windows 首次启用全盘查找时，管理员权限窗口现在由“玄念全盘查找初始化”发起，不再显示为 Everything 发起。
+          - 初始化助手带有玄念名称、产品信息和应用图标，并只接受固定的索引服务安装命令。
+          - 日常搜索、索引速度、媒体缩略图及收藏数据均不受影响。
 
           更新沿用稳定的应用标识与数据目录，不会删除剪切板记录、收藏及转存附件。Windows 与 macOS 会分别读取对应的更新数据，不会跨系统下载。
           EOF

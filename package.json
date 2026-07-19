@@ -1,6 +1,6 @@
 {
   "name": "xuannian",
-  "version": "7.0.1",
+  "version": "7.0.2",
   "description": "玄念本地剪切板、收藏、置顶便签与全盘查找工具",
   "main": "src/main.js",
   "scripts": {
@@ -40,6 +40,10 @@
       {
         "from": "src/native/XuanNianFileSearchHelper.exe",
         "to": "native/XuanNianFileSearchHelper.exe"
+      },
+      {
+        "from": "src/native/XuanNianSearchSetup.exe",
+        "to": "native/玄念全盘查找初始化.exe"
       },
       {
         "from": "vendor/everything/windows",

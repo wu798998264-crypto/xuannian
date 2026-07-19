@@ -67,6 +67,20 @@ function fileSearchTermForType(type) {
   return FILE_TYPE_SEARCH_TERMS[type] || '';
 }
 
+function powershellSingleQuote(value) {
+  return `'${String(value || '').replace(/'/g, "''")}'`;
+}
+
+function buildWindowsServiceInstallScript(setupHelperPath, everythingPath) {
+  const encodedEnginePath = Buffer.from(String(everythingPath || ''), 'utf8').toString('base64');
+  return [
+    `$process = Start-Process -FilePath ${powershellSingleQuote(setupHelperPath)}`,
+    `-ArgumentList @('--install-service-base64',${powershellSingleQuote(encodedEnginePath)},'${EVERYTHING_INSTANCE}')`,
+    '-Verb RunAs -WindowStyle Hidden -Wait -PassThru;',
+    'if ($process) { exit $process.ExitCode } else { exit 1 }',
+  ].join(' ');
+}
+
 function parseDelimited(text, delimiter = ',') {
   const rows = [];
   let row = [];
@@ -244,6 +258,12 @@ class FileSearchService {
       : path.join(this.appPath, 'src', 'native', 'XuanNianFileSearchHelper.exe');
   }
 
+  windowsSetupHelperSource() {
+    return this.isPackaged
+      ? path.join(this.resourcesPath, 'native', '玄念全盘查找初始化.exe')
+      : path.join(this.appPath, 'src', 'native', 'XuanNianSearchSetup.exe');
+  }
+
   ensureWindowsEngineFiles() {
     if (this.platform !== 'win32') return null;
     if (this.windowsEngine && Object.values(this.windowsEngine).every((file) => fs.existsSync(file))) {
@@ -265,6 +285,8 @@ class FileSearchService {
     if (!fs.existsSync(helperSource)) throw new Error('搜索助手资源缺失');
     const helperMatches = fs.existsSync(helperTarget) && sha256File(helperTarget) === sha256File(helperSource);
     if (!helperMatches) fs.copyFileSync(helperSource, helperTarget);
+    const setupHelper = this.windowsSetupHelperSource();
+    if (!fs.existsSync(setupHelper)) throw new Error('玄念全盘查找初始化组件缺失');
     const configPath = path.join(targetDirectory, 'XuanNianSearch.ini');
     const config = [
       '[Everything]',
@@ -284,6 +306,7 @@ class FileSearchService {
       everything: path.join(targetDirectory, 'Everything.exe'),
       es: path.join(targetDirectory, 'es.exe'),
       helper: helperTarget,
+      setupHelper,
       config: configPath,
     };
     return this.windowsEngine;
@@ -542,12 +565,7 @@ class FileSearchService {
         resolve(code);
       };
       try {
-        const script = [
-          `$process = Start-Process -FilePath '${engine.everything.replace(/'/g, "''")}'`,
-          `-ArgumentList @('-instance','${EVERYTHING_INSTANCE}','-install-service')`,
-          '-Verb RunAs -WindowStyle Hidden -Wait -PassThru;',
-          'if ($process) { exit $process.ExitCode } else { exit 1 }',
-        ].join(' ');
+        const script = buildWindowsServiceInstallScript(engine.setupHelper, engine.everything);
         const encoded = Buffer.from(script, 'utf16le').toString('base64');
         const child = spawn('powershell.exe', [
           '-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', encoded,
@@ -782,6 +800,7 @@ module.exports = {
   fileTypeForPath,
   matchesResultType,
   fileSearchTermForType,
+  buildWindowsServiceInstallScript,
   compareResults,
   constants: {
     EVERYTHING_INSTANCE,

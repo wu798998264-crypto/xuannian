@@ -1,7 +1,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const {
   parseDelimited,
   parseEverythingCsv,
@@ -10,6 +10,7 @@ const {
   fileTypeForPath,
   matchesResultType,
   fileSearchTermForType,
+  buildWindowsServiceInstallScript,
   compareResults,
   constants,
 } = require('../src/file-search');
@@ -39,6 +40,12 @@ function verifyParsers() {
   assert(fileSearchTermForType('document').includes(';docx;'));
   assert(fileSearchTermForType('document').includes(';pdf;'));
   assert.strictEqual(fileSearchTermForType('folder'), '');
+  const setupScript = buildWindowsServiceInstallScript("C:\\Program Files\\玄念's\\玄念全盘查找初始化.exe", 'C:\\Users\\Test User\\Everything.exe');
+  assert(setupScript.includes("Start-Process -FilePath 'C:\\Program Files\\玄念''s\\玄念全盘查找初始化.exe'"));
+  assert(setupScript.includes("@('--install-service-base64',"));
+  assert(!setupScript.includes("Start-Process -FilePath 'C:\\Users\\Test User\\Everything.exe'"));
+  const encodedPath = setupScript.match(/--install-service-base64','([^']+)'/)?.[1] || '';
+  assert.strictEqual(Buffer.from(encodedPath, 'base64').toString('utf8'), 'C:\\Users\\Test User\\Everything.exe');
   assert.deepStrictEqual(parseDelimited('name,path\r\n"a,b.txt","C:\\One"\r\n'), [
     ['name', 'path'], ['a,b.txt', 'C:\\One'],
   ]);
@@ -61,7 +68,11 @@ function verifyParsers() {
 function verifyWindowsHelperStarts() {
   if (process.platform !== 'win32') return Promise.resolve();
   const helper = path.join(__dirname, '..', 'src', 'native', 'XuanNianFileSearchHelper.exe');
+  const setupHelper = path.join(__dirname, '..', 'src', 'native', 'XuanNianSearchSetup.exe');
   assert(fs.existsSync(helper), `missing native file-search helper: ${helper}`);
+  assert(fs.existsSync(setupHelper), `missing native search setup helper: ${setupHelper}`);
+  const invalidSetup = spawnSync(setupHelper, ['--invalid'], { windowsHide: true, timeout: 3000 });
+  assert.strictEqual(invalidSetup.status, 64, 'search setup helper must reject unsupported commands');
   return new Promise((resolve, reject) => {
     const child = spawn(helper, [], { windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'] });
     let output = '';
