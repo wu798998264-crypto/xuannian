@@ -320,6 +320,18 @@ contextBridge.exposeInMainWorld('nativeAPI', {
   async getUpdateState() {
     return ipcRenderer.invoke('update:getState');
   },
+  async getFileSearchStatus() {
+    return ipcRenderer.invoke('search:status');
+  },
+  async initializeFileSearch() {
+    return ipcRenderer.invoke('search:initialize');
+  },
+  async searchFiles(query, options = {}) {
+    return ipcRenderer.invoke('search:query', String(query || ''), options || {});
+  },
+  async cancelFileSearch() {
+    return ipcRenderer.invoke('search:cancel');
+  },
   async checkForUpdates() {
     return ipcRenderer.invoke('update:check');
   },
@@ -522,6 +534,9 @@ contextBridge.exposeInMainWorld('nativeAPI', {
   },
   onMainNavigate(callback) {
     ipcRenderer.on('main:navigate', (_event, view) => callback(view));
+  },
+  onFileSearchFocus(callback) {
+    ipcRenderer.on('search:focus', callback);
   },
   onMainSuspend(callback) {
     ipcRenderer.on('main:suspend', callback);

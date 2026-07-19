@@ -8,8 +8,18 @@ const requestedTargets = targets.length ? targets : ['portable', 'nsis'];
 const builderTargets = requestedTargets.includes('nsis')
   ? [...new Set(['portable', ...requestedTargets])]
   : requestedTargets;
-const helperSource = path.join(projectDir, 'src', 'native', 'XuanNianClipboardHelper.cs');
-const helperOutput = path.join(projectDir, 'src', 'native', 'XuanNianClipboardHelper.exe');
+const nativeHelpers = [
+  {
+    source: path.join(projectDir, 'src', 'native', 'XuanNianClipboardHelper.cs'),
+    output: path.join(projectDir, 'src', 'native', 'XuanNianClipboardHelper.exe'),
+    references: ['System.Drawing.dll', 'System.Windows.Forms.dll'],
+  },
+  {
+    source: path.join(projectDir, 'src', 'native', 'XuanNianFileSearchHelper.cs'),
+    output: path.join(projectDir, 'src', 'native', 'XuanNianFileSearchHelper.exe'),
+    references: ['System.Windows.Forms.dll', 'System.Web.Extensions.dll'],
+  },
+];
 const frameworkRoots = [
   path.join(process.env.WINDIR || 'C:\\Windows', 'Microsoft.NET', 'Framework64', 'v4.0.30319', 'csc.exe'),
   path.join(process.env.WINDIR || 'C:\\Windows', 'Microsoft.NET', 'Framework', 'v4.0.30319', 'csc.exe'),
@@ -31,30 +41,33 @@ function run(command, args, options = {}) {
 }
 
 const skipHelperBuild = process.env.XUANNIAN_SKIP_HELPER_BUILD === '1';
-if (skipHelperBuild && !fs.existsSync(helperOutput)) {
-  throw new Error(`Native helper is required but missing: ${helperOutput}`);
+const missingHelpers = nativeHelpers.filter(({ output }) => !fs.existsSync(output));
+if (skipHelperBuild && missingHelpers.length) {
+  throw new Error(`Native helper is required but missing: ${missingHelpers.map(({ output }) => output).join(', ')}`);
 }
 
-const shouldBuildHelper = !skipHelperBuild && (
-  !fs.existsSync(helperOutput)
-  || fs.statSync(helperSource).mtimeMs > fs.statSync(helperOutput).mtimeMs
-);
+const helpersToBuild = skipHelperBuild
+  ? []
+  : nativeHelpers.filter(({ source, output }) => (
+      !fs.existsSync(output) || fs.statSync(source).mtimeMs > fs.statSync(output).mtimeMs
+    ));
 
-if (shouldBuildHelper) {
+if (helpersToBuild.length) {
   const csc = frameworkRoots.find((file) => fs.existsSync(file));
   if (!csc) {
     throw new Error('Windows C# compiler was not found.');
   }
-  run(csc, [
-    '/nologo',
-    '/target:winexe',
-    '/optimize+',
-    '/platform:anycpu',
-    '/reference:System.Drawing.dll',
-    '/reference:System.Windows.Forms.dll',
-    `/out:${helperOutput}`,
-    helperSource,
-  ]);
+  for (const helper of helpersToBuild) {
+    run(csc, [
+      '/nologo',
+      '/target:winexe',
+      '/optimize+',
+      '/platform:anycpu',
+      ...helper.references.map((reference) => `/reference:${reference}`),
+      `/out:${helper.output}`,
+      helper.source,
+    ]);
+  }
 }
 
 const portableTemplate = path.join(

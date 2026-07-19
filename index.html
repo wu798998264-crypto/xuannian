@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>玄念6.1.11</title>
+  <title>玄念6.1.12</title>
   <link rel="icon" href="src/xuannian-logo-256.png" />
   <style>
     :root{
@@ -200,6 +200,53 @@
 
     .content-card{flex:1;min-height:0;border:1px solid var(--line);border-radius:14px;background:var(--panel);overflow:hidden}
     .scroll{height:100%;overflow-y:auto;overflow-x:hidden;padding:0 10px 10px}
+    #searchView{padding-bottom:14px}
+    .file-search-toolbar{display:grid;grid-template-columns:minmax(260px,1fr) auto;gap:10px;align-items:center;margin-bottom:10px}
+    .file-search-toolbar .search{min-width:0}
+    .file-search-shortcut{height:42px;display:flex;align-items:center;gap:6px;color:var(--muted);font-size:12px;font-weight:700;white-space:nowrap}
+    .file-search-shortcut kbd{border:1px solid var(--line);border-bottom-width:2px;border-radius:6px;background:var(--panel-soft);color:var(--text);padding:4px 7px;font:700 11px/1.2 inherit}
+    .file-search-meta{display:flex;align-items:center;gap:8px;min-height:34px;margin-bottom:10px}
+    .file-search-meta .chips{margin:0}
+    .file-search-summary{margin-left:auto;color:var(--muted);font-size:12px;font-weight:700;white-space:nowrap}
+    .file-results-shell{flex:1;min-height:0;display:flex;flex-direction:column;border:1px solid var(--line);border-radius:8px;background:var(--panel);overflow:hidden}
+    .file-grid{display:grid;grid-template-columns:minmax(210px,1.2fr) minmax(180px,1fr) 92px 142px 104px;align-items:center;column-gap:12px}
+    .file-result-head{height:38px;flex:none;padding:0 12px;border-bottom:1px solid var(--line);background:var(--panel-soft);color:var(--muted);font-size:11px;font-weight:800;user-select:none}
+    .file-sort-button{height:100%;min-width:0;padding:0;text-align:left;color:inherit;font-weight:inherit;display:flex;align-items:center;gap:5px;overflow:hidden}
+    .file-sort-button span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .file-sort-button.active{color:var(--text)}
+    .file-sort-arrow{font-size:9px;opacity:.75}
+    .file-result-list{position:relative;flex:1;min-height:0;overflow:auto;outline:none;scrollbar-gutter:stable}
+    .file-result-list:focus-visible{outline:2px solid var(--text);outline-offset:-2px}
+    .file-row{height:58px;padding:0 12px;border-bottom:1px solid var(--line);cursor:default;color:var(--text)}
+    .file-row:hover{background:var(--panel-soft)}
+    .file-row.selected{background:#e9eef7}
+    body.dark .file-row.selected{background:#363d49}
+    .file-primary{min-width:0;display:flex;align-items:center;gap:10px}
+    .file-kind-icon{width:31px;height:31px;flex:none;border-radius:7px;display:grid;place-items:center;background:#eef2f7;color:#506278}
+    .file-kind-icon.folder{background:#fff1bf;color:#b27b00}
+    body.dark .file-kind-icon{background:#353a42;color:#b9c5d6}
+    body.dark .file-kind-icon.folder{background:#4a4228;color:#f0cc69}
+    .file-kind-icon svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+    .file-name-wrap{min-width:0;max-width:100%;display:flex;flex-direction:column;align-items:flex-start;overflow:hidden}
+    .file-path{min-width:0}
+    .file-name{display:block;max-width:100%;font-size:13px;font-weight:750;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .file-extension{display:block;max-width:100%;margin-top:2px;color:var(--muted);font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .file-path{color:var(--muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .file-size,.file-modified{color:var(--muted);font-size:11px;white-space:nowrap}
+    .file-actions{display:flex;justify-content:flex-end;gap:4px;opacity:.48;transition:opacity .14s ease}
+    .file-row:hover .file-actions,.file-row.selected .file-actions{opacity:1}
+    .file-action{width:29px;height:29px;border-radius:7px;display:grid;place-items:center;color:var(--muted)}
+    .file-action:hover{background:var(--panel);color:var(--text)}
+    .file-action svg{width:16px;height:16px;stroke:currentColor;fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+    .file-search-state{flex:1;min-height:0;display:grid;place-items:center;padding:24px;text-align:center}
+    .file-search-state-inner{max-width:440px;display:grid;justify-items:center;gap:10px}
+    .file-search-state-icon{width:46px;height:46px;border-radius:8px;background:var(--panel-soft);color:var(--muted);display:grid;place-items:center}
+    .file-search-state-icon svg{width:24px;height:24px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+    .file-search-state h2{margin:0;font-size:16px;letter-spacing:0}
+    .file-search-state p{margin:0;color:var(--muted);font-size:12px;line-height:1.7}
+    .file-search-state .black-btn{margin-top:4px}
+    .file-search-spinner{width:22px;height:22px;border:2px solid var(--line);border-top-color:var(--text);border-radius:50%;animation:file-spin .8s linear infinite}
+    @keyframes file-spin{to{transform:rotate(360deg)}}
     .record{
       display:grid;grid-template-columns:6px 1fr auto;gap:16px;align-items:start;padding:18px 16px;
       background:var(--panel);border:1px solid var(--line);border-radius:18px;margin:14px 0 0
@@ -449,7 +496,7 @@
     .hotkey-mini-row{display:flex;align-items:center;gap:6px}
     .hotkey-mini .field-input{width:120px;height:38px}
     .settings-actions{align-items:center}
-    #settingHotkey,#settingScreenshotHotkey,#settingStickyHotkey{width:210px;max-width:100%}
+    #settingHotkey,#settingScreenshotHotkey,#settingStickyHotkey,#settingFileSearchHotkey{width:210px;max-width:100%}
     .cache-clear-btn{color:var(--danger);border-color:rgba(236,91,104,.28);white-space:nowrap}
     .cache-clear-btn:hover{background:rgba(236,91,104,.08)}
     .toggle{height:46px;border-radius:14px;border:1px solid var(--line);background:var(--panel-soft);padding:0 14px;font-weight:800;color:var(--text)}
@@ -777,6 +824,18 @@
       .idea-layout .idea-actions{position:absolute;right:8px;top:50%;transform:translateY(-50%);display:flex;flex-direction:column;gap:6px}
       .idea-layout .idea-actions .icon-btn{width:32px;height:32px;border-radius:10px}
       .idea-layout .idea-actions .icon-btn svg{width:16px;height:16px}
+      .file-search-toolbar{grid-template-columns:1fr}
+      .file-search-shortcut{display:none}
+      .file-grid{grid-template-columns:minmax(180px,1fr) 92px 104px}
+      .file-col-path,.file-col-size{display:none}
+      .file-search-meta{align-items:flex-start;flex-direction:column}
+      .file-search-summary{margin-left:0}
+    }
+    @media (max-width: 620px){
+      .file-grid{grid-template-columns:minmax(150px,1fr) 96px}
+      .file-col-modified{display:none}
+      .file-row,.file-result-head{padding-left:8px;padding-right:8px;column-gap:6px}
+      .file-actions{opacity:1}
     }
   </style>
 </head>
@@ -807,6 +866,10 @@
         <button class="nav-btn" data-view="notes" title="收藏">
           <svg viewBox="0 0 24 24"><path d="M7 4h10a1 1 0 0 1 1 1v15l-6-3.5L6 20V5a1 1 0 0 1 1-1Z"></path></svg>
           <span>收藏</span>
+        </button>
+        <button class="nav-btn" data-view="search" title="全盘查找">
+          <svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="5.5"></circle><path d="m15 15 5 5"></path><path d="M4 4h5"></path><path d="M4 4v5"></path></svg>
+          <span>查找</span>
         </button>
         <button class="nav-btn" data-view="stickies" title="便签" hidden>
           <svg viewBox="0 0 24 24"><path d="M6 4h12a2 2 0 0 1 2 2v12l-4 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"></path><path d="M16 20v-4h4"></path></svg>
@@ -902,6 +965,39 @@
       </div>
     </section>
 
+    <section class="view" id="searchView">
+      <div class="header">
+        <h1>全盘查找</h1>
+        <p>本机文件与文件夹</p>
+      </div>
+      <div class="file-search-toolbar">
+        <div class="search">
+          <span class="sicon"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"></circle><path d="m20 20-3.5-3.5"></path></svg></span>
+          <input id="fileSearchInput" placeholder="输入文件名或路径..." autocomplete="off" spellcheck="false" />
+          <button class="clear-btn" id="clearFileSearch" title="清空搜索">×</button>
+        </div>
+        <div class="file-search-shortcut" title="可在设置中修改"><span>快捷键</span><kbd id="fileSearchShortcutLabel">Ctrl + Alt + A</kbd></div>
+      </div>
+      <div class="file-search-meta">
+        <div class="chips" id="fileSearchFilters">
+          <button class="chip active" data-file-type="all">全部</button>
+          <button class="chip" data-file-type="file">文件</button>
+          <button class="chip" data-file-type="folder">文件夹</button>
+        </div>
+        <span class="file-search-summary" id="fileSearchSummary">等待搜索</span>
+      </div>
+      <div class="file-results-shell" id="fileResultsShell">
+        <div class="file-result-head file-grid" id="fileResultHead">
+          <button class="file-sort-button active" data-file-sort="name"><span>名称</span><b class="file-sort-arrow">↑</b></button>
+          <button class="file-sort-button file-col-path" data-file-sort="path"><span>位置</span><b class="file-sort-arrow"></b></button>
+          <button class="file-sort-button file-col-size" data-file-sort="size"><span>大小</span><b class="file-sort-arrow"></b></button>
+          <button class="file-sort-button file-col-modified" data-file-sort="modified"><span>修改时间</span><b class="file-sort-arrow"></b></button>
+          <span>操作</span>
+        </div>
+        <div class="file-result-list" id="fileResultList" tabindex="0" aria-label="全盘查找结果"></div>
+      </div>
+    </section>
+
     <section class="view categorized-view" id="stickiesView">
       <div class="note-layout" id="stickyLayout">
         <aside class="note-sidebar" id="stickySidebar">
@@ -967,7 +1063,13 @@
         <div class="setting-card">
           <span>截图快捷键</span>
           <div class="settings-inline">
-            <input class="field-input" id="settingScreenshotHotkey" placeholder="Ctrl+Alt+A" />
+            <input class="field-input" id="settingScreenshotHotkey" placeholder="Ctrl+Alt+D" />
+          </div>
+        </div>
+        <div class="setting-card">
+          <span>全盘查找快捷键</span>
+          <div class="settings-inline">
+            <input class="field-input" id="settingFileSearchHotkey" placeholder="Ctrl+Alt+A" />
           </div>
         </div>
         <div class="setting-card">
@@ -1054,8 +1156,9 @@ const api = createUnifiedAPI(window.nativeAPI, fallbackApi);
 
 const DEFAULT_HOTKEY_VALUES = {
   settingHotkey: 'Ctrl+Alt+X',
-  settingScreenshotHotkey: 'Ctrl+Alt+A',
+  settingScreenshotHotkey: 'Ctrl+Alt+D',
   settingStickyHotkey: 'Ctrl+Alt+S',
+  settingFileSearchHotkey: 'Ctrl+Alt+A',
   settingStickyMirrorHotkey: 'X',
   settingStickyRotateHotkey: 'R',
   settingStickyOpacityHotkey: 'Shift+Wheel',
@@ -1082,6 +1185,22 @@ const state = {
   inspirations: [],
   editingInspirationId: null,
   settings: {},
+  fileSearch: {
+    engineStatus:'idle',
+    message:'',
+    results:[],
+    query:'',
+    type:'all',
+    sort:'name',
+    direction:'asc',
+    truncated:false,
+    elapsedMs:0,
+    selectedIndex:-1,
+    virtualStart:-1,
+    requestId:0,
+    debounceTimer:null,
+    statusPollTimer:null,
+  },
   update: {status:'idle',currentVersion:'',version:'',percent:0,message:'',releaseNotes:'',portable:false,manualInstall:false,supported:true},
   clipboardWatcherTimer: null,
   lastClipboardDigest: '',
@@ -1107,6 +1226,9 @@ const NATIVE_FILE_ICON_CACHE_LIMIT = 256;
 const NOTE_ROW_HEIGHT = 146;
 const NOTE_WINDOW_SIZE = 64;
 const NOTE_WINDOW_OVERSCAN = 8;
+const FILE_RESULT_ROW_HEIGHT = 58;
+const FILE_RESULT_WINDOW_SIZE = 48;
+const FILE_RESULT_OVERSCAN = 8;
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
@@ -1163,6 +1285,7 @@ const onboardingKeys={
 const pageCoachCopy={
   clipboard:{title:'剪切板',text:'复制或剪切文字、图片和文件后，内容会自动出现在这里。'},
   notes:{title:'收藏',text:'点击即可复用；长按并拖动可调整顺序，拖到左侧分类可移动分类。'},
+  search:{title:'全盘查找',text:'输入文件名即可查看本机文件和文件夹。'},
   stickies:{title:'便签',text:'新建便签后点击置顶，可以把参考文字或图片留在桌面上。'},
 };
 let pageCoachActionHandler=null;
@@ -1255,7 +1378,7 @@ function createBrowserFallbackAPI(){
       {id:'i1',categoryId:'icat1',favorite:true,content:'把收藏做成分类化管理，左侧分类栏固定展开。',expandedContent:'与剪切板打通：收藏一条记录后直接选择分类保存。',createdAt:Date.now()-4600e3,updatedAt:Date.now()-4200e3},
       {id:'i2',categoryId:null,content:'剪切板主界面参考极简白色卡片风格。',expandedContent:'保留搜索、类型筛选、收藏录入和自动监听。',createdAt:Date.now()-3000e3,updatedAt:Date.now()-2600e3},
     ],
-    settings:{theme:'light',storagePath:'浏览器本地存储',retentionDays:30,quickMenuHotkey:'Ctrl+Alt+X',screenshotHotkey:'Ctrl+Alt+A',quickStickyHotkey:'Ctrl+Alt+S',stickyMirrorHotkey:'X',stickyRotateHotkey:'R',stickyOpacityHotkey:'Shift+Wheel',inspirationSendHotkey:'Ctrl+Enter',hideWindowOnScreenshot:false,alwaysOnTop:false}
+    settings:{theme:'light',storagePath:'浏览器本地存储',retentionDays:30,quickMenuHotkey:'Ctrl+Alt+X',screenshotHotkey:'Ctrl+Alt+D',quickStickyHotkey:'Ctrl+Alt+S',fileSearchHotkey:'Ctrl+Alt+A',stickyMirrorHotkey:'X',stickyRotateHotkey:'R',stickyOpacityHotkey:'Shift+Wheel',inspirationSendHotkey:'Ctrl+Enter',hideWindowOnScreenshot:false,alwaysOnTop:false}
   };
   const read=()=>{
     try{ return JSON.parse(localStorage.getItem(key)) || seed; }catch(e){ return seed; }
@@ -1269,6 +1392,22 @@ function createBrowserFallbackAPI(){
     async copyText(text){ return writeClipboardText(text); },
     async localizeAttachmentsForCopy(attachments){ return Array.isArray(attachments) ? attachments : []; },
     async openExternal(url){ window.open(String(url || ''), '_blank', 'noopener'); return true; },
+    async openPath(){ return false; },
+    async showItemInFolder(){ return false; },
+    async getFileSearchStatus(){ return {platform:'browser',engine:'preview',status:'ready',ready:true,message:'预览数据已就绪'}; },
+    async initializeFileSearch(){ return this.getFileSearchStatus(); },
+    async searchFiles(query,options={}){
+      const samples=[
+        {path:'C:\\Users\\Public\\Documents\\项目方案.docx',name:'项目方案.docx',directory:'C:\\Users\\Public\\Documents',kind:'file',size:248320,modifiedAt:Date.now()-3600e3},
+        {path:'D:\\素材\\项目参考图',name:'项目参考图',directory:'D:\\素材',kind:'folder',size:null,modifiedAt:Date.now()-7200e3},
+        {path:'D:\\素材\\项目参考图\\场景参考.png',name:'场景参考.png',directory:'D:\\素材\\项目参考图',kind:'file',size:4831020,modifiedAt:Date.now()-86400e3},
+      ];
+      const value=String(query||'').toLowerCase();
+      const type=options.type||'all';
+      const results=samples.filter(item=>(!value||item.path.toLowerCase().includes(value))&&(type==='all'||item.kind===type));
+      return {platform:'browser',engine:'preview',status:'ready',ready:true,query,results,truncated:false,elapsedMs:4};
+    },
+    async cancelFileSearch(){ return true; },
     async getNoteProjects(){ return read().noteProjects; },
     async addNoteProject(project){ const data=read(); const item={id:uid('cp'),...project}; data.noteProjects.push(item); write(data); return item; },
     async updateNoteProject(id, patch){ const data=read(); data.noteProjects=data.noteProjects.map(x=>x.id===id?{...x,...patch}:x); write(data); return data.noteProjects; },
@@ -1308,7 +1447,7 @@ function createBrowserFallbackAPI(){
     async deleteInspiration(id){ const data=read(); data.inspirations=data.inspirations.filter(x=>x.id!==id); write(data); return data.inspirations; },
     async getSettings(){ return read().settings; },
     async saveSettings(settings){ const data=read(); data.settings={...data.settings,...settings}; write(data); return data.settings; },
-    async getUpdateState(){ return {status:'current',currentVersion:'6.1.11',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false}; },
+    async getUpdateState(){ return {status:'current',currentVersion:'6.1.12',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false}; },
     async checkForUpdates(){ return this.getUpdateState(); },
     async downloadUpdate(){ return this.getUpdateState(); },
     async installUpdate(){ return false; },
@@ -1363,6 +1502,12 @@ function createUnifiedAPI(nativeApi, fallback){
     copyText: (text)=> nativeApi.copyText ? nativeApi.copyText(text) : fallback.copyText(text),
     localizeAttachmentsForCopy: (attachments, scope)=> nativeApi.localizeAttachmentsForCopy ? nativeApi.localizeAttachmentsForCopy(attachments, scope) : fallback.localizeAttachmentsForCopy(attachments, scope),
     openExternal: (url)=> nativeApi.openExternal ? nativeApi.openExternal(url) : fallback.openExternal(url),
+    openPath: (filePath)=> nativeApi.openPath ? nativeApi.openPath(filePath) : fallback.openPath(filePath),
+    showItemInFolder: (filePath)=> nativeApi.showItemInFolder ? nativeApi.showItemInFolder(filePath) : fallback.showItemInFolder(filePath),
+    getFileSearchStatus: ()=> nativeApi.getFileSearchStatus ? nativeApi.getFileSearchStatus() : fallback.getFileSearchStatus(),
+    initializeFileSearch: ()=> nativeApi.initializeFileSearch ? nativeApi.initializeFileSearch() : fallback.initializeFileSearch(),
+    searchFiles: (query,options)=> nativeApi.searchFiles ? nativeApi.searchFiles(query,options) : fallback.searchFiles(query,options),
+    cancelFileSearch: ()=> nativeApi.cancelFileSearch ? nativeApi.cancelFileSearch() : fallback.cancelFileSearch(),
     getNoteProjects: ()=> nativeApi.getNoteProjects ? nativeApi.getNoteProjects() : fallback.getNoteProjects(),
     addNoteProject: (project)=> nativeApi.addNoteProject ? nativeApi.addNoteProject(project) : fallback.addNoteProject(project),
     updateNoteProject: (id,patch)=> nativeApi.updateNoteProject ? nativeApi.updateNoteProject(id,patch) : fallback.updateNoteProject(id,patch),
@@ -1488,6 +1633,13 @@ async function init(){
   });
   window.nativeAPI?.onMainNavigate?.((view)=>{
     if(view) switchView(view);
+  });
+  window.nativeAPI?.onFileSearchFocus?.(()=>{
+    setTimeout(()=>{
+      const input=$('#fileSearchInput');
+      input?.focus();
+      input?.select();
+    },80);
   });
   window.nativeAPI?.onMainSuspend?.(()=>{
     exitManagementModes();
@@ -1651,9 +1803,25 @@ function bindEvents(){
     state.noteVirtualStart=-1;
     scheduleRenderFrame('note-search', renderNotes);
   });
+  $('#fileSearchInput')?.addEventListener('input',()=>scheduleFileSearch());
+  $('#fileSearchInput')?.addEventListener('keydown',event=>{
+    if(event.key==='Enter'){
+      event.preventDefault();
+      scheduleFileSearch({immediate:true});
+    }else if(event.key==='ArrowDown' && state.fileSearch.results.length){
+      event.preventDefault();
+      $('#fileResultList')?.focus();
+      selectFileSearchResult(Math.max(0,state.fileSearch.selectedIndex),{ensureVisible:true});
+    }
+  });
   $('#stickySearch').addEventListener('input', ()=>scheduleRenderFrame('sticky-search', renderStickyNotes));
   $('#clearClipboardSearch').addEventListener('click', ()=>{ $('#clipboardSearch').value=''; state.clipboardRenderLimit=60; renderClipboard(); });
   $('#clearNoteSearch').addEventListener('click', ()=>{ $('#noteSearch').value=''; $('#noteList').scrollTop=0; state.noteVirtualStart=-1; renderNotes(); });
+  $('#clearFileSearch')?.addEventListener('click',()=>{
+    $('#fileSearchInput').value='';
+    scheduleFileSearch({immediate:true});
+    $('#fileSearchInput').focus();
+  });
   $('#clearStickySearch').addEventListener('click', ()=>{ $('#stickySearch').value=''; renderStickyNotes(); });
   $('#closeAllStickyBtn').addEventListener('click', async()=>{
     const result=await api.closeAllStickyNotes();
@@ -1666,6 +1834,71 @@ function bindEvents(){
   $('#clipboardFilters').addEventListener('click', (e)=>{
     const btn=e.target.closest('[data-type]'); if(!btn) return;
     state.clipType=btn.dataset.type; state.clipboardRenderLimit=60; renderClipboardFilters(); renderClipboard();
+  });
+  $('#fileSearchFilters')?.addEventListener('click',event=>{
+    const button=event.target.closest('[data-file-type]');
+    if(!button || button.dataset.fileType===state.fileSearch.type) return;
+    state.fileSearch.type=button.dataset.fileType;
+    updateFileSearchControls();
+    scheduleFileSearch({immediate:true});
+  });
+  $('#fileResultHead')?.addEventListener('click',event=>{
+    const button=event.target.closest('[data-file-sort]');
+    if(!button) return;
+    const sort=button.dataset.fileSort;
+    if(sort===state.fileSearch.sort) state.fileSearch.direction=state.fileSearch.direction==='asc'?'desc':'asc';
+    else{
+      state.fileSearch.sort=sort;
+      state.fileSearch.direction=sort==='modified'?'desc':'asc';
+    }
+    updateFileSearchControls();
+    scheduleFileSearch({immediate:true});
+  });
+  $('#fileResultList')?.addEventListener('scroll',()=>{
+    scheduleRenderFrame('file-search-scroll',()=>{
+      const start=Math.max(0,Math.floor($('#fileResultList').scrollTop/FILE_RESULT_ROW_HEIGHT)-FILE_RESULT_OVERSCAN);
+      if(start!==state.fileSearch.virtualStart) renderFileSearchResults();
+    });
+  });
+  $('#fileResultList')?.addEventListener('click',event=>{
+    const action=event.target.closest('[data-file-action]');
+    if(action){
+      event.stopPropagation();
+      performFileSearchAction(action.dataset.fileAction,action.dataset.fileIndex);
+      return;
+    }
+    const row=event.target.closest('[data-file-index]');
+    if(row) selectFileSearchResult(Number(row.dataset.fileIndex));
+  });
+  $('#fileResultList')?.addEventListener('dblclick',event=>{
+    if(event.target.closest('[data-file-action]')) return;
+    const row=event.target.closest('[data-file-index]');
+    if(row) performFileSearchAction('open',row.dataset.fileIndex);
+  });
+  $('#fileResultList')?.addEventListener('keydown',event=>{
+    const current=Math.max(0,state.fileSearch.selectedIndex);
+    if(event.key==='ArrowDown'){
+      event.preventDefault();
+      selectFileSearchResult(current+1,{ensureVisible:true});
+    }else if(event.key==='ArrowUp'){
+      event.preventDefault();
+      selectFileSearchResult(current-1,{ensureVisible:true});
+    }else if(event.key==='Home'){
+      event.preventDefault();
+      selectFileSearchResult(0,{ensureVisible:true});
+    }else if(event.key==='End'){
+      event.preventDefault();
+      selectFileSearchResult(state.fileSearch.results.length-1,{ensureVisible:true});
+    }else if(event.key==='Enter'){
+      event.preventDefault();
+      performFileSearchAction((event.ctrlKey||event.metaKey)?'reveal':'open',current);
+    }else if((event.ctrlKey||event.metaKey) && event.key.toLowerCase()==='c'){
+      event.preventDefault();
+      performFileSearchAction('copy',current);
+    }else if(event.key==='Escape'){
+      event.preventDefault();
+      $('#fileSearchInput')?.focus();
+    }
   });
   $('#clipboardList').addEventListener('scroll', ()=>{
     const list=$('#clipboardList');
@@ -1699,6 +1932,7 @@ function bindEvents(){
   bindMouseHotkeyInput($('#settingHotkey'));
   $('#settingScreenshotHotkey').addEventListener('keydown', (e)=>captureHotkeyInput(e, $('#settingScreenshotHotkey')));
   bindMouseHotkeyInput($('#settingScreenshotHotkey'));
+  $('#settingFileSearchHotkey')?.addEventListener('keydown', (e)=>captureHotkeyInput(e, $('#settingFileSearchHotkey')));
   $('#settingStickyHotkey')?.addEventListener('keydown', (e)=>captureHotkeyInput(e, $('#settingStickyHotkey')));
   bindMouseHotkeyInput($('#settingStickyHotkey'));
   $('#settingStickyMirrorHotkey')?.addEventListener('keydown', (e)=>captureLocalHotkeyInput(e, $('#settingStickyMirrorHotkey')));
@@ -1912,13 +2146,302 @@ function bindTopTextareaResize(handle, textarea, boundsElement, options={}){
   });
 }
 
+function fileSearchIcon(kind){
+  return kind==='folder'
+    ? '<svg viewBox="0 0 24 24"><path d="M3.5 7.5h6l2-2h9v13h-17Z"></path><path d="M3.5 9h17"></path></svg>'
+    : '<svg viewBox="0 0 24 24"><path d="M6 3.5h8l4 4V20H6Z"></path><path d="M14 3.5V8h4"></path></svg>';
+}
+
+function fileActionIcon(action){
+  if(action==='open') return '<svg viewBox="0 0 24 24"><path d="M8 5H5v14h14v-3"></path><path d="M12 5h7v7"></path><path d="m19 5-9 9"></path></svg>';
+  if(action==='reveal') return '<svg viewBox="0 0 24 24"><path d="M3.5 7.5h6l2-2h9v13h-17Z"></path><path d="M3.5 9h17"></path></svg>';
+  return iconSvg('copy');
+}
+
+function formatFileSize(value){
+  if(value===null || value===undefined || value==='') return '—';
+  const size=Math.max(0,Number(value)||0);
+  if(size<1024) return `${size} B`;
+  const units=['KB','MB','GB','TB'];
+  let amount=size/1024;
+  let unit=0;
+  while(amount>=1024 && unit<units.length-1){ amount/=1024; unit+=1; }
+  const decimals=amount>=100?0:(amount>=10?1:2);
+  return `${amount.toFixed(decimals)} ${units[unit]}`;
+}
+
+function formatFileModified(value){
+  const timestamp=Number(value||0);
+  if(!timestamp) return '—';
+  const date=new Date(timestamp);
+  if(Number.isNaN(date.getTime())) return '—';
+  const pad=value=>String(value).padStart(2,'0');
+  return `${date.getFullYear()}/${pad(date.getMonth()+1)}/${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function fileSearchStateMarkup(kind,title,message,button=''){
+  const icon=kind==='loading'
+    ? '<span class="file-search-spinner" aria-hidden="true"></span>'
+    : `<span class="file-search-state-icon">${kind==='error'?'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"></circle><path d="M12 7v6"></path><path d="M12 17h.01"></path></svg>':'<svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="5.5"></circle><path d="m15 15 5 5"></path></svg>'}</span>`;
+  return `<div class="file-search-state"><div class="file-search-state-inner">${icon}<h2>${escapeHtml(title)}</h2><p>${escapeHtml(message)}</p>${button}</div></div>`;
+}
+
+function updateFileSearchControls(){
+  const searchState=state.fileSearch;
+  $$('#fileSearchFilters [data-file-type]').forEach(button=>button.classList.toggle('active',button.dataset.fileType===searchState.type));
+  $$('#fileResultHead [data-file-sort]').forEach(button=>{
+    const active=button.dataset.fileSort===searchState.sort;
+    button.classList.toggle('active',active);
+    const arrow=button.querySelector('.file-sort-arrow');
+    if(arrow) arrow.textContent=active?(searchState.direction==='desc'?'↓':'↑'):'';
+  });
+  const shortcut=$('#fileSearchShortcutLabel');
+  if(shortcut) shortcut.textContent=hotkeyDisplay(state.settings.fileSearchHotkey||'Ctrl+Alt+A');
+}
+
+function renderFileSearch(){
+  updateFileSearchControls();
+  const searchState=state.fileSearch;
+  const list=$('#fileResultList');
+  const head=$('#fileResultHead');
+  const summary=$('#fileSearchSummary');
+  if(!list || !head || !summary) return;
+  const status=searchState.engineStatus;
+  if(['needs-initialization','initializing','indexing','checking','error','unsupported'].includes(status)){
+    head.hidden=true;
+    if(status==='needs-initialization'){
+      summary.textContent='索引未启用';
+      list.innerHTML=fileSearchStateMarkup('setup','启用极速全盘搜索','Windows 将请求一次系统授权，用于建立只包含文件信息的本机索引。','<button class="black-btn" id="initializeFileSearch" type="button">立即启用</button>');
+      $('#initializeFileSearch')?.addEventListener('click',initializeFileSearch);
+    }else if(['initializing','indexing','checking'].includes(status)){
+      summary.textContent=status==='indexing'?'正在建立索引':'正在连接索引';
+      list.innerHTML=fileSearchStateMarkup('loading',status==='indexing'?'正在建立首次索引':'正在连接本机索引',searchState.message||'请稍候');
+    }else{
+      summary.textContent='搜索不可用';
+      list.innerHTML=fileSearchStateMarkup('error','暂时无法搜索',searchState.message||'请稍后重试','<button class="ghost-btn" id="retryFileSearch" type="button">重试</button>');
+      $('#retryFileSearch')?.addEventListener('click',()=>loadFileSearchStatus({force:true}));
+    }
+    return;
+  }
+  head.hidden=false;
+  if(status==='searching') summary.textContent='正在搜索…';
+  else if(searchState.results.length) summary.textContent=`${searchState.results.length}${searchState.truncated?'+':''} 条 · ${Math.max(0,Math.round(searchState.elapsedMs||0))} ms`;
+  else summary.textContent=searchState.query?'没有找到结果':'等待搜索';
+  renderFileSearchResults();
+}
+
+function renderFileSearchResults(){
+  const searchState=state.fileSearch;
+  const list=$('#fileResultList');
+  if(!list) return;
+  if(searchState.engineStatus==='searching' && !searchState.results.length){
+    list.innerHTML=fileSearchStateMarkup('loading','正在搜索','');
+    return;
+  }
+  if(!searchState.query){
+    list.innerHTML=fileSearchStateMarkup('idle','输入关键词','');
+    return;
+  }
+  if(!searchState.results.length){
+    list.innerHTML=fileSearchStateMarkup('idle','没有找到结果','请尝试更短的文件名或切换文件类型');
+    return;
+  }
+  const total=searchState.results.length;
+  const start=Math.max(0,Math.floor(list.scrollTop/FILE_RESULT_ROW_HEIGHT)-FILE_RESULT_OVERSCAN);
+  const end=Math.min(total,start+FILE_RESULT_WINDOW_SIZE);
+  searchState.virtualStart=start;
+  const rows=[];
+  if(start>0) rows.push(`<div class="virtual-spacer" style="height:${start*FILE_RESULT_ROW_HEIGHT}px"></div>`);
+  for(let index=start;index<end;index+=1){
+    const item=searchState.results[index];
+    const selected=index===searchState.selectedIndex;
+    const extension=item.kind==='folder'?'文件夹':((String(item.name||'').split('.').pop()||'文件').toUpperCase());
+    rows.push(`<div class="file-row file-grid ${selected?'selected':''}" data-file-index="${index}" title="${escapeHtml(item.path||'')}">
+      <div class="file-primary"><span class="file-kind-icon ${item.kind==='folder'?'folder':''}">${fileSearchIcon(item.kind)}</span><span class="file-name-wrap"><span class="file-name">${escapeHtml(item.name||item.path||'')}</span><span class="file-extension">${escapeHtml(extension)}</span></span></div>
+      <div class="file-path file-col-path">${escapeHtml(item.directory||'')}</div>
+      <div class="file-size file-col-size">${escapeHtml(formatFileSize(item.size))}</div>
+      <div class="file-modified file-col-modified">${escapeHtml(formatFileModified(item.modifiedAt))}</div>
+      <div class="file-actions">
+        <button class="file-action" data-file-action="open" data-file-index="${index}" title="打开">${fileActionIcon('open')}</button>
+        <button class="file-action" data-file-action="reveal" data-file-index="${index}" title="定位到文件夹">${fileActionIcon('reveal')}</button>
+        <button class="file-action" data-file-action="copy" data-file-index="${index}" title="复制路径">${fileActionIcon('copy')}</button>
+      </div>
+    </div>`);
+  }
+  if(end<total) rows.push(`<div class="virtual-spacer" style="height:${(total-end)*FILE_RESULT_ROW_HEIGHT}px"></div>`);
+  list.innerHTML=rows.join('');
+}
+
+function stopFileSearchPolling(){
+  clearTimeout(state.fileSearch.statusPollTimer);
+  state.fileSearch.statusPollTimer=null;
+}
+
+function pollFileSearchStatus(){
+  stopFileSearchPolling();
+  if(state.view!=='search' || state.fileSearch.engineStatus!=='indexing') return;
+  state.fileSearch.statusPollTimer=setTimeout(()=>loadFileSearchStatus({force:true}),1200);
+}
+
+async function loadFileSearchStatus({force=false}={}){
+  stopFileSearchPolling();
+  if(!force && ['ready','searching'].includes(state.fileSearch.engineStatus)) return state.fileSearch.engineStatus;
+  state.fileSearch.engineStatus='checking';
+  state.fileSearch.message='正在连接本机索引';
+  renderFileSearch();
+  let result;
+  try{
+    result=await api.getFileSearchStatus();
+  }catch(error){
+    state.fileSearch.engineStatus='error';
+    state.fileSearch.message='无法连接本机文件索引，请稍后重试';
+    renderFileSearch();
+    return state.fileSearch.engineStatus;
+  }
+  state.fileSearch.engineStatus=result?.status||'error';
+  state.fileSearch.message=result?.message||'';
+  renderFileSearch();
+  if(state.fileSearch.engineStatus==='indexing') pollFileSearchStatus();
+  if(result?.ready && state.fileSearch.query) scheduleFileSearch({immediate:true});
+  return state.fileSearch.engineStatus;
+}
+
+async function initializeFileSearch(){
+  const confirmed=await showConfirmModal({
+    title:'启用极速全盘搜索',
+    message:'Windows 会弹出一次系统授权窗口，用于安装本机文件名索引服务。索引只记录文件名、路径、大小和修改时间，不读取或上传文件内容。',
+    confirmText:'继续启用',
+  });
+  if(!confirmed) return;
+  state.fileSearch.engineStatus='initializing';
+  state.fileSearch.message='请在 Windows 授权窗口中选择“是”';
+  renderFileSearch();
+  let result;
+  try{
+    result=await api.initializeFileSearch();
+  }catch(error){
+    state.fileSearch.engineStatus='error';
+    state.fileSearch.message='文件索引初始化失败，请确认系统授权后重试。';
+    renderFileSearch();
+    return;
+  }
+  state.fileSearch.engineStatus=result?.status||'error';
+  state.fileSearch.message=result?.message||'';
+  if(result?.status==='needs-initialization'){
+    state.fileSearch.engineStatus='error';
+    state.fileSearch.message='未完成系统授权，极速全盘搜索尚未启用。';
+  }
+  renderFileSearch();
+  if(state.fileSearch.engineStatus==='indexing') pollFileSearchStatus();
+  if(result?.ready) $('#fileSearchInput')?.focus();
+}
+
+function scheduleFileSearch({immediate=false}={}){
+  clearTimeout(state.fileSearch.debounceTimer);
+  state.fileSearch.requestId+=1;
+  const query=String($('#fileSearchInput')?.value||'').trim();
+  state.fileSearch.query=query;
+  state.fileSearch.selectedIndex=-1;
+  state.fileSearch.virtualStart=-1;
+  if(!query){
+    state.fileSearch.results=[];
+    state.fileSearch.truncated=false;
+    Promise.resolve(api.cancelFileSearch()).catch(()=>{});
+    renderFileSearch();
+    return;
+  }
+  state.fileSearch.debounceTimer=setTimeout(runFileSearch,immediate?0:120);
+}
+
+async function runFileSearch(){
+  const query=String($('#fileSearchInput')?.value||'').trim();
+  if(!query) return;
+  if(state.fileSearch.engineStatus!=='ready' && state.fileSearch.engineStatus!=='searching'){
+    const status=await loadFileSearchStatus({force:true});
+    if(status!=='ready') return;
+  }
+  const requestId=++state.fileSearch.requestId;
+  state.fileSearch.query=query;
+  state.fileSearch.engineStatus='searching';
+  renderFileSearch();
+  let result;
+  try{
+    result=await api.searchFiles(query,{
+      type:state.fileSearch.type,
+      sort:state.fileSearch.sort,
+      direction:state.fileSearch.direction,
+      limit:300,
+    });
+  }catch(error){
+    if(requestId!==state.fileSearch.requestId) return;
+    state.fileSearch.engineStatus='error';
+    state.fileSearch.message='搜索服务暂时不可用，请稍后重试';
+    state.fileSearch.results=[];
+    renderFileSearch();
+    return;
+  }
+  if(requestId!==state.fileSearch.requestId || result?.status==='canceled') return;
+  state.fileSearch.engineStatus=result?.status||'error';
+  state.fileSearch.message=result?.message||'';
+  state.fileSearch.results=Array.isArray(result?.results)?result.results:[];
+  state.fileSearch.truncated=!!result?.truncated;
+  state.fileSearch.elapsedMs=Number(result?.elapsedMs||0);
+  state.fileSearch.selectedIndex=state.fileSearch.results.length?0:-1;
+  const list=$('#fileResultList');
+  if(list) list.scrollTop=0;
+  renderFileSearch();
+  if(state.fileSearch.engineStatus==='indexing') pollFileSearchStatus();
+}
+
+async function performFileSearchAction(action,index){
+  const item=state.fileSearch.results[Number(index)];
+  if(!item?.path) return;
+  try{
+    if(action==='copy'){
+      const copied=await api.copyText(item.path);
+      toast(copied===false?'复制失败':'路径已复制');
+      return;
+    }
+    if(action==='reveal'){
+      const shown=await api.showItemInFolder(item.path);
+      if(!shown) toast('文件已移动或无法定位');
+      return;
+    }
+    const opened=await api.openPath(item.path);
+    if(!opened) toast('文件已移动或无法打开');
+  }catch(error){
+    toast('文件已移动或操作失败');
+  }
+}
+
+function selectFileSearchResult(index,{ensureVisible=false}={}){
+  const total=state.fileSearch.results.length;
+  if(!total) return;
+  const next=Math.max(0,Math.min(total-1,Number(index)||0));
+  state.fileSearch.selectedIndex=next;
+  const list=$('#fileResultList');
+  if(ensureVisible && list){
+    const top=next*FILE_RESULT_ROW_HEIGHT;
+    const bottom=top+FILE_RESULT_ROW_HEIGHT;
+    if(top<list.scrollTop) list.scrollTop=top;
+    else if(bottom>list.scrollTop+list.clientHeight) list.scrollTop=bottom-list.clientHeight;
+  }
+  renderFileSearchResults();
+}
+
 async function switchView(view,{skipCoach=false}={}){
-  if(!['clipboard','notes','stickies','settings','about'].includes(view)) view='clipboard';
+  if(!['clipboard','notes','search','stickies','settings','about'].includes(view)) view='clipboard';
   if(view===state.view){
     if(!skipCoach) showPageCoach(view);
     return;
   }
   const previousView=state.view;
+  if(previousView==='search' && view!=='search'){
+    stopFileSearchPolling();
+    clearTimeout(state.fileSearch.debounceTimer);
+    state.fileSearch.requestId+=1;
+    Promise.resolve(api.cancelFileSearch()).catch(()=>{});
+  }
   if(previousView==='settings' && view!=='settings') renderSettings();
   exitManagementModes();
   state.view=view;
@@ -1927,6 +2450,11 @@ async function switchView(view,{skipCoach=false}={}){
   $(`#${view}View`).classList.add('active');
   if(view==='clipboard') renderClipboardFilters(), renderClipboard();
   if(view==='notes') renderNoteProjects(), renderNotes();
+  if(view==='search'){
+    renderFileSearch();
+    loadFileSearchStatus();
+    setTimeout(()=>$('#fileSearchInput')?.focus(),60);
+  }
   if(view==='stickies') renderStickyProjects(), renderStickyNotes();
   if(view==='settings') renderSettings();
   if(!skipCoach) setTimeout(()=>showPageCoach(view),120);
@@ -1939,6 +2467,8 @@ function renderCurrentView(){
   }else if(state.view==='notes'){
     renderNoteProjects();
     renderNotes();
+  }else if(state.view==='search'){
+    renderFileSearch();
   }else if(state.view==='stickies'){
     renderStickyProjects();
     renderStickyNotes();
@@ -3926,6 +4456,7 @@ function renderSettings(){
   $('#settingHotkey').value=state.settings.quickMenuHotkey || DEFAULT_HOTKEY_VALUES.settingHotkey;
   $('#settingScreenshotHotkey').value=state.settings.screenshotHotkey || DEFAULT_HOTKEY_VALUES.settingScreenshotHotkey;
   $('#settingStickyHotkey').value=state.settings.quickStickyHotkey || DEFAULT_HOTKEY_VALUES.settingStickyHotkey;
+  $('#settingFileSearchHotkey').value=state.settings.fileSearchHotkey || DEFAULT_HOTKEY_VALUES.settingFileSearchHotkey;
   $('#settingStickyMirrorHotkey').value=state.settings.stickyMirrorHotkey || DEFAULT_HOTKEY_VALUES.settingStickyMirrorHotkey;
   $('#settingStickyRotateHotkey').value=state.settings.stickyRotateHotkey || DEFAULT_HOTKEY_VALUES.settingStickyRotateHotkey;
   $('#settingStickyOpacityHotkey').value=state.settings.stickyOpacityHotkey || DEFAULT_HOTKEY_VALUES.settingStickyOpacityHotkey;
@@ -4202,6 +4733,7 @@ async function saveSettings(){
   const hotkey=normalizeHotkey($('#settingHotkey').value);
   const screenshotHotkey=normalizeHotkey($('#settingScreenshotHotkey').value);
   const quickStickyHotkey=normalizeHotkey($('#settingStickyHotkey').value);
+  const fileSearchHotkey=normalizeHotkey($('#settingFileSearchHotkey').value);
   const stickyMirrorHotkey=normalizeHotkey($('#settingStickyMirrorHotkey').value) || DEFAULT_HOTKEY_VALUES.settingStickyMirrorHotkey;
   const stickyRotateHotkey=normalizeHotkey($('#settingStickyRotateHotkey').value) || DEFAULT_HOTKEY_VALUES.settingStickyRotateHotkey;
   const stickyOpacityHotkey=normalizeHotkey($('#settingStickyOpacityHotkey').value) || DEFAULT_HOTKEY_VALUES.settingStickyOpacityHotkey;
@@ -4220,12 +4752,21 @@ async function saveSettings(){
     await showInfoModal({title:'快捷键冲突', message:stickyConflict});
     return;
   }
+  const fileSearchConflict=getHotkeyConflictMessage(fileSearchHotkey);
+  if(fileSearchConflict){
+    await showInfoModal({title:'快捷键冲突', message:fileSearchConflict});
+    return;
+  }
   if(hotkey && screenshotHotkey && hotkey===screenshotHotkey){
     await showInfoModal({title:'快捷键冲突', message:'截图快捷键不能和快捷窗口快捷键相同'});
     return;
   }
   if(quickStickyHotkey && [hotkey,screenshotHotkey].includes(quickStickyHotkey)){
     await showInfoModal({title:'快捷键冲突', message:'快捷新建便签快捷键不能和快捷窗口或截图快捷键相同'});
+    return;
+  }
+  if(fileSearchHotkey && [hotkey,screenshotHotkey,quickStickyHotkey].includes(fileSearchHotkey)){
+    await showInfoModal({title:'快捷键冲突', message:'全盘查找快捷键不能和快捷窗口、截图或快捷新建便签快捷键相同'});
     return;
   }
   const stickyLocalConflict=getStickyLocalHotkeyConflict([
@@ -4261,6 +4802,7 @@ async function saveSettings(){
     quickMenuHotkey:hotkey,
     screenshotHotkey,
     quickStickyHotkey,
+    fileSearchHotkey,
     stickyMirrorHotkey,
     stickyRotateHotkey,
     stickyOpacityHotkey,
@@ -4275,11 +4817,13 @@ async function saveSettings(){
   $('#settingHotkey').value=state.settings.quickMenuHotkey;
   $('#settingScreenshotHotkey').value=state.settings.screenshotHotkey;
   $('#settingStickyHotkey').value=state.settings.quickStickyHotkey;
+  $('#settingFileSearchHotkey').value=state.settings.fileSearchHotkey;
   $('#settingStickyMirrorHotkey').value=state.settings.stickyMirrorHotkey || DEFAULT_HOTKEY_VALUES.settingStickyMirrorHotkey;
   $('#settingStickyRotateHotkey').value=state.settings.stickyRotateHotkey || DEFAULT_HOTKEY_VALUES.settingStickyRotateHotkey;
   $('#settingStickyOpacityHotkey').value=state.settings.stickyOpacityHotkey || DEFAULT_HOTKEY_VALUES.settingStickyOpacityHotkey;
   renderClipboard();
   applyTheme(state.settings.theme || 'light');
+  updateFileSearchControls();
   toast('设置已保存');
 }
 
@@ -4316,7 +4860,7 @@ function showUpdateDialog(){
   showModal(`
     <div data-update-dialog>
       <div class="modal-header"><h3>软件更新</h3><button class="modal-close" id="closeModal">×</button></div>
-      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '6.1.11')}</b><span>${update.version?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
+      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '6.1.12')}</b><span>${update.version?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
       <div class="modal-message">${escapeHtml(updateStatusText())}</div>
       <p class="update-network-tip">提示：开启 VPN 后再检测更新，结果会更加准确。</p>
       ${busy||downloaded?`<div class="update-progress"><span style="width:${downloaded?100:progress}%"></span></div>`:''}

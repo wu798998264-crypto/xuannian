@@ -46,10 +46,10 @@ async function run() {
         noteProjects:[{id:'stress-project',name:'Stress',description:''}],
         notes:Array.from({length:10000},(_,index)=>({id:'note-'+index,projectId:'stress-project',order:index+1,type:'text',title:'Synthetic '+index,content:'Runtime favorite '+index+' '+('content '.repeat(10)),note:'',createdAt:now-index})),
         stickyProjects:[],stickyNotes:[],inspirationCategories:[],inspirations:[],
-        settings:{theme:'light',storagePath:'browser',retentionDays:30,quickMenuHotkey:'Ctrl+Alt+X',screenshotHotkey:'Ctrl+Alt+A',quickStickyHotkey:'Ctrl+Alt+S',inspirationSendHotkey:'Ctrl+Enter'}
+        settings:{theme:'light',storagePath:'browser',retentionDays:30,quickMenuHotkey:'Ctrl+Alt+X',screenshotHotkey:'Ctrl+Alt+D',quickStickyHotkey:'Ctrl+Alt+S',fileSearchHotkey:'Ctrl+Alt+A',inspirationSendHotkey:'Ctrl+Enter'}
       };
       localStorage.setItem('xuannian-notes-store-v1',JSON.stringify(data));
-      localStorage.setItem('xuannian.onboarding.first-run.v6','seen');
+      localStorage.setItem('xuannian.onboarding.first-run.v1','seen');
       return data.notes.length;
     })()
   `);
@@ -105,8 +105,69 @@ async function run() {
   assert(metrics.maxCards <= 64, `virtual note DOM exceeded 64 cards: ${metrics.maxCards}`);
   assert(metrics.reachedLast, 'virtual list must reach the final favorite');
   assert(metrics.searchFound, 'search must scan favorites outside the current DOM window');
-  assert(metrics.finalDomNodes < 1600, `renderer DOM should stay bounded, received ${metrics.finalDomNodes} nodes`);
+  assert(metrics.finalDomNodes < 1700, `renderer DOM should stay bounded, received ${metrics.finalDomNodes} nodes`);
   assert.strictEqual(rendererErrors.length, 0, `renderer errors: ${rendererErrors.join(' | ')}`);
+  const fileSearchMetrics = await window.webContents.executeJavaScript(`
+    (async()=>{
+      await switchView('search',{skipCoach:true});
+      const now=Date.now();
+      state.fileSearch.engineStatus='ready';
+      state.fileSearch.query='Synthetic';
+      state.fileSearch.results=Array.from({length:10000},(_,index)=>({
+        path:'C:\\\\Synthetic\\\\Folder\\\\item-'+index+'.txt',
+        directory:'C:\\\\Synthetic\\\\Folder',
+        name:'item-'+index+'.txt',kind:'file',size:index*1024,modifiedAt:now-index*1000
+      }));
+      state.fileSearch.selectedIndex=0;
+      document.querySelector('#fileSearchInput').value='Synthetic';
+      renderFileSearch();
+      const list=document.querySelector('#fileResultList');
+      let maxRows=0;
+      const scrollDurations=[];
+      for(let index=0;index<100;index+=1){
+        const started=performance.now();
+        list.scrollTop=(list.scrollHeight-list.clientHeight)*(index/99);
+        renderFileSearchResults();
+        scrollDurations.push(performance.now()-started);
+        maxRows=Math.max(maxRows,list.querySelectorAll('.file-row').length);
+      }
+      list.scrollTop=list.scrollHeight;
+      renderFileSearchResults();
+      return {
+        resultCount:state.fileSearch.results.length,
+        maxRows,
+        reachedLast:Boolean(list.querySelector('[data-file-index="9999"]')),
+        finalDomNodes:document.querySelectorAll('*').length,
+        scrollP95Ms:Number([...scrollDurations].sort((a,b)=>a-b)[94].toFixed(2)),
+        shortcut:document.querySelector('#fileSearchShortcutLabel').textContent.trim(),
+        stateView:state.view,
+        activeView:document.querySelector('.view.active')?.id||'',
+        activeNav:document.querySelector('.nav-btn.active')?.dataset.view||''
+      };
+    })()
+  `, true);
+  console.log(`file search runtime probe metrics ${JSON.stringify(fileSearchMetrics)}`);
+  assert.strictEqual(fileSearchMetrics.resultCount, 10000);
+  assert(fileSearchMetrics.maxRows <= 48, `virtual file-search DOM exceeded 48 rows: ${fileSearchMetrics.maxRows}`);
+  assert(fileSearchMetrics.reachedLast, 'virtual file-search list must reach the final result');
+  assert(fileSearchMetrics.finalDomNodes < 2150, `file-search DOM should stay bounded, received ${fileSearchMetrics.finalDomNodes} nodes`);
+  assert.strictEqual(fileSearchMetrics.shortcut, 'Ctrl + Alt + A');
+  assert.strictEqual(fileSearchMetrics.stateView, 'search');
+  assert.strictEqual(fileSearchMetrics.activeView, 'searchView');
+  assert.strictEqual(fileSearchMetrics.activeNav, 'search');
+  assert.strictEqual(rendererErrors.length, 0, `renderer errors: ${rendererErrors.join(' | ')}`);
+  if (process.env.XUANNIAN_RUNTIME_SCREENSHOT) {
+    window.showInactive();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const image = await window.webContents.capturePage();
+    const screenshotPath = path.resolve(process.env.XUANNIAN_RUNTIME_SCREENSHOT);
+    fs.writeFileSync(screenshotPath, image.toPNG());
+    window.setSize(620, 760);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const narrowImage = await window.webContents.capturePage();
+    fs.writeFileSync(screenshotPath.replace(/(\.png)?$/i, '-620.png'), narrowImage.toPNG());
+    window.hide();
+  }
   const quickWindow = new BrowserWindow({
     show: false,
     width: 560,

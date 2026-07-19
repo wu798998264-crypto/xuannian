@@ -11,6 +11,7 @@ const {
   readJsonWithRecoverySync,
   writeJsonAtomicSync,
 } = require('./data-persistence');
+const { FileSearchService } = require('./file-search');
 
 let mainWindow;
 let quickWindow;
@@ -54,8 +55,10 @@ let lastUpdateLogKey = '';
 let lastUpdateBroadcastAt = 0;
 let alwaysOnTop = false;
 let quickHotkey = 'Ctrl+Alt+X';
-let screenshotHotkey = 'Ctrl+Alt+A';
+let screenshotHotkey = 'Ctrl+Alt+D';
 let quickStickyHotkey = 'Ctrl+Alt+S';
+let fileSearchHotkey = 'Ctrl+Alt+A';
+let fileSearchService = null;
 let lastQuickToggleAt = 0;
 let lastPasteTargetHwnd = '';
 let lastPasteTargetAt = 0;
@@ -584,6 +587,30 @@ function showSettingsWindow() {
   else send();
 }
 
+function showFileSearchWindow() {
+  showMainWindow();
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const send = () => {
+    mainWindow.webContents.send('main:navigate', 'search');
+    mainWindow.webContents.send('search:focus');
+  };
+  if (mainWindow.webContents.isLoading()) mainWindow.webContents.once('did-finish-load', send);
+  else send();
+}
+
+function getFileSearchService() {
+  if (!fileSearchService) {
+    fileSearchService = new FileSearchService({
+      platform: process.platform,
+      userDataPath: app.getPath('userData'),
+      resourcesPath: process.resourcesPath,
+      appPath: app.getAppPath(),
+      isPackaged: app.isPackaged,
+    });
+  }
+  return fileSearchService;
+}
+
 function notifyMainSuspend() {
   if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
   mainWindow.webContents.send('main:suspend');
@@ -918,6 +945,7 @@ function createTray() {
   tray.setContextMenu(Menu.buildFromTemplate([
     { label: `打开玄念${app.getVersion()}`, click: showMainWindow },
     { label: '打开快捷面板', click: showQuickWindow },
+    { label: '全盘查找', click: showFileSearchWindow },
     { label: '设置', click: showSettingsWindow },
     { type: 'separator' },
     {
@@ -1631,8 +1659,9 @@ function registerAppHotkeys(settings = {}) {
   stopMouseHotkeyHook();
   stopNativeHotkeyHook();
   quickHotkey = settings.quickMenuHotkey || quickHotkey || 'Ctrl+Alt+X';
-  screenshotHotkey = settings.screenshotHotkey || screenshotHotkey || 'Ctrl+Alt+A';
+  screenshotHotkey = settings.screenshotHotkey || screenshotHotkey || 'Ctrl+Alt+D';
   quickStickyHotkey = settings.quickStickyHotkey || quickStickyHotkey || 'Ctrl+Alt+S';
+  fileSearchHotkey = settings.fileSearchHotkey || fileSearchHotkey || 'Ctrl+Alt+A';
   const quickOk = isMouseHotkey(quickHotkey) || globalShortcut.register(normalizeAccelerator(quickHotkey), () => {
     showQuickWindow();
   });
@@ -1650,14 +1679,20 @@ function registerAppHotkeys(settings = {}) {
   } else {
     stickyOk = false;
   }
+  let searchOk = true;
+  if (fileSearchHotkey && !isMouseHotkey(fileSearchHotkey) && ![quickHotkey, screenshotHotkey, quickStickyHotkey].includes(fileSearchHotkey)) {
+    searchOk = globalShortcut.register(normalizeAccelerator(fileSearchHotkey), showFileSearchWindow);
+  } else {
+    searchOk = false;
+  }
   const nativeOk = startNativeHotkeyHook({ quickMenuHotkey: quickHotkey, screenshotHotkey, quickStickyHotkey });
   if (!nativeOk) {
     const keyboardOk = startKeyboardHotkeyHook({ quickMenuHotkey: quickHotkey, screenshotHotkey, quickStickyHotkey });
     const mouseOk = startMouseHotkeyHook({ quickMenuHotkey: quickHotkey, screenshotHotkey, quickStickyHotkey });
-    if (!keyboardOk) return { quickOk: false, screenshotOk: false, stickyOk: false };
-    if (!mouseOk) return { quickOk: false, screenshotOk: false, stickyOk: false };
+    if (!keyboardOk) return { quickOk: false, screenshotOk: false, stickyOk: false, searchOk: false };
+    if (!mouseOk) return { quickOk: false, screenshotOk: false, stickyOk: false, searchOk: false };
   }
-  return { quickOk, screenshotOk, stickyOk };
+  return { quickOk, screenshotOk, stickyOk, searchOk };
 }
 
 function hotkeyParts(hotkey) {
@@ -2374,8 +2409,9 @@ function defaultData() {
       storagePath: app.getPath('userData'),
       retentionDays: 30,
       quickMenuHotkey: 'Ctrl+Alt+X',
-      screenshotHotkey: 'Ctrl+Alt+A',
+      screenshotHotkey: 'Ctrl+Alt+D',
       quickStickyHotkey: 'Ctrl+Alt+S',
+      fileSearchHotkey: 'Ctrl+Alt+A',
       stickyMirrorHotkey: 'X',
       stickyRotateHotkey: 'R',
       stickyOpacityHotkey: 'Shift+Wheel',
@@ -2530,6 +2566,12 @@ function loadData(options = {}) {
   }
   if (!rawSettings.quickStickyHotkey || rawSettings.quickStickyHotkey === 'Ctrl+Alt+B') {
     settings.quickStickyHotkey = 'Ctrl+Alt+S';
+  }
+  if (!rawSettings.fileSearchHotkey) {
+    settings.fileSearchHotkey = 'Ctrl+Alt+A';
+    if (!rawSettings.screenshotHotkey || rawSettings.screenshotHotkey === 'Ctrl+Alt+A') {
+      settings.screenshotHotkey = 'Ctrl+Alt+D';
+    }
   }
   let merged = normalizeLegacyStickyData({ ...defaultData(), ...data, settings });
   const repairedNotes = repairProjectList(merged.noteProjects, merged.notes, 'cp');
@@ -4671,6 +4713,9 @@ app.whenReady().then(() => {
   startClipboardWatcher();
   initializeAutoUpdater();
   setTimeout(() => {
+    if (!isQuitting) getFileSearchService().prewarm().catch((error) => runtimeLog(`file search prewarm failed: ${error?.message || error}`));
+  }, 1800);
+  setTimeout(() => {
     if (!isQuitting) app.setLoginItemSettings({ openAtLogin: true, path: startupExecutablePath() });
   }, 1200);
 });
@@ -4703,6 +4748,7 @@ app.on('will-quit', () => {
   stopMouseHotkeyHook();
   stopNativeHotkeyHook();
   stopClipboardWatcher();
+  fileSearchService?.shutdown();
   if (tray) {
     tray.destroy();
     tray = null;
@@ -4710,6 +4756,11 @@ app.on('will-quit', () => {
 });
 
 ipcMain.handle('data:load', () => loadData({ clone: false }));
+
+ipcMain.handle('search:status', () => getFileSearchService().getStatus());
+ipcMain.handle('search:initialize', () => getFileSearchService().initialize());
+ipcMain.handle('search:query', (_event, query, options = {}) => getFileSearchService().search(query, options));
+ipcMain.handle('search:cancel', () => getFileSearchService().cancel());
 
 ipcMain.handle('update:getState', () => publicUpdateState());
 ipcMain.handle('update:check', () => checkForAppUpdates());
@@ -4734,7 +4785,8 @@ ipcMain.handle('data:save', async (_event, data) => {
   const hotkeysChanged =
     incomingSettings.quickMenuHotkey !== current.settings.quickMenuHotkey ||
     incomingSettings.screenshotHotkey !== current.settings.screenshotHotkey ||
-    incomingSettings.quickStickyHotkey !== current.settings.quickStickyHotkey;
+    incomingSettings.quickStickyHotkey !== current.settings.quickStickyHotkey ||
+    incomingSettings.fileSearchHotkey !== current.settings.fileSearchHotkey;
   if (hotkeysChanged) {
     const result = registerAppHotkeys(incomingSettings);
     if (!result.quickOk) {
@@ -4749,10 +4801,9 @@ ipcMain.handle('data:save', async (_event, data) => {
       registerAppHotkeys(current.settings);
       return { ok: false, reason: '快捷便签快捷键已被其他软件占用，或与其他玄念快捷键重复，请换一个组合键。', data: current };
     }
-    const ok = true;
-    if (!ok) {
+    if (!result.searchOk) {
       registerAppHotkeys(current.settings);
-      return { ok: false, reason: '快捷键已被其他软件占用，请换一个组合键。', data: current };
+      return { ok: false, reason: '全盘查找快捷键已被其他软件占用，或与其他玄念快捷键重复，请换一个组合键。', data: current };
     }
   }
   const saved = await saveDataDurable({ ...data, settings: incomingSettings }, { clone: false });
