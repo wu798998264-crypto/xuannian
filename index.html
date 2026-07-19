@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>玄念7.0.3</title>
+  <title>玄念7.0.4</title>
   <link rel="icon" href="src/xuannian-logo-256.png" />
   <style>
     :root{
@@ -1166,6 +1166,7 @@
 <div class="image-hover-preview" id="imageHoverPreview"><img alt=""><video muted playsinline></video></div>
 <div class="file-thumbnail-preview" id="fileThumbnailPreview"><img alt="媒体文件预览"></div>
 
+<script src="src/wheel-scroll.js"></script>
 <script>
 const fallbackApi = createBrowserFallbackAPI();
 const api = createUnifiedAPI(window.nativeAPI, fallbackApi);
@@ -1488,7 +1489,7 @@ function createBrowserFallbackAPI(){
     async deleteInspiration(id){ const data=read(); data.inspirations=data.inspirations.filter(x=>x.id!==id); write(data); return data.inspirations; },
     async getSettings(){ return read().settings; },
     async saveSettings(settings){ const data=read(); data.settings={...data.settings,...settings}; write(data); return data.settings; },
-    async getUpdateState(){ return {status:'current',currentVersion:'7.0.3',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false}; },
+    async getUpdateState(){ return {status:'current',currentVersion:'7.0.4',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false}; },
     async checkForUpdates(){ return this.getUpdateState(); },
     async downloadUpdate(){ return this.getUpdateState(); },
     async installUpdate(){ return false; },
@@ -1545,6 +1546,7 @@ function createUnifiedAPI(nativeApi, fallback){
     openExternal: (url)=> nativeApi.openExternal ? nativeApi.openExternal(url) : fallback.openExternal(url),
     openPath: (filePath)=> nativeApi.openPath ? nativeApi.openPath(filePath) : fallback.openPath(filePath),
     showItemInFolder: (filePath)=> nativeApi.showItemInFolder ? nativeApi.showItemInFolder(filePath) : fallback.showItemInFolder(filePath),
+    getFileThumbnail: (filePath,size)=> nativeApi.getFileThumbnail ? nativeApi.getFileThumbnail(filePath,size) : fallback.getFileThumbnail(filePath,size),
     getFileSearchStatus: ()=> nativeApi.getFileSearchStatus ? nativeApi.getFileSearchStatus() : fallback.getFileSearchStatus(),
     initializeFileSearch: ()=> nativeApi.initializeFileSearch ? nativeApi.initializeFileSearch() : fallback.initializeFileSearch(),
     searchFiles: (query,options)=> nativeApi.searchFiles ? nativeApi.searchFiles(query,options) : fallback.searchFiles(query,options),
@@ -2066,6 +2068,16 @@ function bindEvents(){
     document.addEventListener('copy', ()=>setTimeout(()=>captureClipboardNow(false),120));
     document.addEventListener('cut', ()=>setTimeout(()=>captureClipboardNow(false),120));
   }
+  window.XuanNianWheelScroll?.bind({
+    fallbackSelectors:[
+      '.modal-backdrop.show .modal',
+      '.view.active .scroll',
+      '.view.active .file-result-list',
+      '.view.active .chat-list',
+      '.view.active .project-list',
+      '.view.active',
+    ],
+  });
 }
 
 function bindWindowMoveStrip(){
@@ -5229,7 +5241,7 @@ function showUpdateDialog(){
   showModal(`
     <div data-update-dialog>
       <div class="modal-header"><h3>软件更新</h3><button class="modal-close" id="closeModal">×</button></div>
-      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '7.0.3')}</b><span>${update.version?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
+      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '7.0.4')}</b><span>${update.version?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
       <div class="modal-message">${escapeHtml(updateStatusText())}</div>
       <p class="update-network-tip">提示：开启 VPN 后再检测更新，结果会更加准确。</p>
       ${busy||downloaded?`<div class="update-progress"><span style="width:${downloaded?100:progress}%"></span></div>`:''}

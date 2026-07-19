@@ -102,6 +102,19 @@ async function run() {
   assert(!warmRefreshSource.includes(".once('did-finish-load'"), 'loading quick window must not accumulate refresh listeners');
   assert(warmRefreshSource.includes('quickWindowDataDirty = true'), 'hidden quick window must retain a dirty marker for next show');
 
+  const indexSource = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  const quickSource = fs.readFileSync(path.join(__dirname, '..', 'quick.html'), 'utf8');
+  const stickySource = fs.readFileSync(path.join(__dirname, '..', 'sticky.html'), 'utf8');
+  const wheelSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'wheel-scroll.js'), 'utf8');
+  assert(indexSource.includes('getFileThumbnail: (filePath,size)=> nativeApi.getFileThumbnail'), 'unified renderer API must forward native thumbnail requests');
+  for (const [name, source] of [['main', indexSource], ['quick', quickSource], ['sticky', stickySource]]) {
+    assert(source.includes('<script src="src/wheel-scroll.js"></script>'), `${name} window must load wheel scrolling support`);
+    assert(source.includes('XuanNianWheelScroll?.bind'), `${name} window must bind wheel scrolling support`);
+  }
+  assert(wheelSource.includes('event.defaultPrevented'), 'wheel fallback must preserve handlers that already consumed the event');
+  assert(wheelSource.includes('surface.scrollTop !== pending.before'), 'wheel fallback must not duplicate native browser scrolling');
+  assert(!wheelSource.includes('event.preventDefault()'), 'wheel fallback must remain passive and preserve native smooth scrolling');
+
   console.log('performance smoke checks passed');
 }
 

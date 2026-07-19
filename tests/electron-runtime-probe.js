@@ -72,11 +72,31 @@ async function run() {
   await window.webContents.reload();
   await waitForRenderer(window, "typeof state!=='undefined' && state.notes.length===10000");
 
+  const thumbnailBridgeMetrics = await window.webContents.executeJavaScript(`
+    (async()=>{
+      let nativeCalls=0;
+      const bridge=createUnifiedAPI({
+        getFileThumbnail:async(filePath,size)=>{
+          nativeCalls+=1;
+          return filePath==='C:\\\\Media\\\\preview.png'&&size?.width===96?'native-thumbnail':'';
+        }
+      },fallbackApi);
+      const result=await bridge.getFileThumbnail('C:\\\\Media\\\\preview.png',{width:96,height:64});
+      return {nativeCalls,result};
+    })()
+  `, true);
+  assert.deepStrictEqual(thumbnailBridgeMetrics, { nativeCalls: 1, result: 'native-thumbnail' });
+
   const metrics = await window.webContents.executeJavaScript(`
     (async()=>{
       const percentile=(values,p)=>[...values].sort((a,b)=>a-b)[Math.min(values.length-1,Math.floor(values.length*p))]||0;
       await switchView('notes',{skipCoach:true});
       const list=document.querySelector('#noteList');
+      list.scrollTop=0;
+      renderNotes();
+      list.querySelector('[data-note-card]')?.dispatchEvent(new WheelEvent('wheel',{deltaY:360,bubbles:true,cancelable:true}));
+      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+      const wheelScrollTop=list.scrollTop;
       let maxCards=0;
       const scrollDurations=[];
       for(let index=0;index<100;index+=1){
@@ -107,6 +127,7 @@ async function run() {
         maxCards,
         reachedLast,
         searchFound,
+        wheelScrollTop,
         finalDomNodes:document.querySelectorAll('*').length,
         scrollP95Ms:Number(percentile(scrollDurations,.95).toFixed(2)),
         scrollMaxMs:Number(Math.max(...scrollDurations).toFixed(2)),
@@ -121,6 +142,7 @@ async function run() {
   assert(metrics.maxCards <= 64, `virtual note DOM exceeded 64 cards: ${metrics.maxCards}`);
   assert(metrics.reachedLast, 'virtual list must reach the final favorite');
   assert(metrics.searchFound, 'search must scan favorites outside the current DOM window');
+  assert(metrics.wheelScrollTop > 0, 'favorite list must react to a real wheel event');
   assert(metrics.finalDomNodes < 1700, `renderer DOM should stay bounded, received ${metrics.finalDomNodes} nodes`);
   assert.strictEqual(rendererErrors.length, 0, `renderer errors: ${rendererErrors.join(' | ')}`);
   const clipboardInitialRenderMs = await window.webContents.executeJavaScript(`
@@ -455,6 +477,11 @@ async function run() {
       const percentile=(values,p)=>[...values].sort((a,b)=>a-b)[Math.min(values.length-1,Math.floor(values.length*p))]||0;
       switchTab('notes');
       const list=document.querySelector('#noteList');
+      list.scrollTop=0;
+      renderNotes();
+      list.querySelector('[data-note]')?.dispatchEvent(new WheelEvent('wheel',{deltaY:360,bubbles:true,cancelable:true}));
+      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+      const wheelScrollTop=list.scrollTop;
       let maxCards=0;
       const scrollDurations=[];
       for(let index=0;index<100;index+=1){
@@ -483,6 +510,7 @@ async function run() {
         maxCards,
         reachedLast,
         searchFound:Boolean(list.querySelector('[data-note="note-9999"]')),
+        wheelScrollTop,
         finalDomNodes:document.querySelectorAll('*').length,
         scrollP95Ms:Number(percentile(scrollDurations,.95).toFixed(2)),
         scrollMaxMs:Number(Math.max(...scrollDurations).toFixed(2)),
@@ -497,6 +525,7 @@ async function run() {
   assert(quickMetrics.maxCards <= 36, `quick virtual DOM exceeded 36 cards: ${quickMetrics.maxCards}`);
   assert(quickMetrics.reachedLast, 'quick virtual list must reach the final favorite');
   assert(quickMetrics.searchFound, 'quick search must scan favorites outside the current DOM window');
+  assert(quickMetrics.wheelScrollTop > 0, 'quick favorite list must react to a real wheel event');
   assert(quickMetrics.finalDomNodes < 1600, `quick DOM should stay bounded, received ${quickMetrics.finalDomNodes} nodes`);
   assert.strictEqual(rendererErrors.length, 0, `renderer errors: ${rendererErrors.join(' | ')}`);
   console.log('electron runtime probes passed');

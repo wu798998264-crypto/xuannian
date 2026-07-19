@@ -204,6 +204,7 @@
     </div>
   </div>
   <input type="file" id="fileInput" hidden multiple />
+  <script src="src/wheel-scroll.js"></script>
   <script>
     const api=window.nativeAPI;
     const params=new URLSearchParams(location.search);
@@ -1423,6 +1424,13 @@
       event.preventDefault();
       setMediaOpacity(state.opacity + (event.deltaY < 0 ? 0.05 : -0.05));
     }, {passive:false});
+    window.XuanNianWheelScroll?.bind({
+      fallbackSelectors:[
+        '.confirm-overlay.show .collect-list',
+        '.sticky-window .edit-attachments',
+        '.sticky-window .body',
+      ],
+    });
     api.onStickyLimit?.(message=>toast(message));
     api.onDataRefresh?.(()=>loadData());
     api.onSettingsChanged?.(applySettings);
