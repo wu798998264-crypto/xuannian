@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>玄念7.0.4</title>
+  <title>玄念7.0.5</title>
   <link rel="icon" href="src/xuannian-logo-256.png" />
   <style>
     :root{
@@ -1252,10 +1252,13 @@ const fileThumbnailQueuedKeys = new Set();
 const fileThumbnailActiveKeys = new Set();
 let fileThumbnailGeneration = 0;
 let fileThumbnailActive = 0;
+let fileThumbnailScheduleToken = 0;
 const NATIVE_FILE_ICON_CACHE_LIMIT = 256;
 const NATIVE_FILE_ICON_CONCURRENCY = 4;
 const FILE_THUMBNAIL_CACHE_LIMIT = 192;
 const FILE_THUMBNAIL_CONCURRENCY = 3;
+const FILE_THUMBNAIL_PREFETCH_ROWS = 10;
+const FILE_THUMBNAIL_TIMEOUT_MS = 4500;
 const NOTE_ROW_HEIGHT = 146;
 const NOTE_WINDOW_SIZE = 64;
 const NOTE_WINDOW_OVERSCAN = 8;
@@ -1489,7 +1492,7 @@ function createBrowserFallbackAPI(){
     async deleteInspiration(id){ const data=read(); data.inspirations=data.inspirations.filter(x=>x.id!==id); write(data); return data.inspirations; },
     async getSettings(){ return read().settings; },
     async saveSettings(settings){ const data=read(); data.settings={...data.settings,...settings}; write(data); return data.settings; },
-    async getUpdateState(){ return {status:'current',currentVersion:'7.0.4',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false}; },
+    async getUpdateState(){ return {status:'current',currentVersion:'7.0.5',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false}; },
     async checkForUpdates(){ return this.getUpdateState(); },
     async downloadUpdate(){ return this.getUpdateState(); },
     async installUpdate(){ return false; },
@@ -1930,7 +1933,7 @@ function bindEvents(){
     scheduleRenderFrame('file-search-scroll',()=>{
       const start=Math.max(0,Math.floor($('#fileResultList').scrollTop/FILE_RESULT_ROW_HEIGHT)-FILE_RESULT_OVERSCAN);
       if(start!==state.fileSearch.virtualStart) renderFileSearchResults();
-      else queueVisibleFileThumbnails();
+      else scheduleVisibleFileThumbnails();
     });
   });
   $('#fileResultList')?.addEventListener('pointerover',event=>{
@@ -2271,6 +2274,7 @@ function fileThumbnailKey(item){
 
 function resetFileThumbnailQueue(){
   fileThumbnailGeneration+=1;
+  fileThumbnailScheduleToken+=1;
   fileThumbnailQueue.length=0;
   fileThumbnailQueuedKeys.clear();
 }
@@ -2335,16 +2339,27 @@ function pumpFileThumbnailQueue(){
   while(fileThumbnailActive<FILE_THUMBNAIL_CONCURRENCY&&fileThumbnailQueue.length){
     const task=fileThumbnailQueue.shift();
     fileThumbnailQueuedKeys.delete(task.key);
-    if(task.generation!==fileThumbnailGeneration||!fileThumbnailTargets(task.key).length) continue;
+    if(task.generation!==fileThumbnailGeneration) continue;
     fileThumbnailActive+=1;
     fileThumbnailActiveKeys.add(task.key);
-    Promise.resolve(api.getFileThumbnail?.(task.path,{width:96,height:64})||'')
+    let timeoutId=null;
+    let timedOut=false;
+    const request=Promise.resolve(api.getFileThumbnail?.(task.path,{width:96,height:64})||'').catch(()=> '');
+    request.then(dataUrl=>{
+      if(!timedOut||!dataUrl) return;
+      rememberFileThumbnail(task.key,dataUrl);
+      applyFileThumbnail(task.key,dataUrl);
+    });
+    Promise.race([
+      request,
+      new Promise(resolve=>{ timeoutId=setTimeout(()=>{ timedOut=true; resolve(''); },FILE_THUMBNAIL_TIMEOUT_MS); }),
+    ])
       .then(dataUrl=>{
         rememberFileThumbnail(task.key,dataUrl);
         if(dataUrl) applyFileThumbnail(task.key,dataUrl);
       })
-      .catch(()=>{})
       .finally(()=>{
+        clearTimeout(timeoutId);
         fileThumbnailActive=Math.max(0,fileThumbnailActive-1);
         fileThumbnailActiveKeys.delete(task.key);
         pumpFileThumbnailQueue();
@@ -2352,38 +2367,59 @@ function pumpFileThumbnailQueue(){
   }
 }
 
+function fileThumbnailWindowRange(list,total=state.fileSearch.results.length){
+  if(!list||total<=0) return {start:0,visibleEnd:0,end:0};
+  const scrollTop=Math.max(0,Number(list.scrollTop)||0);
+  const viewportHeight=Math.max(FILE_RESULT_ROW_HEIGHT,Number(list.clientHeight)||0);
+  const start=Math.min(total-1,Math.floor(scrollTop/FILE_RESULT_ROW_HEIGHT));
+  const visibleEnd=Math.min(total,Math.max(start+1,Math.ceil((scrollTop+viewportHeight)/FILE_RESULT_ROW_HEIGHT)));
+  return {start,visibleEnd,end:Math.min(total,visibleEnd+FILE_THUMBNAIL_PREFETCH_ROWS)};
+}
+
 function queueVisibleFileThumbnails(){
   const list=$('#fileResultList');
-  if(!list||!api.getFileThumbnail) return;
-  const firstVisible=Math.max(0,Math.floor(list.scrollTop/FILE_RESULT_ROW_HEIGHT)-2);
-  const lastVisible=Math.ceil((list.scrollTop+list.clientHeight)/FILE_RESULT_ROW_HEIGHT)+2;
-  const visibleElements=Array.from(list.querySelectorAll('[data-file-thumbnail-key]')).filter(element=>{
-    const index=Number(element.closest('[data-file-index]')?.dataset.fileIndex);
-    return !(list.clientHeight>0&&(index<firstVisible||index>lastVisible));
-  });
-  const visibleKeys=new Set(visibleElements.map(element=>element.dataset.fileThumbnailKey||'').filter(Boolean));
+  const results=state.fileSearch.results;
+  if(!list||!api.getFileThumbnail||state.view!=='search'||!results.length) return;
+  const range=fileThumbnailWindowRange(list,results.length);
+  const desired=[];
+  const desiredKeys=new Set();
+  for(let index=range.start;index<range.end;index+=1){
+    const item=results[index];
+    if(!['image','video'].includes(fileSearchResultType(item))) continue;
+    const key=fileThumbnailKey(item);
+    const filePath=String(item?.path||'');
+    if(!key||!filePath||desiredKeys.has(key)) continue;
+    desiredKeys.add(key);
+    desired.push({key,path:filePath,index,generation:fileThumbnailGeneration});
+  }
   for(let index=fileThumbnailQueue.length-1;index>=0;index-=1){
     const task=fileThumbnailQueue[index];
-    if(task.generation===fileThumbnailGeneration&&visibleKeys.has(task.key)) continue;
+    if(task.generation===fileThumbnailGeneration&&desiredKeys.has(task.key)) continue;
     fileThumbnailQueue.splice(index,1);
     fileThumbnailQueuedKeys.delete(task.key);
   }
-  visibleElements.forEach(element=>{
-    const key=element.dataset.fileThumbnailKey||'';
-    const filePath=element.dataset.fileThumbnailPath||'';
-    if(!key||!filePath) return;
-    if(fileThumbnailCache.has(key)){
-      const cached=fileThumbnailCache.get(key);
-      fileThumbnailCache.delete(key);
-      fileThumbnailCache.set(key,cached);
-      if(cached) applyFileThumbnail(key,cached);
+  desired.forEach(task=>{
+    if(fileThumbnailCache.has(task.key)){
+      const cached=fileThumbnailCache.get(task.key);
+      fileThumbnailCache.delete(task.key);
+      fileThumbnailCache.set(task.key,cached);
+      if(cached) applyFileThumbnail(task.key,cached);
       return;
     }
-    if(fileThumbnailQueuedKeys.has(key)||fileThumbnailActiveKeys.has(key)) return;
-    fileThumbnailQueuedKeys.add(key);
-    fileThumbnailQueue.push({key,path:filePath,generation:fileThumbnailGeneration});
+    if(fileThumbnailQueuedKeys.has(task.key)||fileThumbnailActiveKeys.has(task.key)) return;
+    fileThumbnailQueuedKeys.add(task.key);
+    fileThumbnailQueue.push(task);
   });
   pumpFileThumbnailQueue();
+}
+
+function scheduleVisibleFileThumbnails(){
+  const generation=fileThumbnailGeneration;
+  const token=++fileThumbnailScheduleToken;
+  setTimeout(()=>{
+    if(token!==fileThumbnailScheduleToken||generation!==fileThumbnailGeneration) return;
+    queueVisibleFileThumbnails();
+  },0);
 }
 
 function fileActionIcon(action){
@@ -2483,7 +2519,8 @@ function renderFileSearchResults(){
   }
   const total=searchState.results.length;
   const start=Math.max(0,Math.floor(list.scrollTop/FILE_RESULT_ROW_HEIGHT)-FILE_RESULT_OVERSCAN);
-  const end=Math.min(total,start+FILE_RESULT_WINDOW_SIZE);
+  const thumbnailRange=fileThumbnailWindowRange(list,total);
+  const end=Math.min(total,Math.max(start+FILE_RESULT_WINDOW_SIZE,thumbnailRange.end));
   searchState.virtualStart=start;
   const rows=[];
   if(start>0) rows.push(`<div class="virtual-spacer" style="height:${start*FILE_RESULT_ROW_HEIGHT}px"></div>`);
@@ -2509,7 +2546,7 @@ function renderFileSearchResults(){
   }
   if(end<total) rows.push(`<div class="virtual-spacer" style="height:${(total-end)*FILE_RESULT_ROW_HEIGHT}px"></div>`);
   list.innerHTML=rows.join('');
-  queueVisibleFileThumbnails();
+  scheduleVisibleFileThumbnails();
 }
 
 function stopFileSearchPolling(){
@@ -5241,7 +5278,7 @@ function showUpdateDialog(){
   showModal(`
     <div data-update-dialog>
       <div class="modal-header"><h3>软件更新</h3><button class="modal-close" id="closeModal">×</button></div>
-      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '7.0.4')}</b><span>${update.version?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
+      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '7.0.5')}</b><span>${update.version?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
       <div class="modal-message">${escapeHtml(updateStatusText())}</div>
       <p class="update-network-tip">提示：开启 VPN 后再检测更新，结果会更加准确。</p>
       ${busy||downloaded?`<div class="update-progress"><span style="width:${downloaded?100:progress}%"></span></div>`:''}

@@ -300,6 +300,132 @@ async function run() {
   assert(mediaPreviewMetrics.active <= mediaPreviewMetrics.concurrency, `thumbnail concurrency exceeded limit: ${mediaPreviewMetrics.active}`);
   assert(mediaPreviewMetrics.cacheSize <= mediaPreviewMetrics.cacheLimit, `thumbnail cache exceeded limit: ${mediaPreviewMetrics.cacheSize}`);
   assert.deepStrictEqual(mediaPreviewMetrics.filters, ['all', 'file', 'folder', 'document', 'image', 'video', 'audio']);
+  const thumbnailWindowMetrics = await window.webContents.executeJavaScript(`
+    (async()=>{
+      const waitUntil=async(predicate,timeoutMs=5000)=>{
+        const deadline=Date.now()+timeoutMs;
+        while(Date.now()<deadline){
+          if(predicate()) return true;
+          await new Promise(resolve=>setTimeout(resolve,10));
+        }
+        return false;
+      };
+      await waitUntil(()=>fileThumbnailActive===0);
+      resetFileThumbnailQueue();
+      const requested=[];
+      api.getFileThumbnail=async filePath=>{
+        const match=String(filePath).match(/thumbnail-window-(\\d+)\\.png$/);
+        if(match) requested.push(Number(match[1]));
+        return ${JSON.stringify(thumbnailDataUrl)};
+      };
+      state.fileSearch.engineStatus='ready';
+      state.fileSearch.query='thumbnail-window';
+      state.fileSearch.results=Array.from({length:120},(_,index)=>({
+        path:'C:/Synthetic/thumbnail-window-'+index+'.png',directory:'C:/Synthetic',
+        name:'thumbnail-window-'+index+'.png',kind:'file',fileType:'image',size:2000+index,modifiedAt:index+100
+      }));
+      state.fileSearch.selectedIndex=0;
+      document.querySelector('#fileSearchInput').value='thumbnail-window';
+      const list=document.querySelector('#fileResultList');
+      list.scrollTop=0;
+      renderFileSearch();
+      const immediateRequests=requested.length;
+      const initialRange=fileThumbnailWindowRange(list,state.fileSearch.results.length);
+      const initialReady=await waitUntil(()=>{
+        for(let index=initialRange.start;index<initialRange.end;index+=1){
+          if(!requested.includes(index)) return false;
+        }
+        return true;
+      });
+      const initialRequests=[...requested];
+      const initialLoaded=Array.from(list.querySelectorAll('.file-kind-icon[data-file-thumbnail-key]'))
+        .filter(element=>{
+          const index=Number(element.closest('[data-file-index]')?.dataset.fileIndex);
+          return index>=initialRange.start&&index<initialRange.end&&element.classList.contains('has-thumbnail');
+        }).length;
+      list.scrollTop=30*FILE_RESULT_ROW_HEIGHT;
+      renderFileSearchResults();
+      const scrolledRange=fileThumbnailWindowRange(list,state.fileSearch.results.length);
+      const scrolledReady=await waitUntil(()=>{
+        for(let index=scrolledRange.start;index<scrolledRange.end;index+=1){
+          if(!requested.includes(index)) return false;
+        }
+        return true;
+      });
+      const scrolledRequests=requested.filter(index=>index>=scrolledRange.start&&index<scrolledRange.end);
+      resetFileThumbnailQueue();
+      await waitUntil(()=>fileThumbnailActive===0);
+      return {
+        immediateRequests,
+        prefetchRows:FILE_THUMBNAIL_PREFETCH_ROWS,
+        initialRange,
+        initialReady,
+        initialRequests,
+        initialLoaded,
+        scrolledRange,
+        scrolledReady,
+        scrolledRequests,
+        totalRequested:new Set(requested).size,
+      };
+    })()
+  `, true);
+  console.log(`file thumbnail viewport metrics ${JSON.stringify(thumbnailWindowMetrics)}`);
+  assert.strictEqual(thumbnailWindowMetrics.immediateRequests, 0, 'thumbnail work must start after the result list first paint');
+  assert.strictEqual(thumbnailWindowMetrics.prefetchRows, 10, 'thumbnail prefetch must stay at exactly ten rows');
+  assert.strictEqual(thumbnailWindowMetrics.initialReady, true, 'initial visible thumbnail window should finish loading');
+  assert.strictEqual(thumbnailWindowMetrics.initialRequests.length, thumbnailWindowMetrics.initialRange.end - thumbnailWindowMetrics.initialRange.start, 'initial requests must be limited to the visible rows plus ten');
+  assert.strictEqual(thumbnailWindowMetrics.initialLoaded, thumbnailWindowMetrics.initialRange.end - thumbnailWindowMetrics.initialRange.start, 'initial thumbnail window should render every loaded preview');
+  assert.strictEqual(thumbnailWindowMetrics.scrolledReady, true, 'scrolling should advance the thumbnail window');
+  assert.strictEqual(thumbnailWindowMetrics.scrolledRequests.length, thumbnailWindowMetrics.scrolledRange.end - thumbnailWindowMetrics.scrolledRange.start, 'scrolled requests must cover the new visible rows plus ten');
+  assert(thumbnailWindowMetrics.totalRequested < 60, `thumbnail loading should not scan all results: ${thumbnailWindowMetrics.totalRequested}`);
+  const thumbnailRecoveryMetrics = await window.webContents.executeJavaScript(`
+    (async()=>{
+      const waitUntil=async(predicate,timeoutMs=7000)=>{
+        const deadline=Date.now()+timeoutMs;
+        while(Date.now()<deadline){
+          if(predicate()) return true;
+          await new Promise(resolve=>setTimeout(resolve,20));
+        }
+        return false;
+      };
+      await waitUntil(()=>fileThumbnailActive===0);
+      resetFileThumbnailQueue();
+      const requested=[];
+      api.getFileThumbnail=async filePath=>{
+        const match=String(filePath).match(/thumbnail-recovery-(\\d+)\\.png$/);
+        const index=match?Number(match[1]):-1;
+        requested.push(index);
+        if(index>=0&&index<3) await new Promise(resolve=>setTimeout(resolve,FILE_THUMBNAIL_TIMEOUT_MS+300));
+        return ${JSON.stringify(thumbnailDataUrl)};
+      };
+      state.fileSearch.engineStatus='ready';
+      state.fileSearch.query='thumbnail-recovery';
+      state.fileSearch.results=Array.from({length:40},(_,index)=>({
+        path:'C:/Synthetic/thumbnail-recovery-'+index+'.png',directory:'C:/Synthetic',
+        name:'thumbnail-recovery-'+index+'.png',kind:'file',fileType:'image',size:5000+index,modifiedAt:index+500
+      }));
+      state.fileSearch.selectedIndex=0;
+      document.querySelector('#fileSearchInput').value='thumbnail-recovery';
+      const list=document.querySelector('#fileResultList');
+      list.scrollTop=0;
+      const started=performance.now();
+      renderFileSearch();
+      const queueAdvanced=await waitUntil(()=>requested.includes(3));
+      const advancedAfterMs=performance.now()-started;
+      const latePreviewsLoaded=await waitUntil(()=>[0,1,2].every(index=>{
+        const row=list.querySelector('[data-file-index="'+index+'"]');
+        return row?.querySelector('.file-kind-icon')?.classList.contains('has-thumbnail');
+      }));
+      resetFileThumbnailQueue();
+      await waitUntil(()=>fileThumbnailActive===0);
+      return {queueAdvanced,advancedAfterMs:Number(advancedAfterMs.toFixed(1)),latePreviewsLoaded,requested:[...requested]};
+    })()
+  `, true);
+  console.log(`file thumbnail recovery metrics ${JSON.stringify(thumbnailRecoveryMetrics)}`);
+  assert.strictEqual(thumbnailRecoveryMetrics.queueAdvanced, true, 'three slow thumbnails must not permanently block the remaining queue');
+  assert(thumbnailRecoveryMetrics.advancedAfterMs >= 4000 && thumbnailRecoveryMetrics.advancedAfterMs < 6000, `thumbnail timeout should advance the queue promptly: ${thumbnailRecoveryMetrics.advancedAfterMs}ms`);
+  assert.strictEqual(thumbnailRecoveryMetrics.latePreviewsLoaded, true, 'slow thumbnails should still render when they finish after the queue timeout');
+  assert(thumbnailRecoveryMetrics.requested.includes(3), 'the fourth thumbnail request should start after stalled slots are released');
   const thumbnailQueueMetrics = await window.webContents.executeJavaScript(`
     (async()=>{
       api.getFileThumbnail=async()=>{
@@ -324,11 +450,14 @@ async function run() {
         list.scrollTop=(list.scrollHeight-list.clientHeight)*(index/79);
         const started=performance.now();
         renderFileSearchResults();
+        queueVisibleFileThumbnails();
         durations.push(performance.now()-started);
         maxQueue=Math.max(maxQueue,fileThumbnailQueue.length);
         maxActive=Math.max(maxActive,fileThumbnailActive);
       }
       resetFileThumbnailQueue();
+      const deadline=Date.now()+5000;
+      while(fileThumbnailActive&&Date.now()<deadline) await new Promise(resolve=>setTimeout(resolve,10));
       const sorted=[...durations].sort((a,b)=>a-b);
       return {maxQueue,maxActive,renderP95Ms:Number(sorted[75].toFixed(2)),concurrency:FILE_THUMBNAIL_CONCURRENCY};
     })()

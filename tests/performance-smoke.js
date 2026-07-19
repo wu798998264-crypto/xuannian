@@ -107,6 +107,14 @@ async function run() {
   const stickySource = fs.readFileSync(path.join(__dirname, '..', 'sticky.html'), 'utf8');
   const wheelSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'wheel-scroll.js'), 'utf8');
   assert(indexSource.includes('getFileThumbnail: (filePath,size)=> nativeApi.getFileThumbnail'), 'unified renderer API must forward native thumbnail requests');
+  assert(indexSource.includes('const FILE_THUMBNAIL_PREFETCH_ROWS = 10'), 'file thumbnails must prefetch exactly ten rows below the viewport');
+  assert(indexSource.includes('function fileThumbnailWindowRange('), 'file thumbnail loading must use a bounded result-index window');
+  assert(indexSource.includes('scheduleVisibleFileThumbnails();'), 'thumbnail work must be deferred until after result rendering');
+  const thumbnailQueueStart = indexSource.indexOf('function queueVisibleFileThumbnails()');
+  const thumbnailQueueEnd = indexSource.indexOf('\nfunction scheduleVisibleFileThumbnails', thumbnailQueueStart);
+  const thumbnailQueueSource = indexSource.slice(thumbnailQueueStart, thumbnailQueueEnd);
+  assert(thumbnailQueueStart >= 0 && thumbnailQueueEnd > thumbnailQueueStart, 'file thumbnail queue implementation was not found');
+  assert(!thumbnailQueueSource.includes('querySelectorAll'), 'thumbnail scheduling must not scan rendered DOM nodes');
   for (const [name, source] of [['main', indexSource], ['quick', quickSource], ['sticky', stickySource]]) {
     assert(source.includes('<script src="src/wheel-scroll.js"></script>'), `${name} window must load wheel scrolling support`);
     assert(source.includes('XuanNianWheelScroll?.bind'), `${name} window must bind wheel scrolling support`);
