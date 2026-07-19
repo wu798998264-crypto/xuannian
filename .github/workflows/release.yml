@@ -26,8 +26,8 @@ jobs:
         shell: pwsh
         run: |
           $version = node -p "require('./package.json').version"
-          if ($version -notmatch '^\d+\.\d+\.\d+$') {
-            throw "package.json version must use x.y.z format, received: $version"
+          if ($version -notmatch '^\d+\.[0-9]\.[0-9]$') {
+            throw "package.json version must use x.y.z with one-digit minor and patch numbers (0-9), received: $version"
           }
           if ('${{ github.ref_type }}' -ne 'tag') {
             throw 'Production releases must run from a vX.Y.Z Git tag.'
@@ -90,8 +90,8 @@ jobs:
         run: |
           set -euo pipefail
           version="$(node -p "require('./package.json').version")"
-          if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "package.json version must use x.y.z format, received: ${version}" >&2
+          if [[ ! "${version}" =~ ^[0-9]+\.[0-9]\.[0-9]$ ]]; then
+            echo "package.json version must use x.y.z with one-digit minor and patch numbers (0-9), received: ${version}" >&2
             exit 1
           fi
           if [[ "${GITHUB_REF_TYPE}" != "tag" ]]; then
@@ -200,8 +200,8 @@ jobs:
           set -euo pipefail
           version="$(node -p "require('./package.json').version")"
           tag="v${version}"
-          if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Invalid package version: ${version}" >&2
+          if [[ ! "${version}" =~ ^[0-9]+\.[0-9]\.[0-9]$ ]]; then
+            echo "Invalid package version (minor and patch must each be 0-9): ${version}" >&2
             exit 1
           fi
           if [[ "${GITHUB_REF_TYPE}" != "tag" || "${GITHUB_REF_NAME}" != "${tag}" ]]; then
@@ -291,3 +291,6 @@ jobs:
             exit 1
           fi
           gh release edit "${TAG}" --title "玄念 ${VERSION}" --notes-file release-notes.md --draft=false --prerelease=false --latest
+          if [[ "${VERSION}" == "7.0.0" ]] && gh release view "v6.1.12" >/dev/null 2>&1; then
+            gh release delete "v6.1.12" --cleanup-tag --yes
+          fi
