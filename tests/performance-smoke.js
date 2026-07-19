@@ -93,6 +93,7 @@ async function run() {
   assert.strictEqual((await freshRequest)[0].id, 'fresh');
 
   const mainSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+  const videoThumbnailSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'video-thumbnail.html'), 'utf8');
   assert(/function createQuickWindow\(\)[\s\S]*?backgroundThrottling:\s*true/.test(mainSource), 'hidden quick window must allow Chromium background throttling');
   const warmRefreshStart = mainSource.indexOf('function scheduleQuickWindowWarmRefresh');
   const warmRefreshEnd = mainSource.indexOf('\nfunction stopClipboardWatcher', warmRefreshStart);
@@ -101,6 +102,11 @@ async function run() {
   assert(!warmRefreshSource.includes('setTimeout('), 'hidden quick-window data refresh must not schedule background renderer work');
   assert(!warmRefreshSource.includes(".once('did-finish-load'"), 'loading quick window must not accumulate refresh listeners');
   assert(warmRefreshSource.includes('quickWindowDataDirty = true'), 'hidden quick window must retain a dirty marker for next show');
+  assert(mainSource.includes("if (fileType === 'video') return createVideoFrameThumbnail"), 'video thumbnails need an internal frame-decoding fallback');
+  assert(mainSource.includes('SYSTEM_THUMBNAIL_TIMEOUT_MS = 1200'), 'system thumbnail requests must have a bounded deadline');
+  assert(mainSource.includes('function createSystemFileThumbnail('), 'system thumbnail timeout wrapper must be present');
+  assert(videoThumbnailSource.includes('window.captureVideoThumbnail'), 'video thumbnail decoder page must expose its capture function');
+  assert(videoThumbnailSource.includes("canvas.toDataURL('image/jpeg', 0.82)"), 'video fallback must return a compressed still frame');
 
   const indexSource = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
   const quickSource = fs.readFileSync(path.join(__dirname, '..', 'quick.html'), 'utf8');
@@ -108,6 +114,7 @@ async function run() {
   const wheelSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'wheel-scroll.js'), 'utf8');
   assert(indexSource.includes('getFileThumbnail: (filePath,size)=> nativeApi.getFileThumbnail'), 'unified renderer API must forward native thumbnail requests');
   assert(indexSource.includes('const FILE_THUMBNAIL_PREFETCH_ROWS = 10'), 'file thumbnails must prefetch exactly ten rows below the viewport');
+  assert(indexSource.includes('const FILE_THUMBNAIL_MAX_PENDING_REQUESTS = 9'), 'abandoned native thumbnail requests must remain bounded');
   assert(indexSource.includes('function fileThumbnailWindowRange('), 'file thumbnail loading must use a bounded result-index window');
   assert(indexSource.includes('scheduleVisibleFileThumbnails();'), 'thumbnail work must be deferred until after result rendering');
   const thumbnailQueueStart = indexSource.indexOf('function queueVisibleFileThumbnails()');
@@ -115,6 +122,9 @@ async function run() {
   const thumbnailQueueSource = indexSource.slice(thumbnailQueueStart, thumbnailQueueEnd);
   assert(thumbnailQueueStart >= 0 && thumbnailQueueEnd > thumbnailQueueStart, 'file thumbnail queue implementation was not found');
   assert(!thumbnailQueueSource.includes('querySelectorAll'), 'thumbnail scheduling must not scan rendered DOM nodes');
+  assert(thumbnailQueueSource.includes('fileThumbnailQueue.length=0'), 'scrolling must rebuild the queue around the latest viewport');
+  assert(thumbnailQueueSource.includes('fileThumbnailActiveReleases.entries()'), 'active tasks outside the latest viewport must release their scheduling slots');
+  assert(indexSource.includes("if(!dataUrl||!fileThumbnailDesiredKeys.has(task.key)) return;"), 'ignored thumbnail results must not enter cache');
   for (const [name, source] of [['main', indexSource], ['quick', quickSource], ['sticky', stickySource]]) {
     assert(source.includes('<script src="src/wheel-scroll.js"></script>'), `${name} window must load wheel scrolling support`);
     assert(source.includes('XuanNianWheelScroll?.bind'), `${name} window must bind wheel scrolling support`);

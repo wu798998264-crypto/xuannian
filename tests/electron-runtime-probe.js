@@ -43,6 +43,32 @@ async function run() {
   const systemThumbnail = await nativeImage.createThumbnailFromPath(thumbnailSource, { width: 96, height: 64 });
   assert(!systemThumbnail.isEmpty(), 'Electron system thumbnail service should load a local PNG');
   const thumbnailDataUrl = systemThumbnail.toDataURL();
+  let videoProbeWindow = null;
+  if (process.env.XUANNIAN_RUNTIME_VIDEO) {
+    const videoPath = path.resolve(process.env.XUANNIAN_RUNTIME_VIDEO);
+    let videoDataUrl = '';
+    try {
+      const systemVideoThumbnail = await nativeImage.createThumbnailFromPath(videoPath, { width: 160, height: 90 });
+      if (!systemVideoThumbnail.isEmpty()) videoDataUrl = systemVideoThumbnail.toDataURL();
+    } catch {}
+    let source = 'system';
+    if (!videoDataUrl) {
+      source = 'renderer-fallback';
+      videoProbeWindow = new BrowserWindow({
+        show: false,
+        width: 320,
+        height: 180,
+        webPreferences: { backgroundThrottling: false, contextIsolation: true, nodeIntegration: false, sandbox: true },
+      });
+      await videoProbeWindow.loadFile(path.resolve(__dirname, '..', 'src', 'video-thumbnail.html'));
+      videoDataUrl = await videoProbeWindow.webContents.executeJavaScript(
+        `window.captureVideoThumbnail(${JSON.stringify(require('url').pathToFileURL(videoPath).href)},160,90,3200)`,
+        true,
+      );
+    }
+    assert(String(videoDataUrl).startsWith('data:image/'), 'Electron should load or decode a local video frame');
+    console.log(`system video thumbnail metrics ${JSON.stringify({ source, bytes: videoDataUrl.length })}`);
+  }
   const window = new BrowserWindow({
     show: false,
     width: 1280,
@@ -54,6 +80,7 @@ async function run() {
     if (level >= 2 && !String(message).includes('Electron Security Warning')) rendererErrors.push(message);
   });
   await window.loadFile(path.join(__dirname, '..', 'index.html'));
+  if (videoProbeWindow && !videoProbeWindow.isDestroyed()) videoProbeWindow.destroy();
   await window.webContents.executeJavaScript(`
     (() => {
       const now=Date.now();
@@ -378,6 +405,86 @@ async function run() {
   assert.strictEqual(thumbnailWindowMetrics.scrolledReady, true, 'scrolling should advance the thumbnail window');
   assert.strictEqual(thumbnailWindowMetrics.scrolledRequests.length, thumbnailWindowMetrics.scrolledRange.end - thumbnailWindowMetrics.scrolledRange.start, 'scrolled requests must cover the new visible rows plus ten');
   assert(thumbnailWindowMetrics.totalRequested < 60, `thumbnail loading should not scan all results: ${thumbnailWindowMetrics.totalRequested}`);
+  const thumbnailJumpMetrics = await window.webContents.executeJavaScript(`
+    (async()=>{
+      const waitUntil=async(predicate,timeoutMs=5000)=>{
+        const deadline=Date.now()+timeoutMs;
+        while(Date.now()<deadline){
+          if(predicate()) return true;
+          await new Promise(resolve=>setTimeout(resolve,10));
+        }
+        return false;
+      };
+      await waitUntil(()=>fileThumbnailActive===0&&fileThumbnailRequestKeys.size===0);
+      resetFileThumbnailQueue();
+      const requested=[];
+      api.getFileThumbnail=async filePath=>{
+        const match=String(filePath).match(/thumbnail-jump-(\\d+)\\.(?:png|mp4)$/);
+        const index=match?Number(match[1]):-1;
+        requested.push(index);
+        await new Promise(resolve=>setTimeout(resolve,180));
+        return ${JSON.stringify(thumbnailDataUrl)};
+      };
+      state.fileSearch.engineStatus='ready';
+      state.fileSearch.query='thumbnail-jump';
+      state.fileSearch.results=Array.from({length:160},(_,index)=>({
+        path:'C:/Synthetic/thumbnail-jump-'+index+(index%2?'.mp4':'.png'),directory:'C:/Synthetic',
+        name:'thumbnail-jump-'+index+(index%2?'.mp4':'.png'),kind:'file',fileType:index%2?'video':'image',size:8000+index,modifiedAt:index+800
+      }));
+      state.fileSearch.selectedIndex=0;
+      document.querySelector('#fileSearchInput').value='thumbnail-jump';
+      const list=document.querySelector('#fileResultList');
+      list.scrollTop=0;
+      renderFileSearch();
+      const initialStarted=await waitUntil(()=>requested.length>=3);
+      const initialRequested=[...requested];
+      const jumpStartedAt=performance.now();
+      list.scrollTop=70*FILE_RESULT_ROW_HEIGHT;
+      renderFileSearchResults();
+      queueVisibleFileThumbnails();
+      const pendingAfterJump=fileThumbnailRequestKeys.size;
+      const finalRange=fileThumbnailWindowRange(list,state.fileSearch.results.length);
+      const finalStarted=await waitUntil(()=>requested.includes(finalRange.start));
+      const finalStartDelayMs=performance.now()-jumpStartedAt;
+      const finalLoaded=await waitUntil(()=>{
+        for(let index=finalRange.start;index<finalRange.end;index+=1){
+          const row=list.querySelector('[data-file-index="'+index+'"]');
+          if(!row?.querySelector('.file-kind-icon')?.classList.contains('has-thumbnail')) return false;
+        }
+        return true;
+      });
+      const skippedRequests=requested.filter(index=>index>=3&&index<finalRange.start);
+      const skippedCacheEntries=initialRequested.filter(index=>{
+        const item=state.fileSearch.results[index];
+        return fileThumbnailCache.has(fileThumbnailKey(item));
+      });
+      const requestedVideo=requested.some(index=>index>=finalRange.start&&index<finalRange.end&&index%2===1);
+      resetFileThumbnailQueue();
+      await waitUntil(()=>fileThumbnailActive===0&&fileThumbnailRequestKeys.size===0);
+      return {
+        initialStarted,
+        initialRequested,
+        finalRange,
+        finalStarted,
+        finalStartDelayMs:Number(finalStartDelayMs.toFixed(1)),
+        finalLoaded,
+        skippedRequests,
+        skippedCacheEntries,
+        requestedVideo,
+        pendingAfterJump,
+        maxPending:FILE_THUMBNAIL_MAX_PENDING_REQUESTS,
+      };
+    })()
+  `, true);
+  console.log(`file thumbnail jump metrics ${JSON.stringify(thumbnailJumpMetrics)}`);
+  assert.strictEqual(thumbnailJumpMetrics.initialStarted, true, 'initial viewport should start thumbnail work');
+  assert.strictEqual(thumbnailJumpMetrics.finalStarted, true, 'jumped-to viewport must take priority immediately');
+  assert(thumbnailJumpMetrics.finalStartDelayMs < 250, `jumped-to viewport should not wait for skipped rows: ${thumbnailJumpMetrics.finalStartDelayMs}ms`);
+  assert.strictEqual(thumbnailJumpMetrics.finalLoaded, true, 'jumped-to visible image and video previews should all render');
+  assert.deepStrictEqual(thumbnailJumpMetrics.skippedRequests, [], 'rows skipped by a fast scroll must be dropped before thumbnail generation');
+  assert.deepStrictEqual(thumbnailJumpMetrics.skippedCacheEntries, [], 'completed thumbnails from an ignored viewport must not consume cache');
+  assert.strictEqual(thumbnailJumpMetrics.requestedVideo, true, 'video results must use the same viewport-priority thumbnail queue');
+  assert(thumbnailJumpMetrics.pendingAfterJump <= thumbnailJumpMetrics.maxPending, 'background thumbnail requests must remain bounded');
   const thumbnailRecoveryMetrics = await window.webContents.executeJavaScript(`
     (async()=>{
       const waitUntil=async(predicate,timeoutMs=7000)=>{
@@ -428,6 +535,8 @@ async function run() {
   assert(thumbnailRecoveryMetrics.requested.includes(3), 'the fourth thumbnail request should start after stalled slots are released');
   const thumbnailQueueMetrics = await window.webContents.executeJavaScript(`
     (async()=>{
+      const idleDeadline=Date.now()+5000;
+      while((fileThumbnailActive||fileThumbnailRequestKeys.size)&&Date.now()<idleDeadline) await new Promise(resolve=>setTimeout(resolve,10));
       api.getFileThumbnail=async()=>{
         await new Promise(resolve=>setTimeout(resolve,180));
         return ${JSON.stringify(thumbnailDataUrl)};
@@ -445,6 +554,7 @@ async function run() {
       const list=document.querySelector('#fileResultList');
       let maxQueue=fileThumbnailQueue.length;
       let maxActive=fileThumbnailActive;
+      let maxPending=fileThumbnailRequestKeys.size;
       const durations=[];
       for(let index=0;index<80;index+=1){
         list.scrollTop=(list.scrollHeight-list.clientHeight)*(index/79);
@@ -454,16 +564,18 @@ async function run() {
         durations.push(performance.now()-started);
         maxQueue=Math.max(maxQueue,fileThumbnailQueue.length);
         maxActive=Math.max(maxActive,fileThumbnailActive);
+        maxPending=Math.max(maxPending,fileThumbnailRequestKeys.size);
       }
       resetFileThumbnailQueue();
       const deadline=Date.now()+5000;
-      while(fileThumbnailActive&&Date.now()<deadline) await new Promise(resolve=>setTimeout(resolve,10));
+      while((fileThumbnailActive||fileThumbnailRequestKeys.size)&&Date.now()<deadline) await new Promise(resolve=>setTimeout(resolve,10));
       const sorted=[...durations].sort((a,b)=>a-b);
-      return {maxQueue,maxActive,renderP95Ms:Number(sorted[75].toFixed(2)),concurrency:FILE_THUMBNAIL_CONCURRENCY};
+      return {maxQueue,maxActive,maxPending,pendingLimit:FILE_THUMBNAIL_MAX_PENDING_REQUESTS,renderP95Ms:Number(sorted[75].toFixed(2)),concurrency:FILE_THUMBNAIL_CONCURRENCY};
     })()
   `, true);
   console.log(`file thumbnail queue stress metrics ${JSON.stringify(thumbnailQueueMetrics)}`);
   assert(thumbnailQueueMetrics.maxActive <= thumbnailQueueMetrics.concurrency, `thumbnail stress exceeded concurrency: ${thumbnailQueueMetrics.maxActive}`);
+  assert(thumbnailQueueMetrics.maxPending <= thumbnailQueueMetrics.pendingLimit, `thumbnail pending requests exceeded limit: ${thumbnailQueueMetrics.maxPending}`);
   assert(thumbnailQueueMetrics.maxQueue <= 32, `thumbnail pending queue should stay near the visible window: ${thumbnailQueueMetrics.maxQueue}`);
   assert(thumbnailQueueMetrics.renderP95Ms < 45, `media virtual-list render p95 is too slow: ${thumbnailQueueMetrics.renderP95Ms}ms`);
   const hotkeyHelpMetrics = await window.webContents.executeJavaScript(`
@@ -534,6 +646,33 @@ async function run() {
   assert.strictEqual(fileSearchMetrics.stateView, 'search');
   assert.strictEqual(fileSearchMetrics.activeView, 'searchView');
   assert.strictEqual(fileSearchMetrics.activeNav, 'search');
+  const fileDoubleClickMetrics = await window.webContents.executeJavaScript(`
+    (async()=>{
+      const opened=[];
+      api.openPath=async filePath=>{ opened.push(filePath); return true; };
+      state.fileSearch.engineStatus='ready';
+      state.fileSearch.query='double-click';
+      state.fileSearch.results=[
+        {path:'C:/Synthetic/double-click-one.txt',directory:'C:/Synthetic',name:'double-click-one.txt',kind:'file',fileType:'document',size:10,modifiedAt:2},
+        {path:'C:/Synthetic/double-click-two.txt',directory:'C:/Synthetic',name:'double-click-two.txt',kind:'file',fileType:'document',size:20,modifiedAt:1},
+      ];
+      state.fileSearch.selectedIndex=-1;
+      document.querySelector('#fileSearchInput').value='double-click';
+      document.querySelector('#fileResultList').scrollTop=0;
+      renderFileSearch();
+      const row=document.querySelector('#fileResultList [data-file-index="0"]');
+      row.dispatchEvent(new MouseEvent('click',{bubbles:true,detail:1}));
+      const rowPreserved=row.isConnected&&document.querySelector('#fileResultList [data-file-index="0"]')===row;
+      row.dispatchEvent(new MouseEvent('click',{bubbles:true,detail:2}));
+      row.dispatchEvent(new MouseEvent('dblclick',{bubbles:true,detail:2}));
+      await new Promise(resolve=>setTimeout(resolve,0));
+      return {rowPreserved,selectedIndex:state.fileSearch.selectedIndex,opened};
+    })()
+  `, true);
+  console.log(`file result double-click metrics ${JSON.stringify(fileDoubleClickMetrics)}`);
+  assert.strictEqual(fileDoubleClickMetrics.rowPreserved, true, 'single-click selection must preserve the row for a native double-click');
+  assert.strictEqual(fileDoubleClickMetrics.selectedIndex, 0, 'double-click should keep the clicked result selected');
+  assert.deepStrictEqual(fileDoubleClickMetrics.opened, ['C:/Synthetic/double-click-one.txt'], 'double-clicking a result row should open that file exactly once');
   assert.strictEqual(rendererErrors.length, 0, `renderer errors: ${rendererErrors.join(' | ')}`);
   if (process.env.XUANNIAN_RUNTIME_SCREENSHOT) {
     await window.webContents.executeJavaScript(`

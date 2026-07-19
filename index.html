@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>玄念7.0.5</title>
+  <title>玄念7.0.6</title>
   <link rel="icon" href="src/xuannian-logo-256.png" />
   <style>
     :root{
@@ -1250,13 +1250,18 @@ const fileThumbnailCache = new Map();
 const fileThumbnailQueue = [];
 const fileThumbnailQueuedKeys = new Set();
 const fileThumbnailActiveKeys = new Set();
+const fileThumbnailRequestKeys = new Set();
+const fileThumbnailDesiredKeys = new Set();
+const fileThumbnailActiveReleases = new Map();
 let fileThumbnailGeneration = 0;
 let fileThumbnailActive = 0;
 let fileThumbnailScheduleToken = 0;
+let fileThumbnailQueuePaused = false;
 const NATIVE_FILE_ICON_CACHE_LIMIT = 256;
 const NATIVE_FILE_ICON_CONCURRENCY = 4;
 const FILE_THUMBNAIL_CACHE_LIMIT = 192;
 const FILE_THUMBNAIL_CONCURRENCY = 3;
+const FILE_THUMBNAIL_MAX_PENDING_REQUESTS = 9;
 const FILE_THUMBNAIL_PREFETCH_ROWS = 10;
 const FILE_THUMBNAIL_TIMEOUT_MS = 4500;
 const NOTE_ROW_HEIGHT = 146;
@@ -1492,7 +1497,7 @@ function createBrowserFallbackAPI(){
     async deleteInspiration(id){ const data=read(); data.inspirations=data.inspirations.filter(x=>x.id!==id); write(data); return data.inspirations; },
     async getSettings(){ return read().settings; },
     async saveSettings(settings){ const data=read(); data.settings={...data.settings,...settings}; write(data); return data.settings; },
-    async getUpdateState(){ return {status:'current',currentVersion:'7.0.5',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false}; },
+    async getUpdateState(){ return {status:'current',currentVersion:'7.0.6',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false}; },
     async checkForUpdates(){ return this.getUpdateState(); },
     async downloadUpdate(){ return this.getUpdateState(); },
     async installUpdate(){ return false; },
@@ -2277,12 +2282,14 @@ function resetFileThumbnailQueue(){
   fileThumbnailScheduleToken+=1;
   fileThumbnailQueue.length=0;
   fileThumbnailQueuedKeys.clear();
+  fileThumbnailDesiredKeys.clear();
+  Array.from(fileThumbnailActiveReleases.values()).forEach(release=>release());
 }
 
 function rememberFileThumbnail(key,dataUrl){
-  if(!key) return;
+  if(!key||!dataUrl) return;
   fileThumbnailCache.delete(key);
-  fileThumbnailCache.set(key,dataUrl||null);
+  fileThumbnailCache.set(key,dataUrl);
   while(fileThumbnailCache.size>FILE_THUMBNAIL_CACHE_LIMIT){
     fileThumbnailCache.delete(fileThumbnailCache.keys().next().value);
   }
@@ -2336,34 +2343,37 @@ function showFileThumbnailPreview(target){
 }
 
 function pumpFileThumbnailQueue(){
-  while(fileThumbnailActive<FILE_THUMBNAIL_CONCURRENCY&&fileThumbnailQueue.length){
+  if(fileThumbnailQueuePaused) return;
+  while(fileThumbnailActive<FILE_THUMBNAIL_CONCURRENCY&&fileThumbnailRequestKeys.size<FILE_THUMBNAIL_MAX_PENDING_REQUESTS&&fileThumbnailQueue.length){
     const task=fileThumbnailQueue.shift();
     fileThumbnailQueuedKeys.delete(task.key);
-    if(task.generation!==fileThumbnailGeneration) continue;
+    if(task.generation!==fileThumbnailGeneration||!fileThumbnailDesiredKeys.has(task.key)||fileThumbnailRequestKeys.has(task.key)) continue;
     fileThumbnailActive+=1;
     fileThumbnailActiveKeys.add(task.key);
+    fileThumbnailRequestKeys.add(task.key);
     let timeoutId=null;
-    let timedOut=false;
+    let slotReleased=false;
+    const releaseSlot=()=>{
+      if(slotReleased) return;
+      slotReleased=true;
+      clearTimeout(timeoutId);
+      fileThumbnailActive=Math.max(0,fileThumbnailActive-1);
+      fileThumbnailActiveKeys.delete(task.key);
+      fileThumbnailActiveReleases.delete(task.key);
+      pumpFileThumbnailQueue();
+    };
+    fileThumbnailActiveReleases.set(task.key,releaseSlot);
+    timeoutId=setTimeout(releaseSlot,FILE_THUMBNAIL_TIMEOUT_MS);
     const request=Promise.resolve(api.getFileThumbnail?.(task.path,{width:96,height:64})||'').catch(()=> '');
     request.then(dataUrl=>{
-      if(!timedOut||!dataUrl) return;
+      if(!dataUrl||!fileThumbnailDesiredKeys.has(task.key)) return;
       rememberFileThumbnail(task.key,dataUrl);
       applyFileThumbnail(task.key,dataUrl);
+    }).finally(()=>{
+      fileThumbnailRequestKeys.delete(task.key);
+      releaseSlot();
+      pumpFileThumbnailQueue();
     });
-    Promise.race([
-      request,
-      new Promise(resolve=>{ timeoutId=setTimeout(()=>{ timedOut=true; resolve(''); },FILE_THUMBNAIL_TIMEOUT_MS); }),
-    ])
-      .then(dataUrl=>{
-        rememberFileThumbnail(task.key,dataUrl);
-        if(dataUrl) applyFileThumbnail(task.key,dataUrl);
-      })
-      .finally(()=>{
-        clearTimeout(timeoutId);
-        fileThumbnailActive=Math.max(0,fileThumbnailActive-1);
-        fileThumbnailActiveKeys.delete(task.key);
-        pumpFileThumbnailQueue();
-      });
   }
 }
 
@@ -2383,33 +2393,43 @@ function queueVisibleFileThumbnails(){
   const range=fileThumbnailWindowRange(list,results.length);
   const desired=[];
   const desiredKeys=new Set();
-  for(let index=range.start;index<range.end;index+=1){
-    const item=results[index];
-    if(!['image','video'].includes(fileSearchResultType(item))) continue;
-    const key=fileThumbnailKey(item);
-    const filePath=String(item?.path||'');
-    if(!key||!filePath||desiredKeys.has(key)) continue;
-    desiredKeys.add(key);
-    desired.push({key,path:filePath,index,generation:fileThumbnailGeneration});
-  }
-  for(let index=fileThumbnailQueue.length-1;index>=0;index-=1){
-    const task=fileThumbnailQueue[index];
-    if(task.generation===fileThumbnailGeneration&&desiredKeys.has(task.key)) continue;
-    fileThumbnailQueue.splice(index,1);
-    fileThumbnailQueuedKeys.delete(task.key);
-  }
-  desired.forEach(task=>{
-    if(fileThumbnailCache.has(task.key)){
-      const cached=fileThumbnailCache.get(task.key);
-      fileThumbnailCache.delete(task.key);
-      fileThumbnailCache.set(task.key,cached);
-      if(cached) applyFileThumbnail(task.key,cached);
-      return;
+  const appendRange=(start,end,priority)=>{
+    for(let index=start;index<end;index+=1){
+      const item=results[index];
+      if(!['image','video'].includes(fileSearchResultType(item))) continue;
+      const key=fileThumbnailKey(item);
+      const filePath=String(item?.path||'');
+      if(!key||!filePath||desiredKeys.has(key)) continue;
+      desiredKeys.add(key);
+      desired.push({key,path:filePath,index,priority,generation:fileThumbnailGeneration});
     }
-    if(fileThumbnailQueuedKeys.has(task.key)||fileThumbnailActiveKeys.has(task.key)) return;
-    fileThumbnailQueuedKeys.add(task.key);
-    fileThumbnailQueue.push(task);
-  });
+  };
+  appendRange(range.start,range.visibleEnd,0);
+  appendRange(range.visibleEnd,range.end,1);
+  fileThumbnailQueuePaused=true;
+  try{
+    fileThumbnailDesiredKeys.clear();
+    desiredKeys.forEach(key=>fileThumbnailDesiredKeys.add(key));
+    for(const [key,release] of Array.from(fileThumbnailActiveReleases.entries())){
+      if(!desiredKeys.has(key)) release();
+    }
+    fileThumbnailQueue.length=0;
+    fileThumbnailQueuedKeys.clear();
+    desired.forEach(task=>{
+      if(fileThumbnailCache.has(task.key)){
+        const cached=fileThumbnailCache.get(task.key);
+        fileThumbnailCache.delete(task.key);
+        fileThumbnailCache.set(task.key,cached);
+        applyFileThumbnail(task.key,cached);
+        return;
+      }
+      if(fileThumbnailRequestKeys.has(task.key)) return;
+      fileThumbnailQueuedKeys.add(task.key);
+      fileThumbnailQueue.push(task);
+    });
+  }finally{
+    fileThumbnailQueuePaused=false;
+  }
   pumpFileThumbnailQueue();
 }
 
@@ -2697,6 +2717,7 @@ function selectFileSearchResult(index,{ensureVisible=false}={}){
   const total=state.fileSearch.results.length;
   if(!total) return;
   const next=Math.max(0,Math.min(total-1,Number(index)||0));
+  const previous=state.fileSearch.selectedIndex;
   state.fileSearch.selectedIndex=next;
   const list=$('#fileResultList');
   if(ensureVisible && list){
@@ -2705,7 +2726,13 @@ function selectFileSearchResult(index,{ensureVisible=false}={}){
     if(top<list.scrollTop) list.scrollTop=top;
     else if(bottom>list.scrollTop+list.clientHeight) list.scrollTop=bottom-list.clientHeight;
   }
-  renderFileSearchResults();
+  const nextRow=list?.querySelector(`[data-file-index="${next}"]`);
+  if(!list||!nextRow){
+    renderFileSearchResults();
+    return;
+  }
+  if(previous!==next) list.querySelector(`[data-file-index="${previous}"]`)?.classList.remove('selected');
+  nextRow.classList.add('selected');
 }
 
 async function switchView(view,{skipCoach=false}={}){
@@ -5278,7 +5305,7 @@ function showUpdateDialog(){
   showModal(`
     <div data-update-dialog>
       <div class="modal-header"><h3>软件更新</h3><button class="modal-close" id="closeModal">×</button></div>
-      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '7.0.5')}</b><span>${update.version?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
+      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '7.0.6')}</b><span>${update.version?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
       <div class="modal-message">${escapeHtml(updateStatusText())}</div>
       <p class="update-network-tip">提示：开启 VPN 后再检测更新，结果会更加准确。</p>
       ${busy||downloaded?`<div class="update-progress"><span style="width:${downloaded?100:progress}%"></span></div>`:''}

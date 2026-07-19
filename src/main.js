@@ -1,6 +1,7 @@
 ﻿const { app, BrowserWindow, ipcMain, dialog, globalShortcut, clipboard, desktopCapturer, screen, Menu, nativeImage, shell } = require('electron');
 const fs = require('fs');
 const path = require('path');
+const { pathToFileURL } = require('url');
 const crypto = require('crypto');
 const https = require('https');
 const { execFile, execFileSync, spawn, spawnSync } = require('child_process');
@@ -103,6 +104,10 @@ let quitAfterDataFlush = false;
 let quitFlushInProgress = false;
 const fileIconCache = new Map();
 const fileThumbnailCache = new Map();
+let videoThumbnailWindow = null;
+let videoThumbnailWindowReady = null;
+let videoThumbnailIdleTimer = null;
+let videoThumbnailActive = 0;
 const recentClipboardDigests = new Map();
 const recentClipboardSequences = new Map();
 const pendingClipboardSequences = new Set();
@@ -119,6 +124,9 @@ const RECENT_CACHE_LIMIT = 512;
 const SELF_CACHE_LIMIT = 256;
 const FILE_ICON_CACHE_LIMIT = 256;
 const FILE_THUMBNAIL_CACHE_LIMIT = 192;
+const SYSTEM_THUMBNAIL_TIMEOUT_MS = 1200;
+const VIDEO_THUMBNAIL_TIMEOUT_MS = 2800;
+const VIDEO_THUMBNAIL_IDLE_MS = 15000;
 const STARTUP_MIGRATION_STATE_FILE = 'xuannian-migration-state.json';
 const RECORDS_JOURNAL_FILE = 'xuannian-records.json';
 const RESIZE_EDGES = new Set(['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw']);
@@ -4743,6 +4751,7 @@ app.on('will-quit', () => {
   stopNativeHotkeyHook();
   stopClipboardWatcher();
   fileSearchService?.shutdown();
+  destroyVideoThumbnailWindow();
   if (tray) {
     tray.destroy();
     tray = null;
@@ -5209,9 +5218,94 @@ ipcMain.handle('file:getIcon', async (_event, filePath) => {
   return dataUrl;
 });
 
+function destroyVideoThumbnailWindow() {
+  if (videoThumbnailIdleTimer) {
+    clearTimeout(videoThumbnailIdleTimer);
+    videoThumbnailIdleTimer = null;
+  }
+  const win = videoThumbnailWindow;
+  videoThumbnailWindow = null;
+  videoThumbnailWindowReady = null;
+  if (win && !win.isDestroyed()) win.destroy();
+}
+
+function scheduleVideoThumbnailWindowCleanup() {
+  if (videoThumbnailIdleTimer) clearTimeout(videoThumbnailIdleTimer);
+  if (videoThumbnailActive > 0) return;
+  videoThumbnailIdleTimer = setTimeout(destroyVideoThumbnailWindow, VIDEO_THUMBNAIL_IDLE_MS);
+}
+
+async function getVideoThumbnailWindow() {
+  if (videoThumbnailWindow && !videoThumbnailWindow.isDestroyed() && videoThumbnailWindowReady) {
+    await videoThumbnailWindowReady;
+    return videoThumbnailWindow;
+  }
+  const win = new BrowserWindow({
+    show: false,
+    width: 320,
+    height: 180,
+    skipTaskbar: true,
+    webPreferences: {
+      backgroundThrottling: false,
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+    },
+  });
+  videoThumbnailWindow = win;
+  videoThumbnailWindowReady = win.loadFile(path.join(__dirname, 'video-thumbnail.html'));
+  win.on('closed', () => {
+    if (videoThumbnailWindow === win) {
+      videoThumbnailWindow = null;
+      videoThumbnailWindowReady = null;
+    }
+  });
+  await videoThumbnailWindowReady;
+  return win;
+}
+
+async function createVideoFrameThumbnail(filePath, width, height) {
+  videoThumbnailActive += 1;
+  if (videoThumbnailIdleTimer) {
+    clearTimeout(videoThumbnailIdleTimer);
+    videoThumbnailIdleTimer = null;
+  }
+  try {
+    const win = await getVideoThumbnailWindow();
+    if (!win || win.isDestroyed()) return '';
+    const source = pathToFileURL(filePath).href;
+    const dataUrl = await win.webContents.executeJavaScript(
+      `window.captureVideoThumbnail(${JSON.stringify(source)},${width},${height},${VIDEO_THUMBNAIL_TIMEOUT_MS})`,
+      true,
+    );
+    return typeof dataUrl === 'string' && dataUrl.startsWith('data:image/') ? dataUrl : '';
+  } catch (error) {
+    runtimeLog(`video thumbnail fallback failed: ${error?.message || error}`);
+    return '';
+  } finally {
+    videoThumbnailActive = Math.max(0, videoThumbnailActive - 1);
+    scheduleVideoThumbnailWindowCleanup();
+  }
+}
+
+async function createSystemFileThumbnail(filePath, width, height) {
+  let timeoutId = null;
+  try {
+    return await Promise.race([
+      nativeImage.createThumbnailFromPath(filePath, { width, height }).catch(() => null),
+      new Promise((resolve) => {
+        timeoutId = setTimeout(() => resolve(null), SYSTEM_THUMBNAIL_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 ipcMain.handle('file:getThumbnail', async (_event, filePath, requestedSize = {}) => {
   const input = String(filePath || '').trim();
-  if (!input || !path.isAbsolute(input) || !['image', 'video'].includes(fileTypeForPath(input))) return '';
+  const fileType = fileTypeForPath(input);
+  if (!input || !path.isAbsolute(input) || !['image', 'video'].includes(fileType)) return '';
   const resolvedPath = path.resolve(input);
   let stat;
   try {
@@ -5229,12 +5323,12 @@ ipcMain.handle('file:getThumbnail', async (_event, filePath, requestedSize = {})
     fileThumbnailCache.set(cacheKey, cached);
     return cached || '';
   }
-  const pending = nativeImage.createThumbnailFromPath(resolvedPath, { width, height })
-    .then((image) => {
-      if (!image || image.isEmpty()) return '';
-      return image.toDataURL();
-    })
-    .catch(() => '');
+  const pending = (async () => {
+    const image = await createSystemFileThumbnail(resolvedPath, width, height);
+    if (image && !image.isEmpty()) return image.toDataURL();
+    if (fileType === 'video') return createVideoFrameThumbnail(resolvedPath, width, height);
+    return '';
+  })();
   fileThumbnailCache.set(cacheKey, pending);
   trimMapSize(fileThumbnailCache, FILE_THUMBNAIL_CACHE_LIMIT);
   const dataUrl = await pending;
