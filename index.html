@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>玄念7.0.0</title>
+  <title>玄念7.0.1</title>
   <link rel="icon" href="src/xuannian-logo-256.png" />
   <style>
     :root{
@@ -222,11 +222,19 @@
     .file-row.selected{background:#e9eef7}
     body.dark .file-row.selected{background:#363d49}
     .file-primary{min-width:0;display:flex;align-items:center;gap:10px}
-    .file-kind-icon{width:31px;height:31px;flex:none;border-radius:7px;display:grid;place-items:center;background:#eef2f7;color:#506278}
+    .file-kind-icon{position:relative;width:31px;height:31px;flex:none;border-radius:7px;display:grid;place-items:center;background:#eef2f7;color:#506278;overflow:hidden}
     .file-kind-icon.folder{background:#fff1bf;color:#b27b00}
+    .file-kind-icon.image,.file-kind-icon.video{width:42px;height:34px;background:#e9edf2;color:#566477}
+    .file-kind-icon.audio{background:#e9f3ef;color:#3f7460}
+    .file-kind-icon.document{background:#eef0f7;color:#596885}
     body.dark .file-kind-icon{background:#353a42;color:#b9c5d6}
     body.dark .file-kind-icon.folder{background:#4a4228;color:#f0cc69}
+    body.dark .file-kind-icon.audio{background:#30413b;color:#a9dac6}
+    body.dark .file-kind-icon.document{background:#343945;color:#bdc9e7}
     .file-kind-icon svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+    .file-kind-icon .file-thumbnail{width:100%;height:100%;display:block;object-fit:cover;background:var(--panel-soft)}
+    .file-kind-icon.has-thumbnail{background:var(--panel-soft);color:transparent}
+    .file-kind-icon.video.has-thumbnail::after{content:'▶';position:absolute;right:3px;bottom:3px;width:14px;height:14px;border-radius:50%;display:grid;place-items:center;padding-left:1px;background:rgba(0,0,0,.66);color:#fff;font-size:7px;line-height:1}
     .file-name-wrap{min-width:0;max-width:100%;display:flex;flex-direction:column;align-items:flex-start;overflow:hidden}
     .file-path{min-width:0}
     .file-name{display:block;max-width:100%;font-size:13px;font-weight:750;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -621,6 +629,9 @@
     .image-hover-preview video{display:none}
     .image-hover-preview.video img{display:none}
     .image-hover-preview.video video{display:block}
+    .file-thumbnail-preview{position:fixed;display:none;z-index:210;pointer-events:none;padding:7px;border-radius:10px;background:var(--panel);border:1px solid var(--line);box-shadow:0 18px 46px rgba(0,0,0,.24)}
+    .file-thumbnail-preview.show{display:block}
+    .file-thumbnail-preview img{display:block;width:auto;height:auto;max-width:min(360px,46vw);max-height:min(260px,46vh);min-width:150px;min-height:96px;border-radius:7px;object-fit:contain;background:#151515}
 
     .modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.28);display:none;align-items:center;justify-content:center;z-index:100;-webkit-app-region:no-drag}
     .modal-backdrop.show{display:flex}
@@ -983,6 +994,10 @@
           <button class="chip active" data-file-type="all">全部</button>
           <button class="chip" data-file-type="file">文件</button>
           <button class="chip" data-file-type="folder">文件夹</button>
+          <button class="chip" data-file-type="document">文档</button>
+          <button class="chip" data-file-type="image">图片</button>
+          <button class="chip" data-file-type="video">视频</button>
+          <button class="chip" data-file-type="audio">音频</button>
         </div>
         <span class="file-search-summary" id="fileSearchSummary">等待搜索</span>
       </div>
@@ -1061,13 +1076,13 @@
           </div>
         </div>
         <div class="setting-card">
-          <span>截图快捷键</span>
+          <div class="setting-title">截图快捷键<button class="setting-help-icon" id="showScreenshotHotkeyHelp" type="button" title="查看截图快捷键说明" aria-label="查看截图快捷键说明">!</button></div>
           <div class="settings-inline">
             <input class="field-input" id="settingScreenshotHotkey" placeholder="Ctrl+Alt+D" />
           </div>
         </div>
         <div class="setting-card">
-          <span>全盘查找快捷键</span>
+          <div class="setting-title">全盘查找快捷键<button class="setting-help-icon" id="showFileSearchHotkeyHelp" type="button" title="查看全盘查找快捷键说明" aria-label="查看全盘查找快捷键说明">!</button></div>
           <div class="settings-inline">
             <input class="field-input" id="settingFileSearchHotkey" placeholder="Ctrl+Alt+A" />
           </div>
@@ -1149,6 +1164,7 @@
 <div class="toast" id="toast"></div>
 <div class="page-coach" id="pageCoach"><button class="page-coach-close" id="pageCoachClose" title="关闭">×</button><b id="pageCoachTitle"></b><span id="pageCoachText"></span><button class="page-coach-action" id="pageCoachAction"></button></div>
 <div class="image-hover-preview" id="imageHoverPreview"><img alt=""><video muted playsinline></video></div>
+<div class="file-thumbnail-preview" id="fileThumbnailPreview"><img alt="媒体文件预览"></div>
 
 <script>
 const fallbackApi = createBrowserFallbackAPI();
@@ -1222,13 +1238,27 @@ const state = {
 };
 const nativeFileIconCache = new Map();
 const nativeFileIconRequests = new Map();
+const fileThumbnailCache = new Map();
+const fileThumbnailQueue = [];
+const fileThumbnailQueuedKeys = new Set();
+const fileThumbnailActiveKeys = new Set();
+let fileThumbnailGeneration = 0;
+let fileThumbnailActive = 0;
 const NATIVE_FILE_ICON_CACHE_LIMIT = 256;
+const FILE_THUMBNAIL_CACHE_LIMIT = 192;
+const FILE_THUMBNAIL_CONCURRENCY = 3;
 const NOTE_ROW_HEIGHT = 146;
 const NOTE_WINDOW_SIZE = 64;
 const NOTE_WINDOW_OVERSCAN = 8;
 const FILE_RESULT_ROW_HEIGHT = 58;
 const FILE_RESULT_WINDOW_SIZE = 48;
 const FILE_RESULT_OVERSCAN = 8;
+const FILE_SEARCH_TYPE_EXTENSIONS = Object.freeze({
+  image:new Set(['jpg','jpeg','jpe','png','gif','bmp','webp','tif','tiff','ico','svg','heic','heif','avif','dng','raw','cr2','nef','arw']),
+  video:new Set(['mp4','m4v','mkv','mov','avi','wmv','flv','webm','mpeg','mpg','m2ts','mts','ts','3gp','rm','rmvb','vob','ogv']),
+  audio:new Set(['mp3','wav','flac','aac','m4a','ogg','oga','wma','ape','opus','aiff','aif','amr','mid','midi','alac']),
+  document:new Set(['txt','md','markdown','rtf','pdf','doc','docx','docm','dot','dotx','dotm','odt','ott','wps','xls','xlsx','xlsm','xlsb','xlt','xltx','xltm','csv','ods','ots','et','ppt','pptx','pptm','pps','ppsx','pot','potx','odp','otp','dps','pages','numbers','key','epub','mobi','azw','azw3','tex','xps','djvu','chm']),
+});
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => Array.from(document.querySelectorAll(s));
@@ -1394,17 +1424,20 @@ function createBrowserFallbackAPI(){
     async openExternal(url){ window.open(String(url || ''), '_blank', 'noopener'); return true; },
     async openPath(){ return false; },
     async showItemInFolder(){ return false; },
+    async getFileThumbnail(){ return ''; },
     async getFileSearchStatus(){ return {platform:'browser',engine:'preview',status:'ready',ready:true,message:'预览数据已就绪'}; },
     async initializeFileSearch(){ return this.getFileSearchStatus(); },
     async searchFiles(query,options={}){
       const samples=[
-        {path:'C:\\Users\\Public\\Documents\\项目方案.docx',name:'项目方案.docx',directory:'C:\\Users\\Public\\Documents',kind:'file',size:248320,modifiedAt:Date.now()-3600e3},
+        {path:'C:\\Users\\Public\\Documents\\项目方案.docx',name:'项目方案.docx',directory:'C:\\Users\\Public\\Documents',kind:'file',fileType:'document',size:248320,modifiedAt:Date.now()-3600e3},
         {path:'D:\\素材\\项目参考图',name:'项目参考图',directory:'D:\\素材',kind:'folder',size:null,modifiedAt:Date.now()-7200e3},
-        {path:'D:\\素材\\项目参考图\\场景参考.png',name:'场景参考.png',directory:'D:\\素材\\项目参考图',kind:'file',size:4831020,modifiedAt:Date.now()-86400e3},
+        {path:'D:\\素材\\项目参考图\\场景参考.png',name:'场景参考.png',directory:'D:\\素材\\项目参考图',kind:'file',fileType:'image',size:4831020,modifiedAt:Date.now()-86400e3},
+        {path:'D:\\素材\\项目演示.mp4',name:'项目演示.mp4',directory:'D:\\素材',kind:'file',fileType:'video',size:28310200,modifiedAt:Date.now()-172800e3},
+        {path:'D:\\素材\\项目配乐.flac',name:'项目配乐.flac',directory:'D:\\素材',kind:'file',fileType:'audio',size:16831020,modifiedAt:Date.now()-259200e3},
       ];
       const value=String(query||'').toLowerCase();
       const type=options.type||'all';
-      const results=samples.filter(item=>(!value||item.path.toLowerCase().includes(value))&&(type==='all'||item.kind===type));
+      const results=samples.filter(item=>(!value||item.path.toLowerCase().includes(value))&&(type==='all'||item.kind===type||item.fileType===type));
       return {platform:'browser',engine:'preview',status:'ready',ready:true,query,results,truncated:false,elapsedMs:4};
     },
     async cancelFileSearch(){ return true; },
@@ -1447,7 +1480,7 @@ function createBrowserFallbackAPI(){
     async deleteInspiration(id){ const data=read(); data.inspirations=data.inspirations.filter(x=>x.id!==id); write(data); return data.inspirations; },
     async getSettings(){ return read().settings; },
     async saveSettings(settings){ const data=read(); data.settings={...data.settings,...settings}; write(data); return data.settings; },
-    async getUpdateState(){ return {status:'current',currentVersion:'7.0.0',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false}; },
+    async getUpdateState(){ return {status:'current',currentVersion:'7.0.1',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false}; },
     async checkForUpdates(){ return this.getUpdateState(); },
     async downloadUpdate(){ return this.getUpdateState(); },
     async installUpdate(){ return false; },
@@ -1758,6 +1791,22 @@ function showQuickPanelGuide(){
   };
 }
 
+function showScreenshotHotkeyHelp(){
+  const hotkey=hotkeyDisplay(state.settings.screenshotHotkey||'Ctrl+Alt+D');
+  return showInfoModal({
+    title:'截图快捷键说明',
+    message:`按 ${hotkey} 可直接进入玄念截图。默认快捷键为 Ctrl + Alt + D，可在此处自定义；如果组合键已被其他软件占用，保存时会提示更换。`,
+  });
+}
+
+function showFileSearchHotkeyHelp(){
+  const hotkey=hotkeyDisplay(state.settings.fileSearchHotkey||'Ctrl+Alt+A');
+  return showInfoModal({
+    title:'全盘查找快捷键说明',
+    message:`按 ${hotkey} 可从任意窗口唤出玄念并直接聚焦全盘查找。默认快捷键为 Ctrl + Alt + A，可在此处自定义；图片和视频缩略图会在搜索结果显示后异步加载，不阻塞文件查询。`,
+  });
+}
+
 function showStickyGuide(){
   const hotkey=hotkeyDisplay(state.settings.quickStickyHotkey || 'Ctrl+Alt+S');
   showModal(`
@@ -1855,11 +1904,24 @@ function bindEvents(){
     scheduleFileSearch({immediate:true});
   });
   $('#fileResultList')?.addEventListener('scroll',()=>{
+    hideFileThumbnailPreview();
     scheduleRenderFrame('file-search-scroll',()=>{
       const start=Math.max(0,Math.floor($('#fileResultList').scrollTop/FILE_RESULT_ROW_HEIGHT)-FILE_RESULT_OVERSCAN);
       if(start!==state.fileSearch.virtualStart) renderFileSearchResults();
+      else queueVisibleFileThumbnails();
     });
   });
+  $('#fileResultList')?.addEventListener('pointerover',event=>{
+    const target=event.target.closest('.file-kind-icon.has-thumbnail');
+    if(!target||target.contains(event.relatedTarget)) return;
+    showFileThumbnailPreview(target);
+  });
+  $('#fileResultList')?.addEventListener('pointerout',event=>{
+    const target=event.target.closest('.file-kind-icon.has-thumbnail');
+    if(!target||target.contains(event.relatedTarget)) return;
+    hideFileThumbnailPreview();
+  });
+  $('#fileResultList')?.addEventListener('pointerleave',hideFileThumbnailPreview);
   $('#fileResultList')?.addEventListener('click',event=>{
     const action=event.target.closest('[data-file-action]');
     if(action){
@@ -1924,6 +1986,8 @@ function bindEvents(){
   $('#revealUserData')?.addEventListener('click', revealUserDataFolder);
   $('#clearClipboardCache').addEventListener('click', clearClipboardCache);
   $('#showQuickGuide')?.addEventListener('click', showQuickPanelGuide);
+  $('#showScreenshotHotkeyHelp')?.addEventListener('click', showScreenshotHotkeyHelp);
+  $('#showFileSearchHotkeyHelp')?.addEventListener('click', showFileSearchHotkeyHelp);
   $('#replayOnboarding')?.addEventListener('click', replayOnboarding);
   $('#showStickyGuide')?.addEventListener('click', showStickyGuide);
   $('#saveSettings').addEventListener('click', saveSettings);
@@ -2146,10 +2210,148 @@ function bindTopTextareaResize(handle, textarea, boundsElement, options={}){
   });
 }
 
-function fileSearchIcon(kind){
-  return kind==='folder'
-    ? '<svg viewBox="0 0 24 24"><path d="M3.5 7.5h6l2-2h9v13h-17Z"></path><path d="M3.5 9h17"></path></svg>'
-    : '<svg viewBox="0 0 24 24"><path d="M6 3.5h8l4 4V20H6Z"></path><path d="M14 3.5V8h4"></path></svg>';
+function fileSearchResultType(item){
+  if(['document','image','video','audio'].includes(item?.fileType)) return item.fileType;
+  if(['image','video','audio'].includes(item?.mediaKind)) return item.mediaKind;
+  const value=String(item?.path||item?.name||'');
+  const fileName=value.split(/[\\/]/).pop()||'';
+  const dot=fileName.lastIndexOf('.');
+  if(dot<0) return '';
+  const extension=fileName.slice(dot+1).toLowerCase();
+  for(const [kind,extensions] of Object.entries(FILE_SEARCH_TYPE_EXTENSIONS)){
+    if(extensions.has(extension)) return kind;
+  }
+  return '';
+}
+
+function fileSearchIcon(kind,fileType=''){
+  if(kind==='folder') return '<svg viewBox="0 0 24 24"><path d="M3.5 7.5h6l2-2h9v13h-17Z"></path><path d="M3.5 9h17"></path></svg>';
+  if(fileType==='image') return '<svg viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2"></rect><circle cx="9" cy="10" r="1.5"></circle><path d="m5.5 17 4-4 3 3 2.5-2.5 3.5 3.5"></path></svg>';
+  if(fileType==='video') return '<svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2"></rect><path d="m10 9 5 3-5 3Z"></path></svg>';
+  if(fileType==='audio') return '<svg viewBox="0 0 24 24"><path d="M9 17.5V6l9-2v11.5"></path><circle cx="6.5" cy="17.5" r="2.5"></circle><circle cx="15.5" cy="15.5" r="2.5"></circle></svg>';
+  if(fileType==='document') return '<svg viewBox="0 0 24 24"><path d="M6 3.5h8l4 4V20H6Z"></path><path d="M14 3.5V8h4M9 12h6M9 15h6"></path></svg>';
+  return '<svg viewBox="0 0 24 24"><path d="M6 3.5h8l4 4V20H6Z"></path><path d="M14 3.5V8h4"></path></svg>';
+}
+
+function fileThumbnailKey(item){
+  return `${String(item?.path||'').toLocaleLowerCase('en-US')}|${item?.size??''}|${item?.modifiedAt??''}`;
+}
+
+function resetFileThumbnailQueue(){
+  fileThumbnailGeneration+=1;
+  fileThumbnailQueue.length=0;
+  fileThumbnailQueuedKeys.clear();
+}
+
+function rememberFileThumbnail(key,dataUrl){
+  if(!key) return;
+  fileThumbnailCache.delete(key);
+  fileThumbnailCache.set(key,dataUrl||null);
+  while(fileThumbnailCache.size>FILE_THUMBNAIL_CACHE_LIMIT){
+    fileThumbnailCache.delete(fileThumbnailCache.keys().next().value);
+  }
+}
+
+function fileThumbnailTargets(key){
+  return $$('#fileResultList [data-file-thumbnail-key]').filter(element=>element.dataset.fileThumbnailKey===key);
+}
+
+function applyFileThumbnail(key,dataUrl){
+  if(!dataUrl) return;
+  fileThumbnailTargets(key).forEach(element=>{
+    if(element.dataset.thumbnailLoaded==='1') return;
+    const image=document.createElement('img');
+    image.className='file-thumbnail';
+    image.alt='';
+    image.decoding='async';
+    image.src=dataUrl;
+    element.replaceChildren(image);
+    element.dataset.thumbnailLoaded='1';
+    element.classList.add('has-thumbnail');
+  });
+}
+
+function hideFileThumbnailPreview(){
+  const preview=$('#fileThumbnailPreview');
+  if(!preview) return;
+  preview.classList.remove('show');
+  const image=preview.querySelector('img');
+  if(image) image.removeAttribute('src');
+}
+
+function showFileThumbnailPreview(target){
+  const source=target?.querySelector('.file-thumbnail')?.src||'';
+  const preview=$('#fileThumbnailPreview');
+  const image=preview?.querySelector('img');
+  if(!source||!preview||!image) return;
+  image.src=source;
+  preview.classList.add('show');
+  const targetRect=target.getBoundingClientRect();
+  requestAnimationFrame(()=>{
+    if(!preview.classList.contains('show')) return;
+    const previewRect=preview.getBoundingClientRect();
+    let left=targetRect.right+10;
+    if(left+previewRect.width>innerWidth-10) left=targetRect.left-previewRect.width-10;
+    left=Math.max(10,Math.min(innerWidth-previewRect.width-10,left));
+    const top=Math.max(10,Math.min(innerHeight-previewRect.height-10,targetRect.top+(targetRect.height-previewRect.height)/2));
+    preview.style.left=`${Math.round(left)}px`;
+    preview.style.top=`${Math.round(top)}px`;
+  });
+}
+
+function pumpFileThumbnailQueue(){
+  while(fileThumbnailActive<FILE_THUMBNAIL_CONCURRENCY&&fileThumbnailQueue.length){
+    const task=fileThumbnailQueue.shift();
+    fileThumbnailQueuedKeys.delete(task.key);
+    if(task.generation!==fileThumbnailGeneration||!fileThumbnailTargets(task.key).length) continue;
+    fileThumbnailActive+=1;
+    fileThumbnailActiveKeys.add(task.key);
+    Promise.resolve(api.getFileThumbnail?.(task.path,{width:96,height:64})||'')
+      .then(dataUrl=>{
+        rememberFileThumbnail(task.key,dataUrl);
+        if(dataUrl) applyFileThumbnail(task.key,dataUrl);
+      })
+      .catch(()=>{})
+      .finally(()=>{
+        fileThumbnailActive=Math.max(0,fileThumbnailActive-1);
+        fileThumbnailActiveKeys.delete(task.key);
+        pumpFileThumbnailQueue();
+      });
+  }
+}
+
+function queueVisibleFileThumbnails(){
+  const list=$('#fileResultList');
+  if(!list||!api.getFileThumbnail) return;
+  const firstVisible=Math.max(0,Math.floor(list.scrollTop/FILE_RESULT_ROW_HEIGHT)-2);
+  const lastVisible=Math.ceil((list.scrollTop+list.clientHeight)/FILE_RESULT_ROW_HEIGHT)+2;
+  const visibleElements=Array.from(list.querySelectorAll('[data-file-thumbnail-key]')).filter(element=>{
+    const index=Number(element.closest('[data-file-index]')?.dataset.fileIndex);
+    return !(list.clientHeight>0&&(index<firstVisible||index>lastVisible));
+  });
+  const visibleKeys=new Set(visibleElements.map(element=>element.dataset.fileThumbnailKey||'').filter(Boolean));
+  for(let index=fileThumbnailQueue.length-1;index>=0;index-=1){
+    const task=fileThumbnailQueue[index];
+    if(task.generation===fileThumbnailGeneration&&visibleKeys.has(task.key)) continue;
+    fileThumbnailQueue.splice(index,1);
+    fileThumbnailQueuedKeys.delete(task.key);
+  }
+  visibleElements.forEach(element=>{
+    const key=element.dataset.fileThumbnailKey||'';
+    const filePath=element.dataset.fileThumbnailPath||'';
+    if(!key||!filePath) return;
+    if(fileThumbnailCache.has(key)){
+      const cached=fileThumbnailCache.get(key);
+      fileThumbnailCache.delete(key);
+      fileThumbnailCache.set(key,cached);
+      if(cached) applyFileThumbnail(key,cached);
+      return;
+    }
+    if(fileThumbnailQueuedKeys.has(key)||fileThumbnailActiveKeys.has(key)) return;
+    fileThumbnailQueuedKeys.add(key);
+    fileThumbnailQueue.push({key,path:filePath,generation:fileThumbnailGeneration});
+  });
+  pumpFileThumbnailQueue();
 }
 
 function fileActionIcon(action){
@@ -2231,6 +2433,7 @@ function renderFileSearch(){
 }
 
 function renderFileSearchResults(){
+  hideFileThumbnailPreview();
   const searchState=state.fileSearch;
   const list=$('#fileResultList');
   if(!list) return;
@@ -2255,9 +2458,13 @@ function renderFileSearchResults(){
   for(let index=start;index<end;index+=1){
     const item=searchState.results[index];
     const selected=index===searchState.selectedIndex;
+    const fileType=fileSearchResultType(item);
+    const previewable=['image','video'].includes(fileType);
+    const thumbnailKey=previewable?fileThumbnailKey(item):'';
+    const thumbnailAttributes=previewable?` data-file-thumbnail-key="${escapeHtml(thumbnailKey)}" data-file-thumbnail-path="${escapeHtml(item.path||'')}"`:'';
     const extension=item.kind==='folder'?'文件夹':((String(item.name||'').split('.').pop()||'文件').toUpperCase());
     rows.push(`<div class="file-row file-grid ${selected?'selected':''}" data-file-index="${index}" title="${escapeHtml(item.path||'')}">
-      <div class="file-primary"><span class="file-kind-icon ${item.kind==='folder'?'folder':''}">${fileSearchIcon(item.kind)}</span><span class="file-name-wrap"><span class="file-name">${escapeHtml(item.name||item.path||'')}</span><span class="file-extension">${escapeHtml(extension)}</span></span></div>
+      <div class="file-primary"><span class="file-kind-icon ${item.kind==='folder'?'folder':fileType}"${thumbnailAttributes}>${fileSearchIcon(item.kind,fileType)}</span><span class="file-name-wrap"><span class="file-name">${escapeHtml(item.name||item.path||'')}</span><span class="file-extension">${escapeHtml(extension)}</span></span></div>
       <div class="file-path file-col-path">${escapeHtml(item.directory||'')}</div>
       <div class="file-size file-col-size">${escapeHtml(formatFileSize(item.size))}</div>
       <div class="file-modified file-col-modified">${escapeHtml(formatFileModified(item.modifiedAt))}</div>
@@ -2270,6 +2477,7 @@ function renderFileSearchResults(){
   }
   if(end<total) rows.push(`<div class="virtual-spacer" style="height:${(total-end)*FILE_RESULT_ROW_HEIGHT}px"></div>`);
   list.innerHTML=rows.join('');
+  queueVisibleFileThumbnails();
 }
 
 function stopFileSearchPolling(){
@@ -2338,6 +2546,8 @@ async function initializeFileSearch(){
 
 function scheduleFileSearch({immediate=false}={}){
   clearTimeout(state.fileSearch.debounceTimer);
+  hideFileThumbnailPreview();
+  resetFileThumbnailQueue();
   state.fileSearch.requestId+=1;
   const query=String($('#fileSearchInput')?.value||'').trim();
   state.fileSearch.query=query;
@@ -2439,6 +2649,8 @@ async function switchView(view,{skipCoach=false}={}){
   if(previousView==='search' && view!=='search'){
     stopFileSearchPolling();
     clearTimeout(state.fileSearch.debounceTimer);
+    hideFileThumbnailPreview();
+    resetFileThumbnailQueue();
     state.fileSearch.requestId+=1;
     Promise.resolve(api.cancelFileSearch()).catch(()=>{});
   }
@@ -4860,7 +5072,7 @@ function showUpdateDialog(){
   showModal(`
     <div data-update-dialog>
       <div class="modal-header"><h3>软件更新</h3><button class="modal-close" id="closeModal">×</button></div>
-      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '7.0.0')}</b><span>${update.version?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
+      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '7.0.1')}</b><span>${update.version?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
       <div class="modal-message">${escapeHtml(updateStatusText())}</div>
       <p class="update-network-tip">提示：开启 VPN 后再检测更新，结果会更加准确。</p>
       ${busy||downloaded?`<div class="update-progress"><span style="width:${downloaded?100:progress}%"></span></div>`:''}

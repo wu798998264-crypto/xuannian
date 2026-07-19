@@ -7,6 +7,9 @@ const {
   parseEverythingCsv,
   normalizeQuery,
   normalizeOptions,
+  fileTypeForPath,
+  matchesResultType,
+  fileSearchTermForType,
   compareResults,
   constants,
 } = require('../src/file-search');
@@ -17,6 +20,25 @@ function verifyParsers() {
   assert.deepStrictEqual(normalizeOptions({ type: 'folder', sort: 'modified', direction: 'desc', limit: 99999 }), {
     type: 'folder', sort: 'modified', direction: 'desc', limit: constants.MAX_RESULTS,
   });
+  assert.strictEqual(normalizeOptions({ type: 'image' }).type, 'image');
+  assert.strictEqual(normalizeOptions({ type: 'video' }).type, 'video');
+  assert.strictEqual(normalizeOptions({ type: 'audio' }).type, 'audio');
+  assert.strictEqual(normalizeOptions({ type: 'document' }).type, 'document');
+  assert.strictEqual(normalizeOptions({ type: 'archive' }).type, 'all');
+  assert.strictEqual(fileTypeForPath('C:\\Media\\photo.HEIC'), 'image');
+  assert.strictEqual(fileTypeForPath('C:\\Media\\clip.mkv'), 'video');
+  assert.strictEqual(fileTypeForPath('C:\\Media\\song.flac'), 'audio');
+  assert.strictEqual(fileTypeForPath('C:\\Media\\report.docx'), 'document');
+  assert.strictEqual(fileTypeForPath('C:\\Media\\notes.bin'), '');
+  assert.strictEqual(matchesResultType({ kind: 'file', path: 'C:\\Media\\photo.png' }, 'image'), true);
+  assert.strictEqual(matchesResultType({ kind: 'file', path: 'C:\\Media\\photo.png' }, 'video'), false);
+  assert.strictEqual(matchesResultType({ kind: 'folder', path: 'C:\\Media' }, 'folder'), true);
+  assert(fileSearchTermForType('image').startsWith('ext:jpg;jpeg;'));
+  assert(fileSearchTermForType('video').includes(';mkv;'));
+  assert(fileSearchTermForType('audio').includes(';flac;'));
+  assert(fileSearchTermForType('document').includes(';docx;'));
+  assert(fileSearchTermForType('document').includes(';pdf;'));
+  assert.strictEqual(fileSearchTermForType('folder'), '');
   assert.deepStrictEqual(parseDelimited('name,path\r\n"a,b.txt","C:\\One"\r\n'), [
     ['name', 'path'], ['a,b.txt', 'C:\\One'],
   ]);

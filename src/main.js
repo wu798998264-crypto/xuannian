@@ -11,7 +11,7 @@ const {
   readJsonWithRecoverySync,
   writeJsonAtomicSync,
 } = require('./data-persistence');
-const { FileSearchService } = require('./file-search');
+const { FileSearchService, fileTypeForPath } = require('./file-search');
 
 let mainWindow;
 let quickWindow;
@@ -102,6 +102,7 @@ let lastPreparedRecordsWrite = null;
 let quitAfterDataFlush = false;
 let quitFlushInProgress = false;
 const fileIconCache = new Map();
+const fileThumbnailCache = new Map();
 const recentClipboardDigests = new Map();
 const recentClipboardSequences = new Map();
 const pendingClipboardSequences = new Set();
@@ -117,6 +118,7 @@ const MAIN_WINDOW_MIN_HEIGHT = 560;
 const RECENT_CACHE_LIMIT = 512;
 const SELF_CACHE_LIMIT = 256;
 const FILE_ICON_CACHE_LIMIT = 256;
+const FILE_THUMBNAIL_CACHE_LIMIT = 192;
 const STARTUP_MIGRATION_STATE_FILE = 'xuannian-migration-state.json';
 const RECORDS_JOURNAL_FILE = 'xuannian-records.json';
 const RESIZE_EDGES = new Set(['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw']);
@@ -5212,6 +5214,46 @@ ipcMain.handle('file:getIcon', async (_event, filePath) => {
   fileIconCache.delete(cacheKey);
   fileIconCache.set(cacheKey, dataUrl);
   trimMapSize(fileIconCache, FILE_ICON_CACHE_LIMIT);
+  return dataUrl;
+});
+
+ipcMain.handle('file:getThumbnail', async (_event, filePath, requestedSize = {}) => {
+  const input = String(filePath || '').trim();
+  if (!input || !path.isAbsolute(input) || !['image', 'video'].includes(fileTypeForPath(input))) return '';
+  const resolvedPath = path.resolve(input);
+  let stat;
+  try {
+    stat = await fs.promises.stat(resolvedPath);
+  } catch {
+    return '';
+  }
+  if (!stat.isFile()) return '';
+  const width = Math.max(40, Math.min(160, Math.round(Number(requestedSize?.width) || 96)));
+  const height = Math.max(32, Math.min(120, Math.round(Number(requestedSize?.height) || 64)));
+  const cacheKey = `${resolvedPath.toLocaleLowerCase('en-US')}|${stat.size}|${Math.round(stat.mtimeMs)}|${width}x${height}`;
+  if (fileThumbnailCache.has(cacheKey)) {
+    const cached = fileThumbnailCache.get(cacheKey);
+    fileThumbnailCache.delete(cacheKey);
+    fileThumbnailCache.set(cacheKey, cached);
+    return cached || '';
+  }
+  const pending = nativeImage.createThumbnailFromPath(resolvedPath, { width, height })
+    .then((image) => {
+      if (!image || image.isEmpty()) return '';
+      return image.toDataURL();
+    })
+    .catch(() => '');
+  fileThumbnailCache.set(cacheKey, pending);
+  trimMapSize(fileThumbnailCache, FILE_THUMBNAIL_CACHE_LIMIT);
+  const dataUrl = await pending;
+  if (!dataUrl) {
+    if (fileThumbnailCache.get(cacheKey) === pending) fileThumbnailCache.set(cacheKey, null);
+    trimMapSize(fileThumbnailCache, FILE_THUMBNAIL_CACHE_LIMIT);
+    return '';
+  }
+  fileThumbnailCache.delete(cacheKey);
+  fileThumbnailCache.set(cacheKey, dataUrl);
+  trimMapSize(fileThumbnailCache, FILE_THUMBNAIL_CACHE_LIMIT);
   return dataUrl;
 });
 

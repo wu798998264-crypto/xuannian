@@ -272,6 +272,10 @@ internal static class XuanNianFileSearchHelper
         string search = query;
         if (type == "file") search = "file: " + search;
         else if (type == "folder") search = "folder: " + search;
+        else if (type == "document") search = "ext:txt;md;markdown;rtf;pdf;doc;docx;docm;dot;dotx;dotm;odt;ott;wps;xls;xlsx;xlsm;xlsb;xlt;xltx;xltm;csv;ods;ots;et;ppt;pptx;pptm;pps;ppsx;pot;potx;odp;otp;dps;pages;numbers;key;epub;mobi;azw;azw3;tex;xps;djvu;chm " + search;
+        else if (type == "image") search = "ext:jpg;jpeg;jpe;png;gif;bmp;webp;tif;tiff;ico;svg;heic;heif;avif;dng;raw;cr2;nef;arw " + search;
+        else if (type == "video") search = "ext:mp4;m4v;mkv;mov;avi;wmv;flv;webm;mpeg;mpg;m2ts;mts;ts;3gp;rm;rmvb;vob;ogv " + search;
+        else if (type == "audio") search = "ext:mp3;wav;flac;aac;m4a;ogg;oga;wma;ape;opus;aiff;aif;amr;mid;midi;alac " + search;
         byte[] searchBytes = Encoding.Unicode.GetBytes(search + "\0");
         int queryBytes = QueryHeaderBytes + searchBytes.Length;
         IntPtr queryPointer = Marshal.AllocHGlobal(queryBytes);

@@ -2,7 +2,7 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, nativeImage } = require('electron');
 
 const tempDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'xuannian-runtime-probe-'));
 app.setPath('userData', tempDirectory);
@@ -27,6 +27,10 @@ async function waitForRenderer(window, expression, timeoutMs = 10000) {
 
 async function run() {
   await app.whenReady();
+  const thumbnailSource = path.resolve(__dirname, '..', 'src', 'xuannian-logo-256.png');
+  const systemThumbnail = await nativeImage.createThumbnailFromPath(thumbnailSource, { width: 96, height: 64 });
+  assert(!systemThumbnail.isEmpty(), 'Electron system thumbnail service should load a local PNG');
+  const thumbnailDataUrl = systemThumbnail.toDataURL();
   const window = new BrowserWindow({
     show: false,
     width: 1280,
@@ -107,6 +111,121 @@ async function run() {
   assert(metrics.searchFound, 'search must scan favorites outside the current DOM window');
   assert(metrics.finalDomNodes < 1700, `renderer DOM should stay bounded, received ${metrics.finalDomNodes} nodes`);
   assert.strictEqual(rendererErrors.length, 0, `renderer errors: ${rendererErrors.join(' | ')}`);
+  const mediaPreviewMetrics = await window.webContents.executeJavaScript(`
+    (async()=>{
+      const mockThumbnailDelayMs=300;
+      api.getFileThumbnail=async()=>{
+        await new Promise(resolve=>setTimeout(resolve,mockThumbnailDelayMs));
+        return ${JSON.stringify(thumbnailDataUrl)};
+      };
+      await switchView('search',{skipCoach:true});
+      state.fileSearch.engineStatus='ready';
+      state.fileSearch.query='logo';
+      state.fileSearch.results=[{
+        path:${JSON.stringify(thumbnailSource)},
+        directory:${JSON.stringify(path.dirname(thumbnailSource))},
+        name:${JSON.stringify(path.basename(thumbnailSource))},
+        kind:'file',fileType:'image',size:1,modifiedAt:1
+      }];
+      state.fileSearch.selectedIndex=0;
+      document.querySelector('#fileSearchInput').value='logo';
+      const renderStarted=performance.now();
+      renderFileSearch();
+      const firstPaintMs=performance.now()-renderStarted;
+      const deadline=Date.now()+5000;
+      let target;
+      while(Date.now()<deadline){
+        target=document.querySelector('.file-kind-icon.has-thumbnail');
+        if(target) break;
+        await new Promise(resolve=>setTimeout(resolve,25));
+      }
+      if(target){
+        target.dispatchEvent(new PointerEvent('pointerover',{bubbles:true,relatedTarget:null}));
+        await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+      }
+      const previewShown=document.querySelector('#fileThumbnailPreview')?.classList.contains('show')||false;
+      if(target) target.dispatchEvent(new PointerEvent('pointerout',{bubbles:true,relatedTarget:document.body}));
+      const previewHidden=!document.querySelector('#fileThumbnailPreview')?.classList.contains('show');
+      return {
+        firstPaintMs:Number(firstPaintMs.toFixed(2)),
+        mockThumbnailDelayMs,
+        thumbnailLoaded:Boolean(target?.querySelector('.file-thumbnail')?.src?.startsWith('data:image/')),
+        previewShown,
+        previewHidden,
+        active:fileThumbnailActive,
+        concurrency:FILE_THUMBNAIL_CONCURRENCY,
+        cacheSize:fileThumbnailCache.size,
+        cacheLimit:FILE_THUMBNAIL_CACHE_LIMIT,
+        filters:Array.from(document.querySelectorAll('#fileSearchFilters [data-file-type]')).map(node=>node.dataset.fileType)
+      };
+    })()
+  `, true);
+  console.log(`file search media preview metrics ${JSON.stringify(mediaPreviewMetrics)}`);
+  assert(mediaPreviewMetrics.firstPaintMs < mediaPreviewMetrics.mockThumbnailDelayMs, `media result first paint must not wait for thumbnail: ${mediaPreviewMetrics.firstPaintMs}ms`);
+  assert.strictEqual(mediaPreviewMetrics.thumbnailLoaded, true, 'visible image result should load a system thumbnail');
+  assert.strictEqual(mediaPreviewMetrics.previewShown, true, 'hovering a loaded thumbnail should show the enlarged preview');
+  assert.strictEqual(mediaPreviewMetrics.previewHidden, true, 'leaving a thumbnail should hide the enlarged preview');
+  assert.strictEqual(mediaPreviewMetrics.concurrency, 3);
+  assert(mediaPreviewMetrics.active <= mediaPreviewMetrics.concurrency, `thumbnail concurrency exceeded limit: ${mediaPreviewMetrics.active}`);
+  assert(mediaPreviewMetrics.cacheSize <= mediaPreviewMetrics.cacheLimit, `thumbnail cache exceeded limit: ${mediaPreviewMetrics.cacheSize}`);
+  assert.deepStrictEqual(mediaPreviewMetrics.filters, ['all', 'file', 'folder', 'document', 'image', 'video', 'audio']);
+  const thumbnailQueueMetrics = await window.webContents.executeJavaScript(`
+    (async()=>{
+      api.getFileThumbnail=async()=>{
+        await new Promise(resolve=>setTimeout(resolve,180));
+        return ${JSON.stringify(thumbnailDataUrl)};
+      };
+      resetFileThumbnailQueue();
+      state.fileSearch.engineStatus='ready';
+      state.fileSearch.query='media-stress';
+      state.fileSearch.results=Array.from({length:1000},(_,index)=>({
+        path:${JSON.stringify(thumbnailSource)},directory:${JSON.stringify(path.dirname(thumbnailSource))},
+        name:'media-'+index+'.png',kind:'file',fileType:'image',size:1000+index,modifiedAt:index+1
+      }));
+      state.fileSearch.selectedIndex=0;
+      document.querySelector('#fileSearchInput').value='media-stress';
+      renderFileSearch();
+      const list=document.querySelector('#fileResultList');
+      let maxQueue=fileThumbnailQueue.length;
+      let maxActive=fileThumbnailActive;
+      const durations=[];
+      for(let index=0;index<80;index+=1){
+        list.scrollTop=(list.scrollHeight-list.clientHeight)*(index/79);
+        const started=performance.now();
+        renderFileSearchResults();
+        durations.push(performance.now()-started);
+        maxQueue=Math.max(maxQueue,fileThumbnailQueue.length);
+        maxActive=Math.max(maxActive,fileThumbnailActive);
+      }
+      resetFileThumbnailQueue();
+      const sorted=[...durations].sort((a,b)=>a-b);
+      return {maxQueue,maxActive,renderP95Ms:Number(sorted[75].toFixed(2)),concurrency:FILE_THUMBNAIL_CONCURRENCY};
+    })()
+  `, true);
+  console.log(`file thumbnail queue stress metrics ${JSON.stringify(thumbnailQueueMetrics)}`);
+  assert(thumbnailQueueMetrics.maxActive <= thumbnailQueueMetrics.concurrency, `thumbnail stress exceeded concurrency: ${thumbnailQueueMetrics.maxActive}`);
+  assert(thumbnailQueueMetrics.maxQueue <= 32, `thumbnail pending queue should stay near the visible window: ${thumbnailQueueMetrics.maxQueue}`);
+  assert(thumbnailQueueMetrics.renderP95Ms < 45, `media virtual-list render p95 is too slow: ${thumbnailQueueMetrics.renderP95Ms}ms`);
+  const hotkeyHelpMetrics = await window.webContents.executeJavaScript(`
+    (async()=>{
+      await switchView('settings',{skipCoach:true});
+      document.querySelector('#showScreenshotHotkeyHelp').click();
+      await new Promise(resolve=>setTimeout(resolve,0));
+      const screenshotTitle=document.querySelector('#modalBox h3')?.textContent||'';
+      const screenshotMessage=document.querySelector('#modalBox .modal-message')?.textContent||'';
+      document.querySelector('#confirmModal')?.click();
+      document.querySelector('#showFileSearchHotkeyHelp').click();
+      await new Promise(resolve=>setTimeout(resolve,0));
+      const searchTitle=document.querySelector('#modalBox h3')?.textContent||'';
+      const searchMessage=document.querySelector('#modalBox .modal-message')?.textContent||'';
+      document.querySelector('#confirmModal')?.click();
+      return {screenshotTitle,screenshotMessage,searchTitle,searchMessage};
+    })()
+  `, true);
+  assert.strictEqual(hotkeyHelpMetrics.screenshotTitle, '截图快捷键说明');
+  assert(hotkeyHelpMetrics.screenshotMessage.includes('Ctrl + Alt + D'));
+  assert.strictEqual(hotkeyHelpMetrics.searchTitle, '全盘查找快捷键说明');
+  assert(hotkeyHelpMetrics.searchMessage.includes('不阻塞文件查询'));
   const fileSearchMetrics = await window.webContents.executeJavaScript(`
     (async()=>{
       await switchView('search',{skipCoach:true});
@@ -157,12 +276,49 @@ async function run() {
   assert.strictEqual(fileSearchMetrics.activeNav, 'search');
   assert.strictEqual(rendererErrors.length, 0, `renderer errors: ${rendererErrors.join(' | ')}`);
   if (process.env.XUANNIAN_RUNTIME_SCREENSHOT) {
+    await window.webContents.executeJavaScript(`
+      (async()=>{
+        await switchView('search',{skipCoach:true});
+        const base=${JSON.stringify(thumbnailSource)};
+        const directory=${JSON.stringify(path.dirname(thumbnailSource))};
+        state.fileSearch.engineStatus='ready';
+        state.fileSearch.query='媒体';
+        state.fileSearch.elapsedMs=18;
+        state.fileSearch.results=[
+          {path:base,directory,name:'品牌参考图.png',kind:'file',fileType:'image',size:20525,modifiedAt:10},
+          {path:base,directory,name:'产品演示.mp4',kind:'file',fileType:'video',size:28310200,modifiedAt:9},
+          {path:${JSON.stringify('C:\\Media\\背景音乐.flac')},directory:${JSON.stringify('C:\\Media')},name:'背景音乐.flac',kind:'file',fileType:'audio',size:16831020,modifiedAt:8},
+          {path:${JSON.stringify('C:\\Media\\项目资料')},directory:${JSON.stringify('C:\\Media')},name:'项目资料',kind:'folder',size:null,modifiedAt:7},
+          {path:${JSON.stringify('C:\\Media\\项目说明.docx')},directory:${JSON.stringify('C:\\Media')},name:'项目说明.docx',kind:'file',fileType:'document',size:8400,modifiedAt:6}
+        ];
+        state.fileSearch.selectedIndex=0;
+        document.querySelector('#fileSearchInput').value='媒体';
+        document.querySelector('#fileResultList').scrollTop=0;
+        renderFileSearch();
+        await new Promise(resolve=>setTimeout(resolve,360));
+      })()
+    `, true);
     window.showInactive();
     await new Promise((resolve) => setTimeout(resolve, 200));
     const image = await window.webContents.capturePage();
     const screenshotPath = path.resolve(process.env.XUANNIAN_RUNTIME_SCREENSHOT);
     fs.writeFileSync(screenshotPath, image.toPNG());
+    await window.webContents.executeJavaScript(`
+      (()=>{
+        const target=document.querySelector('.file-kind-icon.has-thumbnail');
+        target?.dispatchEvent(new PointerEvent('pointerover',{bubbles:true,relatedTarget:null}));
+      })()
+    `, true);
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    const hoverImage = await window.webContents.capturePage();
+    fs.writeFileSync(screenshotPath.replace(/(\.png)?$/i, '-hover.png'), hoverImage.toPNG());
+    await window.webContents.executeJavaScript("hideFileThumbnailPreview()", true);
+    await window.webContents.executeJavaScript("switchView('settings',{skipCoach:true})", true);
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    const settingsImage = await window.webContents.capturePage();
+    fs.writeFileSync(screenshotPath.replace(/(\.png)?$/i, '-settings.png'), settingsImage.toPNG());
     window.setSize(620, 760);
+    await window.webContents.executeJavaScript("switchView('search',{skipCoach:true})", true);
     await new Promise((resolve) => setTimeout(resolve, 200));
     const narrowImage = await window.webContents.capturePage();
     fs.writeFileSync(screenshotPath.replace(/(\.png)?$/i, '-620.png'), narrowImage.toPNG());

@@ -8,6 +8,15 @@ const EVERYTHING_SERVICE_NAME = `Everything (${EVERYTHING_INSTANCE})`;
 const MAX_QUERY_LENGTH = 240;
 const MAX_RESULTS = 2000;
 const DEFAULT_RESULTS = 300;
+const FILE_TYPE_EXTENSIONS = Object.freeze({
+  image: new Set(['jpg', 'jpeg', 'jpe', 'png', 'gif', 'bmp', 'webp', 'tif', 'tiff', 'ico', 'svg', 'heic', 'heif', 'avif', 'dng', 'raw', 'cr2', 'nef', 'arw']),
+  video: new Set(['mp4', 'm4v', 'mkv', 'mov', 'avi', 'wmv', 'flv', 'webm', 'mpeg', 'mpg', 'm2ts', 'mts', 'ts', '3gp', 'rm', 'rmvb', 'vob', 'ogv']),
+  audio: new Set(['mp3', 'wav', 'flac', 'aac', 'm4a', 'ogg', 'oga', 'wma', 'ape', 'opus', 'aiff', 'aif', 'amr', 'mid', 'midi', 'alac']),
+  document: new Set(['txt', 'md', 'markdown', 'rtf', 'pdf', 'doc', 'docx', 'docm', 'dot', 'dotx', 'dotm', 'odt', 'ott', 'wps', 'xls', 'xlsx', 'xlsm', 'xlsb', 'xlt', 'xltx', 'xltm', 'csv', 'ods', 'ots', 'et', 'ppt', 'pptx', 'pptm', 'pps', 'ppsx', 'pot', 'potx', 'odp', 'otp', 'dps', 'pages', 'numbers', 'key', 'epub', 'mobi', 'azw', 'azw3', 'tex', 'xps', 'djvu', 'chm']),
+});
+const FILE_TYPE_SEARCH_TERMS = Object.freeze(Object.fromEntries(
+  Object.entries(FILE_TYPE_EXTENSIONS).map(([kind, extensions]) => [kind, `ext:${[...extensions].join(';')}`]),
+));
 const WINDOWS_BINARY_HASHES = {
   'Everything.exe': 'f191f756996a14a11e5445fa7103d302efd510cf2fbf920e6c0c8ed51d512e36',
   'es.exe': '9a9b851f9da14a29626126d9b5f8ef71b569b3cf7e3e70bfbf57f4f00a9b9383',
@@ -27,10 +36,35 @@ function normalizeQuery(value) {
 }
 
 function normalizeOptions(options = {}) {
-  const type = ['all', 'file', 'folder'].includes(options.type) ? options.type : 'all';
+  const type = ['all', 'file', 'folder', 'document', 'image', 'video', 'audio'].includes(options.type) ? options.type : 'all';
   const sort = ['name', 'path', 'size', 'modified'].includes(options.sort) ? options.sort : 'name';
   const direction = options.direction === 'desc' ? 'desc' : 'asc';
   return { type, sort, direction, limit: clampLimit(options.limit) };
+}
+
+function fileTypeForPath(filePath) {
+  const extension = path.extname(String(filePath || '')).slice(1).toLowerCase();
+  if (!extension) return '';
+  for (const [kind, extensions] of Object.entries(FILE_TYPE_EXTENSIONS)) {
+    if (extensions.has(extension)) return kind;
+  }
+  return '';
+}
+
+function addFileType(item) {
+  if (!item || item.kind === 'folder') return item;
+  const fileType = fileTypeForPath(item.path || item.name);
+  return fileType ? { ...item, fileType } : item;
+}
+
+function matchesResultType(item, type) {
+  if (type === 'all') return true;
+  if (type === 'file' || type === 'folder') return item?.kind === type;
+  return item?.kind === 'file' && fileTypeForPath(item.path || item.name) === type;
+}
+
+function fileSearchTermForType(type) {
+  return FILE_TYPE_SEARCH_TERMS[type] || '';
 }
 
 function parseDelimited(text, delimiter = ',') {
@@ -97,14 +131,14 @@ function parseEverythingCsv(text) {
     const size = rawSize !== '' && Number.isFinite(Number(rawSize)) ? Number(rawSize) : null;
     const modifiedText = modifiedIndex >= 0 ? String(columns[modifiedIndex] || '').trim() : '';
     const modifiedAt = modifiedText && !Number.isNaN(Date.parse(modifiedText)) ? Date.parse(modifiedText) : null;
-    results.push({
+    results.push(addFileType({
       path: fullPath,
       name,
       directory,
       kind: /d/i.test(attributes) ? 'folder' : 'file',
       size,
       modifiedAt,
-    });
+    }));
   }
   return results;
 }
@@ -579,7 +613,7 @@ class FileSearchService {
       if (generation !== this.queryGeneration) {
         return { platform: 'win32', engine: 'everything', status: 'canceled', ready: true, query, results: [], truncated: false, elapsedMs: Date.now() - startedAt };
       }
-      const results = Array.isArray(payload.results) ? payload.results.slice(0, options.limit) : [];
+      const results = Array.isArray(payload.results) ? payload.results.slice(0, options.limit).map(addFileType) : [];
       return {
         platform: 'win32', engine: 'everything', status: 'ready', ready: true, query, results,
         truncated: Number(payload.total || 0) > results.length,
@@ -601,7 +635,8 @@ class FileSearchService {
     ]);
     if (options.type === 'file') args.push('/a-d');
     if (options.type === 'folder') args.push('/ad');
-    args.push(query);
+    const fileTypeSearchTerm = fileSearchTermForType(options.type);
+    args.push(fileTypeSearchTerm ? `${fileTypeSearchTerm} ${query}` : query);
     const result = await runCapture(engine.es, args, {
       timeout: 8000,
       onChild: (child) => { this.activeQuery = child; },
@@ -673,18 +708,20 @@ class FileSearchService {
     if (this.activeQuery) {
       try { this.activeQuery.kill(); } catch {}
     }
-    const candidates = await this.collectSpotlightPaths(query, options.limit, generation);
+    const fileTypeFilter = ['document', 'image', 'video', 'audio'].includes(options.type);
+    const candidateMultiplier = fileTypeFilter ? 12 : 4;
+    const candidates = await this.collectSpotlightPaths(query, options.limit * (candidateMultiplier / 4), generation);
     if (generation !== this.queryGeneration) {
       return { platform: 'darwin', engine: 'spotlight', status: 'canceled', ready: true, query, results: [], truncated: false, elapsedMs: Date.now() - startedAt };
     }
     const normalized = await mapWithConcurrency(candidates, 32, async (filePath) => {
       if (generation !== this.queryGeneration) return null;
+      if (fileTypeFilter && fileTypeForPath(filePath) !== options.type) return null;
       try {
         const stat = await fs.promises.lstat(filePath);
         if (generation !== this.queryGeneration) return null;
         const kind = stat.isDirectory() ? 'folder' : 'file';
-        if (options.type !== 'all' && options.type !== kind) return null;
-        return {
+        const item = {
           path: filePath,
           name: path.basename(filePath) || filePath,
           directory: path.dirname(filePath),
@@ -692,6 +729,8 @@ class FileSearchService {
           size: stat.isFile() ? stat.size : null,
           modifiedAt: Number(stat.mtimeMs || 0) || null,
         };
+        if (!matchesResultType(item, options.type)) return null;
+        return addFileType(item);
       } catch {
         return null;
       }
@@ -702,7 +741,7 @@ class FileSearchService {
     const results = normalized.filter(Boolean).sort((a, b) => compareResults(a, b, options.sort, options.direction)).slice(0, options.limit);
     return {
       platform: 'darwin', engine: 'spotlight', status: 'ready', ready: true, query, results,
-      truncated: candidates.length >= options.limit * 4 || results.length >= options.limit,
+      truncated: candidates.length >= options.limit * candidateMultiplier || results.length >= options.limit,
       elapsedMs: Date.now() - startedAt,
     };
   }
@@ -740,6 +779,9 @@ module.exports = {
   parseEverythingCsv,
   normalizeQuery,
   normalizeOptions,
+  fileTypeForPath,
+  matchesResultType,
+  fileSearchTermForType,
   compareResults,
   constants: {
     EVERYTHING_INSTANCE,

@@ -119,6 +119,9 @@ contextBridge.exposeInMainWorld('nativeAPI', {
   async getFileIcon(filePath) {
     return ipcRenderer.invoke('file:getIcon', filePath || '');
   },
+  async getFileThumbnail(filePath, size = {}) {
+    return ipcRenderer.invoke('file:getThumbnail', filePath || '', size || {});
+  },
   async getNoteProjects() {
     return (await load()).noteProjects;
   },
