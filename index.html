@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>玄念7.0.6</title>
+  <title>玄念7.0.7</title>
   <link rel="icon" href="src/xuannian-logo-256.png" />
   <style>
     :root{
@@ -1253,10 +1253,13 @@ const fileThumbnailActiveKeys = new Set();
 const fileThumbnailRequestKeys = new Set();
 const fileThumbnailDesiredKeys = new Set();
 const fileThumbnailActiveReleases = new Map();
+const fileThumbnailFailureCounts = new Map();
+const fileThumbnailRetryDue = new Map();
 let fileThumbnailGeneration = 0;
 let fileThumbnailActive = 0;
 let fileThumbnailScheduleToken = 0;
 let fileThumbnailQueuePaused = false;
+let fileThumbnailRetryTimer = null;
 const NATIVE_FILE_ICON_CACHE_LIMIT = 256;
 const NATIVE_FILE_ICON_CONCURRENCY = 4;
 const FILE_THUMBNAIL_CACHE_LIMIT = 192;
@@ -1264,6 +1267,7 @@ const FILE_THUMBNAIL_CONCURRENCY = 3;
 const FILE_THUMBNAIL_MAX_PENDING_REQUESTS = 9;
 const FILE_THUMBNAIL_PREFETCH_ROWS = 10;
 const FILE_THUMBNAIL_TIMEOUT_MS = 4500;
+const FILE_THUMBNAIL_RETRY_DELAYS_MS = Object.freeze([400,1200,2500,5000,10000,30000,60000]);
 const NOTE_ROW_HEIGHT = 146;
 const NOTE_WINDOW_SIZE = 64;
 const NOTE_WINDOW_OVERSCAN = 8;
@@ -1497,7 +1501,7 @@ function createBrowserFallbackAPI(){
     async deleteInspiration(id){ const data=read(); data.inspirations=data.inspirations.filter(x=>x.id!==id); write(data); return data.inspirations; },
     async getSettings(){ return read().settings; },
     async saveSettings(settings){ const data=read(); data.settings={...data.settings,...settings}; write(data); return data.settings; },
-    async getUpdateState(){ return {status:'current',currentVersion:'7.0.6',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false}; },
+    async getUpdateState(){ return {status:'current',currentVersion:'7.0.7',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false}; },
     async checkForUpdates(){ return this.getUpdateState(); },
     async downloadUpdate(){ return this.getUpdateState(); },
     async installUpdate(){ return false; },
@@ -2283,6 +2287,10 @@ function resetFileThumbnailQueue(){
   fileThumbnailQueue.length=0;
   fileThumbnailQueuedKeys.clear();
   fileThumbnailDesiredKeys.clear();
+  fileThumbnailFailureCounts.clear();
+  fileThumbnailRetryDue.clear();
+  clearTimeout(fileThumbnailRetryTimer);
+  fileThumbnailRetryTimer=null;
   Array.from(fileThumbnailActiveReleases.values()).forEach(release=>release());
 }
 
@@ -2312,6 +2320,49 @@ function applyFileThumbnail(key,dataUrl){
     element.dataset.thumbnailLoaded='1';
     element.classList.add('has-thumbnail');
   });
+}
+
+function clearFileThumbnailRetry(key){
+  fileThumbnailFailureCounts.delete(key);
+  fileThumbnailRetryDue.delete(key);
+}
+
+function armFileThumbnailRetryTimer(){
+  clearTimeout(fileThumbnailRetryTimer);
+  fileThumbnailRetryTimer=null;
+  let nextAt=Infinity;
+  for(const [key,retry] of fileThumbnailRetryDue.entries()){
+    if(retry.generation!==fileThumbnailGeneration||!fileThumbnailDesiredKeys.has(key)){
+      fileThumbnailRetryDue.delete(key);
+      fileThumbnailFailureCounts.delete(key);
+      continue;
+    }
+    nextAt=Math.min(nextAt,retry.at);
+  }
+  if(!Number.isFinite(nextAt)) return;
+  fileThumbnailRetryTimer=setTimeout(()=>{
+    fileThumbnailRetryTimer=null;
+    const now=Date.now();
+    for(const [key,retry] of fileThumbnailRetryDue.entries()){
+      if(retry.generation!==fileThumbnailGeneration||!fileThumbnailDesiredKeys.has(key)){
+        fileThumbnailRetryDue.delete(key);
+        fileThumbnailFailureCounts.delete(key);
+      }else if(retry.at<=now+10){
+        fileThumbnailRetryDue.delete(key);
+      }
+    }
+    queueVisibleFileThumbnails();
+    armFileThumbnailRetryTimer();
+  },Math.max(0,nextAt-Date.now()));
+}
+
+function scheduleFileThumbnailRetry(task){
+  if(task.generation!==fileThumbnailGeneration||!fileThumbnailDesiredKeys.has(task.key)) return;
+  const failures=(fileThumbnailFailureCounts.get(task.key)||0)+1;
+  fileThumbnailFailureCounts.set(task.key,failures);
+  const delay=FILE_THUMBNAIL_RETRY_DELAYS_MS[Math.min(failures-1,FILE_THUMBNAIL_RETRY_DELAYS_MS.length-1)];
+  fileThumbnailRetryDue.set(task.key,{at:Date.now()+delay,generation:task.generation});
+  armFileThumbnailRetryTimer();
 }
 
 function hideFileThumbnailPreview(){
@@ -2366,7 +2417,12 @@ function pumpFileThumbnailQueue(){
     timeoutId=setTimeout(releaseSlot,FILE_THUMBNAIL_TIMEOUT_MS);
     const request=Promise.resolve(api.getFileThumbnail?.(task.path,{width:96,height:64})||'').catch(()=> '');
     request.then(dataUrl=>{
-      if(!dataUrl||!fileThumbnailDesiredKeys.has(task.key)) return;
+      if(!fileThumbnailDesiredKeys.has(task.key)) return;
+      if(!dataUrl){
+        scheduleFileThumbnailRetry(task);
+        return;
+      }
+      clearFileThumbnailRetry(task.key);
       rememberFileThumbnail(task.key,dataUrl);
       applyFileThumbnail(task.key,dataUrl);
     }).finally(()=>{
@@ -2410,6 +2466,9 @@ function queueVisibleFileThumbnails(){
   try{
     fileThumbnailDesiredKeys.clear();
     desiredKeys.forEach(key=>fileThumbnailDesiredKeys.add(key));
+    for(const key of Array.from(fileThumbnailFailureCounts.keys())){
+      if(!desiredKeys.has(key)) clearFileThumbnailRetry(key);
+    }
     for(const [key,release] of Array.from(fileThumbnailActiveReleases.entries())){
       if(!desiredKeys.has(key)) release();
     }
@@ -2424,6 +2483,8 @@ function queueVisibleFileThumbnails(){
         return;
       }
       if(fileThumbnailRequestKeys.has(task.key)) return;
+      const retry=fileThumbnailRetryDue.get(task.key);
+      if(retry&&retry.generation===fileThumbnailGeneration&&retry.at>Date.now()) return;
       fileThumbnailQueuedKeys.add(task.key);
       fileThumbnailQueue.push(task);
     });
@@ -2431,6 +2492,7 @@ function queueVisibleFileThumbnails(){
     fileThumbnailQueuePaused=false;
   }
   pumpFileThumbnailQueue();
+  armFileThumbnailRetryTimer();
 }
 
 function scheduleVisibleFileThumbnails(){
@@ -5305,7 +5367,7 @@ function showUpdateDialog(){
   showModal(`
     <div data-update-dialog>
       <div class="modal-header"><h3>软件更新</h3><button class="modal-close" id="closeModal">×</button></div>
-      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '7.0.6')}</b><span>${update.version?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
+      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '7.0.7')}</b><span>${update.version?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
       <div class="modal-message">${escapeHtml(updateStatusText())}</div>
       <p class="update-network-tip">提示：开启 VPN 后再检测更新，结果会更加准确。</p>
       ${busy||downloaded?`<div class="update-progress"><span style="width:${downloaded?100:progress}%"></span></div>`:''}

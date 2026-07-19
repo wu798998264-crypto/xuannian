@@ -6,9 +6,48 @@
 </head>
 <body>
 <script>
+  const drawCoverThumbnail = (source, sourceWidth, sourceHeight, width, height) => {
+    const targetWidth = Math.max(40, Math.round(Number(width) || 160));
+    const targetHeight = Math.max(32, Math.round(Number(height) || 90));
+    const safeSourceWidth = Math.max(1, sourceWidth || targetWidth);
+    const safeSourceHeight = Math.max(1, sourceHeight || targetHeight);
+    const scale = Math.max(targetWidth / safeSourceWidth, targetHeight / safeSourceHeight);
+    const cropWidth = targetWidth / scale;
+    const cropHeight = targetHeight / scale;
+    const sourceX = Math.max(0, (safeSourceWidth - cropWidth) / 2);
+    const sourceY = Math.max(0, (safeSourceHeight - cropHeight) / 2);
+    const canvas = document.createElement('canvas');
+    canvas.width = targetWidth;
+    canvas.height = targetHeight;
+    const context = canvas.getContext('2d', { alpha: false });
+    context.drawImage(source, sourceX, sourceY, cropWidth, cropHeight, 0, 0, targetWidth, targetHeight);
+    return canvas.toDataURL('image/jpeg', 0.82);
+  };
+
+  window.captureImageThumbnail = (source, width, height, timeoutMs) => new Promise((resolve) => {
+    const image = new Image();
+    let settled = false;
+    const finish = (dataUrl = '') => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      image.removeAttribute('src');
+      resolve(dataUrl);
+    };
+    const timer = setTimeout(() => finish(''), Math.max(800, Number(timeoutMs) || 3200));
+    image.addEventListener('load', () => {
+      try {
+        finish(drawCoverThumbnail(image, image.naturalWidth, image.naturalHeight, width, height));
+      } catch {
+        finish('');
+      }
+    }, { once: true });
+    image.addEventListener('error', () => finish(''), { once: true });
+    image.src = source;
+  });
+
   window.captureVideoThumbnail = (source, width, height, timeoutMs) => new Promise((resolve) => {
     const video = document.createElement('video');
-    const canvas = document.createElement('canvas');
     let settled = false;
     let captureRequested = false;
     const finish = (dataUrl = '') => {
@@ -24,20 +63,7 @@
       if (settled || captureRequested || video.readyState < 2) return;
       captureRequested = true;
       try {
-        const targetWidth = Math.max(40, Math.round(Number(width) || 160));
-        const targetHeight = Math.max(32, Math.round(Number(height) || 90));
-        const sourceWidth = Math.max(1, video.videoWidth || targetWidth);
-        const sourceHeight = Math.max(1, video.videoHeight || targetHeight);
-        const scale = Math.max(targetWidth / sourceWidth, targetHeight / sourceHeight);
-        const cropWidth = targetWidth / scale;
-        const cropHeight = targetHeight / scale;
-        const sourceX = Math.max(0, (sourceWidth - cropWidth) / 2);
-        const sourceY = Math.max(0, (sourceHeight - cropHeight) / 2);
-        canvas.width = targetWidth;
-        canvas.height = targetHeight;
-        const context = canvas.getContext('2d', { alpha: false });
-        context.drawImage(video, sourceX, sourceY, cropWidth, cropHeight, 0, 0, targetWidth, targetHeight);
-        finish(canvas.toDataURL('image/jpeg', 0.82));
+        finish(drawCoverThumbnail(video, video.videoWidth, video.videoHeight, width, height));
       } catch {
         finish('');
       }

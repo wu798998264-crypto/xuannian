@@ -43,7 +43,18 @@ async function run() {
   const systemThumbnail = await nativeImage.createThumbnailFromPath(thumbnailSource, { width: 96, height: 64 });
   assert(!systemThumbnail.isEmpty(), 'Electron system thumbnail service should load a local PNG');
   const thumbnailDataUrl = systemThumbnail.toDataURL();
-  let videoProbeWindow = null;
+  const mediaProbeWindow = new BrowserWindow({
+    show: false,
+    width: 320,
+    height: 180,
+    webPreferences: { backgroundThrottling: false, contextIsolation: true, nodeIntegration: false, sandbox: true },
+  });
+  await mediaProbeWindow.loadFile(path.resolve(__dirname, '..', 'src', 'video-thumbnail.html'));
+  const decodedImageDataUrl = await mediaProbeWindow.webContents.executeJavaScript(
+    `window.captureImageThumbnail(${JSON.stringify(require('url').pathToFileURL(thumbnailSource).href)},96,64,3200)`,
+    true,
+  );
+  assert(String(decodedImageDataUrl).startsWith('data:image/'), 'internal media decoder should load a local image');
   if (process.env.XUANNIAN_RUNTIME_VIDEO) {
     const videoPath = path.resolve(process.env.XUANNIAN_RUNTIME_VIDEO);
     let videoDataUrl = '';
@@ -54,14 +65,7 @@ async function run() {
     let source = 'system';
     if (!videoDataUrl) {
       source = 'renderer-fallback';
-      videoProbeWindow = new BrowserWindow({
-        show: false,
-        width: 320,
-        height: 180,
-        webPreferences: { backgroundThrottling: false, contextIsolation: true, nodeIntegration: false, sandbox: true },
-      });
-      await videoProbeWindow.loadFile(path.resolve(__dirname, '..', 'src', 'video-thumbnail.html'));
-      videoDataUrl = await videoProbeWindow.webContents.executeJavaScript(
+      videoDataUrl = await mediaProbeWindow.webContents.executeJavaScript(
         `window.captureVideoThumbnail(${JSON.stringify(require('url').pathToFileURL(videoPath).href)},160,90,3200)`,
         true,
       );
@@ -80,7 +84,7 @@ async function run() {
     if (level >= 2 && !String(message).includes('Electron Security Warning')) rendererErrors.push(message);
   });
   await window.loadFile(path.join(__dirname, '..', 'index.html'));
-  if (videoProbeWindow && !videoProbeWindow.isDestroyed()) videoProbeWindow.destroy();
+  if (!mediaProbeWindow.isDestroyed()) mediaProbeWindow.destroy();
   await window.webContents.executeJavaScript(`
     (() => {
       const now=Date.now();
@@ -485,6 +489,60 @@ async function run() {
   assert.deepStrictEqual(thumbnailJumpMetrics.skippedCacheEntries, [], 'completed thumbnails from an ignored viewport must not consume cache');
   assert.strictEqual(thumbnailJumpMetrics.requestedVideo, true, 'video results must use the same viewport-priority thumbnail queue');
   assert(thumbnailJumpMetrics.pendingAfterJump <= thumbnailJumpMetrics.maxPending, 'background thumbnail requests must remain bounded');
+  const thumbnailRetryMetrics = await window.webContents.executeJavaScript(`
+    (async()=>{
+      const waitUntil=async(predicate,timeoutMs=8000)=>{
+        const deadline=Date.now()+timeoutMs;
+        while(Date.now()<deadline){
+          if(predicate()) return true;
+          await new Promise(resolve=>setTimeout(resolve,20));
+        }
+        return false;
+      };
+      await waitUntil(()=>fileThumbnailActive===0&&fileThumbnailRequestKeys.size===0);
+      resetFileThumbnailQueue();
+      const attempts=new Map();
+      api.getFileThumbnail=async filePath=>{
+        const match=String(filePath).match(/thumbnail-retry-(\\d+)\\.png$/);
+        const index=match?Number(match[1]):-1;
+        const count=(attempts.get(index)||0)+1;
+        attempts.set(index,count);
+        return count>=3?${JSON.stringify(thumbnailDataUrl)}:'';
+      };
+      state.fileSearch.engineStatus='ready';
+      state.fileSearch.query='thumbnail-retry';
+      state.fileSearch.results=Array.from({length:30},(_,index)=>({
+        path:'C:/Synthetic/thumbnail-retry-'+index+'.png',directory:'C:/Synthetic',
+        name:'thumbnail-retry-'+index+'.png',kind:'file',fileType:'image',size:7000+index,modifiedAt:index+700
+      }));
+      state.fileSearch.selectedIndex=0;
+      document.querySelector('#fileSearchInput').value='thumbnail-retry';
+      const list=document.querySelector('#fileResultList');
+      list.scrollTop=0;
+      renderFileSearch();
+      const range=fileThumbnailWindowRange(list,state.fileSearch.results.length);
+      const recoveredWithoutScroll=await waitUntil(()=>{
+        for(let index=range.start;index<range.visibleEnd;index+=1){
+          const row=list.querySelector('[data-file-index="'+index+'"]');
+          if(!row?.querySelector('.file-kind-icon')?.classList.contains('has-thumbnail')) return false;
+        }
+        return true;
+      });
+      const visibleAttempts=Array.from({length:range.visibleEnd-range.start},(_,offset)=>attempts.get(range.start+offset)||0);
+      const retryStateCleared=Array.from({length:range.visibleEnd-range.start},(_,offset)=>range.start+offset)
+        .every(index=>{
+          const key=fileThumbnailKey(state.fileSearch.results[index]);
+          return !fileThumbnailFailureCounts.has(key)&&!fileThumbnailRetryDue.has(key);
+        });
+      resetFileThumbnailQueue();
+      await waitUntil(()=>fileThumbnailActive===0&&fileThumbnailRequestKeys.size===0);
+      return {recoveredWithoutScroll,visibleAttempts,retryStateCleared};
+    })()
+  `, true);
+  console.log(`file thumbnail retry metrics ${JSON.stringify(thumbnailRetryMetrics)}`);
+  assert.strictEqual(thumbnailRetryMetrics.recoveredWithoutScroll, true, 'visible thumbnail failures must recover without another scroll event');
+  assert(thumbnailRetryMetrics.visibleAttempts.every(count => count >= 3), 'every visible failed thumbnail must keep retrying until it succeeds');
+  assert.strictEqual(thumbnailRetryMetrics.retryStateCleared, true, 'successful thumbnails must clear retry state');
   const thumbnailRecoveryMetrics = await window.webContents.executeJavaScript(`
     (async()=>{
       const waitUntil=async(predicate,timeoutMs=7000)=>{

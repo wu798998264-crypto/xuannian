@@ -5288,6 +5288,30 @@ async function createVideoFrameThumbnail(filePath, width, height) {
   }
 }
 
+async function createImageFrameThumbnail(filePath, width, height) {
+  videoThumbnailActive += 1;
+  if (videoThumbnailIdleTimer) {
+    clearTimeout(videoThumbnailIdleTimer);
+    videoThumbnailIdleTimer = null;
+  }
+  try {
+    const win = await getVideoThumbnailWindow();
+    if (!win || win.isDestroyed()) return '';
+    const source = pathToFileURL(filePath).href;
+    const dataUrl = await win.webContents.executeJavaScript(
+      `window.captureImageThumbnail(${JSON.stringify(source)},${width},${height},${VIDEO_THUMBNAIL_TIMEOUT_MS})`,
+      true,
+    );
+    return typeof dataUrl === 'string' && dataUrl.startsWith('data:image/') ? dataUrl : '';
+  } catch (error) {
+    runtimeLog(`image thumbnail fallback failed: ${error?.message || error}`);
+    return '';
+  } finally {
+    videoThumbnailActive = Math.max(0, videoThumbnailActive - 1);
+    scheduleVideoThumbnailWindowCleanup();
+  }
+}
+
 async function createSystemFileThumbnail(filePath, width, height) {
   let timeoutId = null;
   try {
@@ -5319,22 +5343,25 @@ ipcMain.handle('file:getThumbnail', async (_event, filePath, requestedSize = {})
   const cacheKey = `${resolvedPath.toLocaleLowerCase('en-US')}|${stat.size}|${Math.round(stat.mtimeMs)}|${width}x${height}`;
   if (fileThumbnailCache.has(cacheKey)) {
     const cached = fileThumbnailCache.get(cacheKey);
+    if (cached) {
+      fileThumbnailCache.delete(cacheKey);
+      fileThumbnailCache.set(cacheKey, cached);
+      return cached;
+    }
     fileThumbnailCache.delete(cacheKey);
-    fileThumbnailCache.set(cacheKey, cached);
-    return cached || '';
   }
   const pending = (async () => {
     const image = await createSystemFileThumbnail(resolvedPath, width, height);
     if (image && !image.isEmpty()) return image.toDataURL();
     if (fileType === 'video') return createVideoFrameThumbnail(resolvedPath, width, height);
+    if (fileType === 'image') return createImageFrameThumbnail(resolvedPath, width, height);
     return '';
   })();
   fileThumbnailCache.set(cacheKey, pending);
   trimMapSize(fileThumbnailCache, FILE_THUMBNAIL_CACHE_LIMIT);
   const dataUrl = await pending;
   if (!dataUrl) {
-    if (fileThumbnailCache.get(cacheKey) === pending) fileThumbnailCache.set(cacheKey, null);
-    trimMapSize(fileThumbnailCache, FILE_THUMBNAIL_CACHE_LIMIT);
+    if (fileThumbnailCache.get(cacheKey) === pending) fileThumbnailCache.delete(cacheKey);
     return '';
   }
   fileThumbnailCache.delete(cacheKey);

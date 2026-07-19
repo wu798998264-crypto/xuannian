@@ -103,8 +103,12 @@ async function run() {
   assert(!warmRefreshSource.includes(".once('did-finish-load'"), 'loading quick window must not accumulate refresh listeners');
   assert(warmRefreshSource.includes('quickWindowDataDirty = true'), 'hidden quick window must retain a dirty marker for next show');
   assert(mainSource.includes("if (fileType === 'video') return createVideoFrameThumbnail"), 'video thumbnails need an internal frame-decoding fallback');
+  assert(mainSource.includes("if (fileType === 'image') return createImageFrameThumbnail"), 'images need an internal decoder when the system thumbnail service fails');
+  assert(mainSource.includes('fileThumbnailCache.delete(cacheKey);\n    return \'\';'), 'failed native thumbnails must not be cached permanently');
+  assert(!mainSource.includes('fileThumbnailCache.set(cacheKey, null)'), 'empty native thumbnails must remain retryable');
   assert(mainSource.includes('SYSTEM_THUMBNAIL_TIMEOUT_MS = 1200'), 'system thumbnail requests must have a bounded deadline');
   assert(mainSource.includes('function createSystemFileThumbnail('), 'system thumbnail timeout wrapper must be present');
+  assert(videoThumbnailSource.includes('window.captureImageThumbnail'), 'media decoder page must expose its image fallback');
   assert(videoThumbnailSource.includes('window.captureVideoThumbnail'), 'video thumbnail decoder page must expose its capture function');
   assert(videoThumbnailSource.includes("canvas.toDataURL('image/jpeg', 0.82)"), 'video fallback must return a compressed still frame');
 
@@ -124,7 +128,9 @@ async function run() {
   assert(!thumbnailQueueSource.includes('querySelectorAll'), 'thumbnail scheduling must not scan rendered DOM nodes');
   assert(thumbnailQueueSource.includes('fileThumbnailQueue.length=0'), 'scrolling must rebuild the queue around the latest viewport');
   assert(thumbnailQueueSource.includes('fileThumbnailActiveReleases.entries()'), 'active tasks outside the latest viewport must release their scheduling slots');
-  assert(indexSource.includes("if(!dataUrl||!fileThumbnailDesiredKeys.has(task.key)) return;"), 'ignored thumbnail results must not enter cache');
+  assert(indexSource.includes('scheduleFileThumbnailRetry(task);'), 'visible thumbnail failures must automatically retry without user scrolling');
+  assert(indexSource.includes('FILE_THUMBNAIL_RETRY_DELAYS_MS'), 'thumbnail retries must use bounded backoff');
+  assert(indexSource.includes("if(!fileThumbnailDesiredKeys.has(task.key)) return;"), 'ignored thumbnail results must not enter cache');
   for (const [name, source] of [['main', indexSource], ['quick', quickSource], ['sticky', stickySource]]) {
     assert(source.includes('<script src="src/wheel-scroll.js"></script>'), `${name} window must load wheel scrolling support`);
     assert(source.includes('XuanNianWheelScroll?.bind'), `${name} window must bind wheel scrolling support`);
