@@ -104,7 +104,7 @@ async function run() {
   assert(warmRefreshSource.includes('quickWindowDataDirty = true'), 'hidden quick window must retain a dirty marker for next show');
   assert(mainSource.includes("if (fileType === 'video') return createVideoFrameThumbnail"), 'video thumbnails need an internal frame-decoding fallback');
   assert(mainSource.includes("if (fileType === 'image') return createImageFrameThumbnail"), 'images need an internal decoder when the system thumbnail service fails');
-  assert(mainSource.includes('fileThumbnailCache.delete(cacheKey);\n    return \'\';'), 'failed native thumbnails must not be cached permanently');
+  assert(/fileThumbnailCache\.delete\(cacheKey\);\r?\n\s+return '';/.test(mainSource), 'failed native thumbnails must not be cached permanently');
   assert(!mainSource.includes('fileThumbnailCache.set(cacheKey, null)'), 'empty native thumbnails must remain retryable');
   assert(mainSource.includes('SYSTEM_THUMBNAIL_TIMEOUT_MS = 1200'), 'system thumbnail requests must have a bounded deadline');
   assert(mainSource.includes('function createSystemFileThumbnail('), 'system thumbnail timeout wrapper must be present');
