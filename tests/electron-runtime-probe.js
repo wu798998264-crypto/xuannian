@@ -25,6 +25,18 @@ async function waitForRenderer(window, expression, timeoutMs = 10000) {
   throw new Error(`Timed out waiting for renderer expression: ${expression}`);
 }
 
+async function collectRendererHeap(window) {
+  const shouldDetach = !window.webContents.debugger.isAttached();
+  if (shouldDetach) window.webContents.debugger.attach('1.3');
+  try {
+    await window.webContents.debugger.sendCommand('HeapProfiler.collectGarbage');
+    const usage = await window.webContents.debugger.sendCommand('Runtime.getHeapUsage');
+    return Number(usage.usedSize || 0);
+  } finally {
+    if (shouldDetach && window.webContents.debugger.isAttached()) window.webContents.debugger.detach();
+  }
+}
+
 async function run() {
   await app.whenReady();
   const thumbnailSource = path.resolve(__dirname, '..', 'src', 'xuannian-logo-256.png');
@@ -111,6 +123,103 @@ async function run() {
   assert(metrics.searchFound, 'search must scan favorites outside the current DOM window');
   assert(metrics.finalDomNodes < 1700, `renderer DOM should stay bounded, received ${metrics.finalDomNodes} nodes`);
   assert.strictEqual(rendererErrors.length, 0, `renderer errors: ${rendererErrors.join(' | ')}`);
+  const clipboardInitialRenderMs = await window.webContents.executeJavaScript(`
+    (async()=>{
+      state.notes=state.notes.map((note,index)=>({...note,sourceRecordId:'record-'+(index%500)}));
+      await switchView('clipboard',{skipCoach:true});
+      state.clipboardRenderLimit=500;
+      document.querySelector('#clipboardList').scrollTop=0;
+      state.records=[...state.records];
+      const started=performance.now();
+      renderClipboard();
+      return Number((performance.now()-started).toFixed(2));
+    })()
+  `, true);
+  const runClipboardEnduranceRound = () => window.webContents.executeJavaScript(`
+    (()=>{
+      const durations=[];
+      for(let index=0;index<30;index+=1){
+        const started=performance.now();
+        renderClipboard();
+        durations.push(performance.now()-started);
+      }
+      const sorted=[...durations].sort((a,b)=>a-b);
+      return {
+        renderP95Ms:Number(sorted[Math.floor(sorted.length*.95)].toFixed(2)),
+        recordNodes:document.querySelectorAll('#clipboardList [data-record-card]').length,
+        delegatedClicks:Array.from(document.querySelectorAll('#clipboardList [data-record-card],#clipboardList [data-pin-record],#clipboardList [data-save-record],#clipboardList [data-delete-record]')).every(element=>element.onclick===null)
+      };
+    })()
+  `, true);
+  const clipboardRoundOne = await runClipboardEnduranceRound();
+  const clipboardHeapOne = await collectRendererHeap(window);
+  const clipboardRoundTwo = await runClipboardEnduranceRound();
+  const clipboardHeapTwo = await collectRendererHeap(window);
+  const clipboardCompaction = await window.webContents.executeJavaScript(`
+    (()=>{
+      const list=document.querySelector('#clipboardList');
+      list.scrollTop=0;
+      const compacted=compactClipboardViewForBackground();
+      return {compacted,renderLimit:state.clipboardRenderLimit,recordNodes:list.querySelectorAll('[data-record-card]').length};
+    })()
+  `, true);
+  const clipboardEnduranceMetrics = {
+    initialRenderMs: clipboardInitialRenderMs,
+    roundOne: clipboardRoundOne,
+    roundTwo: clipboardRoundTwo,
+    heapOne: clipboardHeapOne,
+    heapTwo: clipboardHeapTwo,
+    heapGrowth: clipboardHeapTwo - clipboardHeapOne,
+    compaction: clipboardCompaction,
+  };
+  console.log(`clipboard endurance metrics ${JSON.stringify(clipboardEnduranceMetrics)}`);
+  assert(clipboardInitialRenderMs < 100, `initial 500-record clipboard render is too slow: ${clipboardInitialRenderMs}ms`);
+  assert.strictEqual(clipboardRoundOne.recordNodes, 500);
+  assert.strictEqual(clipboardRoundTwo.recordNodes, 500);
+  assert.strictEqual(clipboardRoundOne.delegatedClicks, true, 'clipboard cards must use one delegated click handler');
+  assert.strictEqual(clipboardRoundTwo.delegatedClicks, true, 'clipboard rerenders must not attach per-card click closures');
+  assert(clipboardRoundTwo.renderP95Ms < 80, `clipboard rerender p95 is too slow: ${clipboardRoundTwo.renderP95Ms}ms`);
+  assert(clipboardHeapTwo <= clipboardHeapOne + 8 * 1024 * 1024, `clipboard heap kept growing after GC: ${clipboardHeapTwo - clipboardHeapOne} bytes`);
+  assert.deepStrictEqual(clipboardCompaction, { compacted: true, renderLimit: 60, recordNodes: 0 });
+  const nativeIconMetrics = await window.webContents.executeJavaScript(`
+    (async()=>{
+      let active=0;
+      let maxActive=0;
+      let calls=0;
+      window.nativeAPI={...(window.nativeAPI||{}),getFileIcon:async()=>{
+        calls+=1;
+        active+=1;
+        maxActive=Math.max(maxActive,active);
+        await new Promise(resolve=>setTimeout(resolve,4));
+        active-=1;
+        return ${JSON.stringify(thumbnailDataUrl)};
+      }};
+      const host=document.createElement('div');
+      host.style.position='fixed';
+      host.style.left='-10000px';
+      for(let index=0;index<300;index+=1){
+        const element=document.createElement('span');
+        element.dataset.iconPath='C:\\\\Synthetic\\\\file-'+index+'.bin';
+        host.appendChild(element);
+      }
+      document.body.appendChild(host);
+      host.querySelectorAll('[data-icon-path]').forEach(queueNativeFileIcon);
+      const deadline=Date.now()+10000;
+      while((nativeFileIconQueue.length||nativeFileIconActive)&&Date.now()<deadline){
+        await new Promise(resolve=>setTimeout(resolve,10));
+      }
+      const result={calls,maxActive,active:nativeFileIconActive,queued:nativeFileIconQueue.length,cacheSize:nativeFileIconCache.size,cacheLimit:NATIVE_FILE_ICON_CACHE_LIMIT,concurrency:NATIVE_FILE_ICON_CONCURRENCY};
+      releaseNativeFileIconTargets(host);
+      host.remove();
+      return result;
+    })()
+  `, true);
+  console.log(`native icon queue metrics ${JSON.stringify(nativeIconMetrics)}`);
+  assert.strictEqual(nativeIconMetrics.calls, 300);
+  assert(nativeIconMetrics.maxActive <= nativeIconMetrics.concurrency, `native icon concurrency exceeded limit: ${nativeIconMetrics.maxActive}`);
+  assert.strictEqual(nativeIconMetrics.active, 0);
+  assert.strictEqual(nativeIconMetrics.queued, 0);
+  assert(nativeIconMetrics.cacheSize <= nativeIconMetrics.cacheLimit, `native icon cache exceeded limit: ${nativeIconMetrics.cacheSize}`);
   const mediaPreviewMetrics = await window.webContents.executeJavaScript(`
     (async()=>{
       const mockThumbnailDelayMs=300;

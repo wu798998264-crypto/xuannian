@@ -1760,7 +1760,7 @@ function createQuickWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      backgroundThrottling: false,
+      backgroundThrottling: true,
     },
   });
   quickWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -1852,13 +1852,9 @@ function showQuickWindow(targetHwnd = '') {
       quickWindowDataDirty = false;
     });
   } else if (quickWindowDataDirty || quickWindowRevision !== dataRevision) {
-    setTimeout(() => {
-      if (!isQuickWindowUsable()) return;
-      if (!quickWindowDataDirty && quickWindowRevision === dataRevision) return;
-      sendQuickWindow('quick:refresh');
-      quickWindowRevision = dataRevision;
-      quickWindowDataDirty = false;
-    }, 30);
+    sendQuickWindow('quick:refresh');
+    quickWindowRevision = dataRevision;
+    quickWindowDataDirty = false;
   }
   if (quickWindow && !quickWindow.isDestroyed() && quickWindow.isVisible()) {
     quickWindow.focus();
@@ -2837,25 +2833,21 @@ function broadcastDataRefresh(data = null, options = {}) {
 
 function scheduleQuickWindowWarmRefresh(data, options = {}) {
   if (!isQuickWindowUsable()) return;
-  const send = () => {
-    quickWindowWarmRefreshTimer = null;
-    if (!isQuickWindowUsable()) return;
-    if (options.recordsOnly) sendQuickWindow('native-clipboard-records', data.records || []);
-    else sendQuickWindow('quick:refresh');
-    quickWindowRevision = dataRevision;
-    quickWindowDataDirty = false;
-  };
   if (quickWindow.webContents.isLoading()) {
-    quickWindow.webContents.once('did-finish-load', send);
+    quickWindowDataDirty = true;
     return;
   }
-  if (quickWindow.isVisible()) {
-    send();
+  if (!quickWindow.isVisible()) {
+    clearTimeout(quickWindowWarmRefreshTimer);
+    quickWindowWarmRefreshTimer = null;
+    quickWindowDataDirty = true;
     return;
   }
-  clearTimeout(quickWindowWarmRefreshTimer);
-  quickWindowDataDirty = true;
-  quickWindowWarmRefreshTimer = setTimeout(send, options.recordsOnly ? 120 : 60);
+  if (options.recordsOnly) sendQuickWindow('native-clipboard-records', data.records || []);
+  else sendQuickWindow('quick:refresh');
+  quickWindowRevision = dataRevision;
+  quickWindowDataDirty = false;
+  quickWindowWarmRefreshTimer = null;
 }
 
 function stopClipboardWatcher() {

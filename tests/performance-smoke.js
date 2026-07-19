@@ -1,5 +1,7 @@
 const assert = require('assert');
 const Module = require('module');
+const fs = require('fs');
+const path = require('path');
 
 const listeners = new Map();
 const pendingLoads = [];
@@ -89,6 +91,16 @@ async function run() {
   pendingLoads[2](snapshot('fresh'));
   assert.strictEqual((await staleRequest)[0].id, 'fresh', 'stale data must not replace a newer request');
   assert.strictEqual((await freshRequest)[0].id, 'fresh');
+
+  const mainSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+  assert(/function createQuickWindow\(\)[\s\S]*?backgroundThrottling:\s*true/.test(mainSource), 'hidden quick window must allow Chromium background throttling');
+  const warmRefreshStart = mainSource.indexOf('function scheduleQuickWindowWarmRefresh');
+  const warmRefreshEnd = mainSource.indexOf('\nfunction stopClipboardWatcher', warmRefreshStart);
+  const warmRefreshSource = mainSource.slice(warmRefreshStart, warmRefreshEnd);
+  assert(warmRefreshStart >= 0 && warmRefreshEnd > warmRefreshStart, 'quick-window refresh policy was not found');
+  assert(!warmRefreshSource.includes('setTimeout('), 'hidden quick-window data refresh must not schedule background renderer work');
+  assert(!warmRefreshSource.includes(".once('did-finish-load'"), 'loading quick window must not accumulate refresh listeners');
+  assert(warmRefreshSource.includes('quickWindowDataDirty = true'), 'hidden quick window must retain a dirty marker for next show');
 
   console.log('performance smoke checks passed');
 }

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>玄念7.0.2</title>
+  <title>玄念7.0.3</title>
   <link rel="icon" href="src/xuannian-logo-256.png" />
   <style>
     :root{
@@ -1185,6 +1185,8 @@ const state = {
   clipType: 'all',
   records: [],
   clipboardRenderLimit: 60,
+  clipboardFilterCache: null,
+  clipboardRenderSnapshot: null,
   noteVirtualStart: -1,
   pendingNoteScrollId: '',
   noteFilterCache: null,
@@ -1238,6 +1240,11 @@ const state = {
 };
 const nativeFileIconCache = new Map();
 const nativeFileIconRequests = new Map();
+const nativeFileIconQueue = [];
+const nativeFileIconQueuedElements = new Set();
+const nativeFileIconObservedElements = new Set();
+let nativeFileIconObserver = null;
+let nativeFileIconActive = 0;
 const fileThumbnailCache = new Map();
 const fileThumbnailQueue = [];
 const fileThumbnailQueuedKeys = new Set();
@@ -1245,6 +1252,7 @@ const fileThumbnailActiveKeys = new Set();
 let fileThumbnailGeneration = 0;
 let fileThumbnailActive = 0;
 const NATIVE_FILE_ICON_CACHE_LIMIT = 256;
+const NATIVE_FILE_ICON_CONCURRENCY = 4;
 const FILE_THUMBNAIL_CACHE_LIMIT = 192;
 const FILE_THUMBNAIL_CONCURRENCY = 3;
 const NOTE_ROW_HEIGHT = 146;
@@ -1480,7 +1488,7 @@ function createBrowserFallbackAPI(){
     async deleteInspiration(id){ const data=read(); data.inspirations=data.inspirations.filter(x=>x.id!==id); write(data); return data.inspirations; },
     async getSettings(){ return read().settings; },
     async saveSettings(settings){ const data=read(); data.settings={...data.settings,...settings}; write(data); return data.settings; },
-    async getUpdateState(){ return {status:'current',currentVersion:'7.0.2',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false}; },
+    async getUpdateState(){ return {status:'current',currentVersion:'7.0.3',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false}; },
     async checkForUpdates(){ return this.getUpdateState(); },
     async downloadUpdate(){ return this.getUpdateState(); },
     async installUpdate(){ return false; },
@@ -1634,6 +1642,8 @@ async function init(){
     registerClipboardLearningEvent(previousTopId,nextTopId);
     state.lastNativeRecordId=nextTopId;
     if(state.view==='clipboard'){
+      const list=$('#clipboardList');
+      if(previousTopId!==nextTopId&&list&&list.scrollTop<220) state.clipboardRenderLimit=60;
       renderClipboardFilters();
       renderClipboard();
     }
@@ -1883,6 +1893,16 @@ function bindEvents(){
   $('#clipboardFilters').addEventListener('click', (e)=>{
     const btn=e.target.closest('[data-type]'); if(!btn) return;
     state.clipType=btn.dataset.type; state.clipboardRenderLimit=60; renderClipboardFilters(); renderClipboard();
+  });
+  $('#clipboardList').addEventListener('click',async event=>{
+    const save=event.target.closest('[data-save-record]');
+    if(save){ showSaveToNoteModal(save.dataset.saveRecord); return; }
+    const pin=event.target.closest('[data-pin-record]');
+    if(pin){ await toggleRecordPin(pin.dataset.pinRecord); return; }
+    const remove=event.target.closest('[data-delete-record]');
+    if(remove){ await deleteClipboardRecord(remove.dataset.deleteRecord); return; }
+    const card=event.target.closest('[data-record-card]');
+    if(card&&!event.target.closest('.record-actions')) await copyRecordById(card.dataset.recordCard);
   });
   $('#fileSearchFilters')?.addEventListener('click',event=>{
     const button=event.target.closest('[data-file-type]');
@@ -2654,6 +2674,7 @@ async function switchView(view,{skipCoach=false}={}){
     state.fileSearch.requestId+=1;
     Promise.resolve(api.cancelFileSearch()).catch(()=>{});
   }
+  if(previousView==='clipboard'&&view!=='clipboard') compactClipboardViewForBackground();
   if(previousView==='settings' && view!=='settings') renderSettings();
   exitManagementModes();
   state.view=view;
@@ -2699,8 +2720,13 @@ function renderClipboardFilters(){
 
 function filteredRecords(){
   const q=$('#clipboardSearch').value.trim().toLowerCase();
-  return state.records.filter(r=> state.clipType==='all' || r.type===state.clipType)
+  const source=state.records;
+  const key=`${state.clipType}\n${q}`;
+  if(state.clipboardFilterCache?.source===source&&state.clipboardFilterCache.key===key) return state.clipboardFilterCache.items;
+  const items=source.filter(r=> state.clipType==='all' || r.type===state.clipType)
     .filter(r=> !q || (r.content||'').toLowerCase().includes(q) || (r.sizeText||'').toLowerCase().includes(q));
+  state.clipboardFilterCache={source,key,items};
+  return items;
 }
 
 function pathFileName(value=''){
@@ -2745,10 +2771,21 @@ function fileThumbMarkup(itemOrPath='',ext='file'){
 function folderThumbMarkup(itemOrPath=''){
   return `<span class="folder-thumb"></span>`;
 }
-function resetVideoThumbObserver(){
-  if(!state.videoThumbObserver) return;
-  try{ state.videoThumbObserver.disconnect(); }catch{}
-  state.videoThumbObserver=null;
+function releaseVideoThumbnailResources(root=document){
+  if(!root?.querySelectorAll) return;
+  root.querySelectorAll('video[data-video-thumb]').forEach(video=>{
+    try{ state.videoThumbObserver?.unobserve(video); }catch{}
+    try{ video.pause(); }catch{}
+    video.removeAttribute('src');
+    try{ video.load(); }catch{}
+  });
+}
+function resetVideoThumbObserver(root=document){
+  if(state.videoThumbObserver){
+    try{ state.videoThumbObserver.disconnect(); }catch{}
+    state.videoThumbObserver=null;
+  }
+  releaseVideoThumbnailResources(root);
 }
 function bindVideoThumbnails(root=document){
   if(!root?.querySelectorAll) return;
@@ -2786,40 +2823,126 @@ function bindVideoThumbnails(root=document){
     }
   });
 }
+function nativeFileIconKey(filePath=''){
+  return String(filePath || '').toLocaleLowerCase('en-US');
+}
+
+function rememberNativeFileIcon(key,dataUrl){
+  if(!key) return;
+  nativeFileIconCache.delete(key);
+  nativeFileIconCache.set(key,dataUrl||null);
+  while(nativeFileIconCache.size>NATIVE_FILE_ICON_CACHE_LIMIT){
+    nativeFileIconCache.delete(nativeFileIconCache.keys().next().value);
+  }
+}
+
+function applyNativeFileIcon(element,dataUrl){
+  if(!element?.isConnected||!dataUrl) return;
+  const image=document.createElement('img');
+  image.className='native-file-icon';
+  image.src=dataUrl;
+  image.alt='';
+  element.replaceChildren(image);
+  element.classList.add('has-native-icon');
+}
+
+async function resolveNativeFileIcon(filePath){
+  const key=nativeFileIconKey(filePath);
+  if(!key) return '';
+  if(nativeFileIconCache.has(key)){
+    const cached=nativeFileIconCache.get(key);
+    nativeFileIconCache.delete(key);
+    nativeFileIconCache.set(key,cached);
+    return cached||'';
+  }
+  let request=nativeFileIconRequests.get(key);
+  if(!request){
+    request=Promise.resolve(window.nativeAPI?.getFileIcon?.(filePath)||'')
+      .catch(()=>'')
+      .then(dataUrl=>{
+        rememberNativeFileIcon(key,dataUrl);
+        return dataUrl||'';
+      })
+      .finally(()=>nativeFileIconRequests.delete(key));
+    nativeFileIconRequests.set(key,request);
+  }
+  return request;
+}
+
+function pumpNativeFileIconQueue(){
+  while(nativeFileIconActive<NATIVE_FILE_ICON_CONCURRENCY&&nativeFileIconQueue.length){
+    const task=nativeFileIconQueue.shift();
+    nativeFileIconQueuedElements.delete(task.element);
+    if(!task.element?.isConnected||task.element.dataset.iconPath!==task.path) continue;
+    nativeFileIconActive+=1;
+    resolveNativeFileIcon(task.path)
+      .then(dataUrl=>{
+        if(task.element?.isConnected&&task.element.dataset.iconPath===task.path) applyNativeFileIcon(task.element,dataUrl);
+      })
+      .catch(()=>{})
+      .finally(()=>{
+        nativeFileIconActive=Math.max(0,nativeFileIconActive-1);
+        pumpNativeFileIconQueue();
+      });
+  }
+}
+
+function queueNativeFileIcon(element){
+  const filePath=element?.dataset?.iconPath||'';
+  if(!filePath||element.dataset.iconLoaded==='1'||nativeFileIconQueuedElements.has(element)) return;
+  element.dataset.iconLoaded='1';
+  nativeFileIconQueuedElements.add(element);
+  nativeFileIconQueue.push({element,path:filePath});
+  pumpNativeFileIconQueue();
+}
+
+function releaseNativeFileIconTargets(root=document){
+  if(!root?.querySelectorAll) return;
+  const targets=new Set(root.querySelectorAll('[data-icon-path]'));
+  targets.forEach(element=>{
+    try{ nativeFileIconObserver?.unobserve(element); }catch{}
+    nativeFileIconObservedElements.delete(element);
+    nativeFileIconQueuedElements.delete(element);
+  });
+  for(let index=nativeFileIconQueue.length-1;index>=0;index-=1){
+    if(targets.has(nativeFileIconQueue[index].element)) nativeFileIconQueue.splice(index,1);
+  }
+}
+
+function ensureNativeFileIconObserver(){
+  if(nativeFileIconObserver||!('IntersectionObserver' in window)) return nativeFileIconObserver;
+  nativeFileIconObserver=new IntersectionObserver(entries=>{
+    entries.forEach(entry=>{
+      if(!entry.isIntersecting) return;
+      try{ nativeFileIconObserver?.unobserve(entry.target); }catch{}
+      nativeFileIconObservedElements.delete(entry.target);
+      queueNativeFileIcon(entry.target);
+    });
+  },{rootMargin:'240px'});
+  return nativeFileIconObserver;
+}
+
 function hydrateNativeFileIcons(root=document){
-  if(!window.nativeAPI?.getFileIcon || !root?.querySelectorAll) return;
-  root.querySelectorAll('[data-icon-path]').forEach(async el=>{
-    const filePath=el.dataset.iconPath;
-    if(!filePath || el.dataset.iconLoaded) return;
-    el.dataset.iconLoaded='1';
-    let dataUrl=nativeFileIconCache.get(filePath) || '';
-    if(dataUrl){
-      nativeFileIconCache.delete(filePath);
-      nativeFileIconCache.set(filePath,dataUrl);
+  if(!window.nativeAPI?.getFileIcon||!root?.querySelectorAll) return;
+  const observer=ensureNativeFileIconObserver();
+  root.querySelectorAll('[data-icon-path]').forEach(element=>{
+    const filePath=element.dataset.iconPath||'';
+    const key=nativeFileIconKey(filePath);
+    if(!filePath||element.dataset.iconLoaded==='1') return;
+    if(nativeFileIconCache.has(key)){
+      element.dataset.iconLoaded='1';
+      const cached=nativeFileIconCache.get(key);
+      nativeFileIconCache.delete(key);
+      nativeFileIconCache.set(key,cached);
+      if(cached) applyNativeFileIcon(element,cached);
+      return;
     }
-    if(!dataUrl){
-      let request=nativeFileIconRequests.get(filePath);
-      if(!request){
-        request=window.nativeAPI.getFileIcon(filePath).catch(()=>'').finally(()=>nativeFileIconRequests.delete(filePath));
-        nativeFileIconRequests.set(filePath,request);
-      }
-      dataUrl=await request;
-      if(dataUrl){
-        nativeFileIconCache.delete(filePath);
-        nativeFileIconCache.set(filePath,dataUrl);
-        while(nativeFileIconCache.size>NATIVE_FILE_ICON_CACHE_LIMIT){
-          nativeFileIconCache.delete(nativeFileIconCache.keys().next().value);
-        }
-      }
+    if(observer){
+      nativeFileIconObservedElements.add(element);
+      observer.observe(element);
+    }else{
+      queueNativeFileIcon(element);
     }
-    if(!dataUrl) return;
-    el.innerHTML='';
-    const img=document.createElement('img');
-    img.className='native-file-icon';
-    img.src=dataUrl;
-    img.alt='';
-    el.appendChild(img);
-    el.classList.add('has-native-icon');
   });
 }
 function renderClipboardFileThumbs(item){
@@ -2843,13 +2966,33 @@ function renderClipboardFileThumbs(item){
 }
 
 function renderClipboard(){
-  resetVideoThumbObserver();
   const list=$('#clipboardList');
   const allItems=filteredRecords();
   const items=allItems.slice(0,state.clipboardRenderLimit);
+  const pinnedKey=[...state.pinnedStickyIds].sort().join('|');
+  const minuteBucket=Math.floor(Date.now()/60000);
+  const previousSnapshot=state.clipboardRenderSnapshot;
+  if(previousSnapshot
+    &&previousSnapshot.records===state.records
+    &&previousSnapshot.notes===state.notes
+    &&previousSnapshot.stickyNotes===state.stickyNotes
+    &&previousSnapshot.filtered===allItems
+    &&previousSnapshot.limit===state.clipboardRenderLimit
+    &&previousSnapshot.pinnedKey===pinnedKey
+    &&previousSnapshot.minuteBucket===minuteBucket
+    &&list.childElementCount){
+    return;
+  }
+  resetVideoThumbObserver(list);
+  releaseNativeFileIconTargets(list);
+  const savedRecordIds=new Set(state.notes.map(item=>item.sourceRecordId).filter(Boolean));
+  const pinnedRecordIds=new Set((state.stickyNotes||[])
+    .filter(item=>item.sourceRecordId&&state.pinnedStickyIds.has(item.id))
+    .map(item=>item.sourceRecordId));
   const previousScrollTop=list.scrollTop;
   list.innerHTML=items.length ? items.map(item=>{
-    const saved=isRecordSaved(item.id);
+    const saved=savedRecordIds.has(item.id);
+    const pinned=pinnedRecordIds.has(item.id);
     const hasMultipleImages=item.type==='image' && Array.isArray(item.files) && item.files.length>1;
     const imageText=item.type==='image' && item.content && item.content!=='图片内容' ? item.content : '';
     return `<article class="record copyable ${saved?'saved':''}" data-record-card="${item.id}" title="点击整条内容即可复制">
@@ -2862,33 +3005,38 @@ function renderClipboard(){
         ${item.type!=='image' && item.sizeText ? `<div class="record-sub">${escapeHtml(item.sizeText)}</div>` : ''}
       </div>
       <div class="record-actions">
-        <button class="icon-btn ${isRecordPinned(item.id)?'active':''}" data-pin-record="${item.id}" title="${isRecordPinned(item.id)?'取消置顶':'置顶为便签'}">${iconSvg(isRecordPinned(item.id)?'pinOff':'pin')}</button>
+        <button class="icon-btn ${pinned?'active':''}" data-pin-record="${item.id}" title="${pinned?'取消置顶':'置顶为便签'}">${iconSvg(pinned?'pinOff':'pin')}</button>
         <button class="icon-btn favorite" data-save-record="${item.id}" title="收藏">${iconSvg('bookmark')}</button>
         <button class="icon-btn" data-delete-record="${item.id}" title="删除">${iconSvg('delete')}</button>
       </div>
     </article>`;
   }).join('') : `<div class="empty">暂无符合条件的剪切板内容。</div>`;
+  state.clipboardRenderSnapshot={
+    records:state.records,
+    notes:state.notes,
+    stickyNotes:state.stickyNotes,
+    filtered:allItems,
+    limit:state.clipboardRenderLimit,
+    pinnedKey,
+    minuteBucket,
+  };
   list.scrollTop=previousScrollTop;
 
-  $$('[data-record-card]').forEach(card=>card.onclick=async(event)=>{
-    if(event.target.closest('.record-actions')) return;
-    await copyRecordById(card.dataset.recordCard);
-  });
-  $$('[data-save-record]').forEach(btn=>btn.onclick=(event)=>{
-    event.stopPropagation();
-    showSaveToNoteModal(btn.dataset.saveRecord);
-  });
-  $$('[data-pin-record]').forEach(btn=>btn.onclick=async(event)=>{
-    event.stopPropagation();
-    await toggleRecordPin(btn.dataset.pinRecord);
-  });
-  $$('[data-delete-record]').forEach(btn=>btn.onclick=async(event)=>{
-    event.stopPropagation();
-    await deleteClipboardRecord(btn.dataset.deleteRecord);
-  });
   bindImagePreview();
   bindVideoThumbnails(list);
   hydrateNativeFileIcons(list);
+}
+
+function compactClipboardViewForBackground(){
+  const list=$('#clipboardList');
+  if(!list||list.scrollTop>=220) return false;
+  resetVideoThumbObserver(list);
+  releaseNativeFileIconTargets(list);
+  state.clipboardRenderLimit=60;
+  state.clipboardRenderSnapshot=null;
+  list.replaceChildren();
+  list.scrollTop=0;
+  return true;
 }
 
 async function deleteClipboardRecord(recordId){
@@ -3221,8 +3369,9 @@ function noteDisplayContent(item){
 }
 
 function renderNotes(){
-  resetVideoThumbObserver();
   const list=$('#noteList');
+  resetVideoThumbObserver(list);
+  releaseNativeFileIconTargets(list);
   const allItems=filteredNotes();
   if(state.pendingNoteScrollId){
     const targetIndex=allItems.findIndex(item=>item.id===state.pendingNoteScrollId);
@@ -3319,9 +3468,10 @@ function stickyMediaMarkup(attachments=[]){
 }
 
 function renderStickyNotes(){
-  resetVideoThumbObserver();
   const list=$('#stickyList');
   if(!list) return;
+  resetVideoThumbObserver(list);
+  releaseNativeFileIconTargets(list);
   const items=filteredStickyNotes();
   list.innerHTML=items.length ? `<div class="sticky-grid">${items.map(item=>`
     <article class="sticky-card draggable-card ${item.content?'has-text':''} ${(item.attachments||[]).some(a=>a.kind==='image'&&(a.dataUrl||a.path||a.preview))?'has-image':'image-only'}" draggable="true" data-drag-sticky="${item.id}" data-sticky-card="${item.id}" title="单击复制，双击置顶；长按拖动可排序或移动分类">
@@ -3967,6 +4117,8 @@ function renderNoteAttachments(attachments=[]){
 function renderPendingNoteAttachments(){
   const wrap=$('#noteAttachmentPreview');
   if(!wrap) return;
+  releaseVideoThumbnailResources(wrap);
+  releaseNativeFileIconTargets(wrap);
   const items=state.pendingNoteAttachments.filter(Boolean);
   wrap.innerHTML=items.length ? `<div class="edit-attachments">${items.map((item,index)=>renderAttachmentPreviewCard(item,index,'remove-note-attachment')).join('')}</div>` : '';
   $$('[data-remove-note-attachment]').forEach(btn=>btn.onclick=()=>{
@@ -3981,6 +4133,8 @@ function renderPendingNoteAttachments(){
 function renderPendingIdeaAttachments(){
   const wrap=$('#ideaAttachmentPreview');
   if(!wrap) return;
+  releaseVideoThumbnailResources(wrap);
+  releaseNativeFileIconTargets(wrap);
   wrap.innerHTML=state.pendingIdeaAttachments.map((item,index)=>{
     const label=escapeHtml(attachmentLabel(item));
     if(item.kind==='image' && (item.dataUrl || item.path || item.preview)){
@@ -4004,6 +4158,8 @@ function renderPendingIdeaAttachments(){
 function renderIdeaEditAttachments(){
   const content=$('#editAttachmentContent');
   if(!content) return;
+  releaseVideoThumbnailResources(content);
+  releaseNativeFileIconTargets(content);
   content.innerHTML=renderIdeaEditAttachmentsMarkup();
   $$('[data-remove-idea-edit-attachment]').forEach(btn=>btn.onclick=(event)=>{
     event.stopPropagation();
@@ -4343,8 +4499,9 @@ function renderIdeaActions(item, managing){
 }
 
 function renderInspirations(){
-  resetVideoThumbObserver();
   const shell=$('#inspirationShell');
+  resetVideoThumbObserver(shell);
+  releaseNativeFileIconTargets(shell);
   const managing=false;
   if(state.editingInspirationId && !$('#modalBackdrop')?.classList.contains('show')){
     state.editingInspirationId=null;
@@ -5072,7 +5229,7 @@ function showUpdateDialog(){
   showModal(`
     <div data-update-dialog>
       <div class="modal-header"><h3>软件更新</h3><button class="modal-close" id="closeModal">×</button></div>
-      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '7.0.2')}</b><span>${update.version?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
+      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '7.0.3')}</b><span>${update.version?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
       <div class="modal-message">${escapeHtml(updateStatusText())}</div>
       <p class="update-network-tip">提示：开启 VPN 后再检测更新，结果会更加准确。</p>
       ${busy||downloaded?`<div class="update-progress"><span style="width:${downloaded?100:progress}%"></span></div>`:''}
@@ -5101,8 +5258,22 @@ async function runUpdateAction(){
   showUpdateDialog();
 }
 
-function showModal(html){ state.modalCloseGuard=null; $('#modalBox').innerHTML=html; $('#modalBackdrop').classList.add('show'); }
-function closeModal(){ state.modalCloseGuard=null; $('#modalBackdrop').classList.remove('show'); $('#modalBox').innerHTML=''; }
+function showModal(html){
+  state.modalCloseGuard=null;
+  const box=$('#modalBox');
+  releaseVideoThumbnailResources(box);
+  releaseNativeFileIconTargets(box);
+  box.innerHTML=html;
+  $('#modalBackdrop').classList.add('show');
+}
+function closeModal(){
+  state.modalCloseGuard=null;
+  $('#modalBackdrop').classList.remove('show');
+  const box=$('#modalBox');
+  releaseVideoThumbnailResources(box);
+  releaseNativeFileIconTargets(box);
+  box.innerHTML='';
+}
 function bindModalBackdropClose(){
   const backdrop=$('#modalBackdrop');
   if(!backdrop) return;
@@ -5555,6 +5726,8 @@ function showStickyEditorModal(stickyId=null){
 function renderPendingStickyAttachments(){
   const wrap=$('#stickyAttachmentPreview');
   if(!wrap) return;
+  releaseVideoThumbnailResources(wrap);
+  releaseNativeFileIconTargets(wrap);
   const items=state.pendingStickyAttachments.filter(Boolean);
   wrap.innerHTML=items.length ? `<div class="edit-attachments">${items.map((item,index)=>renderAttachmentPreviewCard(item,index,'remove-sticky-attachment')).join('')}</div>` : '';
   $$('[data-remove-sticky-attachment]').forEach(btn=>btn.onclick=()=>{
