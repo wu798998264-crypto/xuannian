@@ -130,6 +130,8 @@ async function run() {
   assert(thumbnailQueueSource.includes('fileThumbnailActiveReleases.entries()'), 'active tasks outside the latest viewport must release their scheduling slots');
   assert(indexSource.includes('scheduleFileThumbnailRetry(task);'), 'visible thumbnail failures must automatically retry without user scrolling');
   assert(indexSource.includes('FILE_THUMBNAIL_RETRY_DELAYS_MS'), 'thumbnail retries must use bounded backoff');
+  assert(indexSource.includes("marker.textContent='不可预览';"), 'failed media previews must show an explicit unavailable label');
+  assert(indexSource.includes('fileThumbnailUnavailableKeys.delete(key);'), 'a later successful preview must clear its unavailable label');
   assert(indexSource.includes("if(!fileThumbnailDesiredKeys.has(task.key)) return;"), 'ignored thumbnail results must not enter cache');
   for (const [name, source] of [['main', indexSource], ['quick', quickSource], ['sticky', stickySource]]) {
     assert(source.includes('<script src="src/wheel-scroll.js"></script>'), `${name} window must load wheel scrolling support`);

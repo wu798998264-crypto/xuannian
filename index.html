@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>玄念7.0.7</title>
+  <title>玄念7.0.8</title>
   <link rel="icon" href="src/xuannian-logo-256.png" />
   <style>
     :root{
@@ -235,6 +235,8 @@
     .file-kind-icon .file-thumbnail{width:100%;height:100%;display:block;object-fit:cover;background:var(--panel-soft)}
     .file-kind-icon.has-thumbnail{background:var(--panel-soft);color:transparent}
     .file-kind-icon.video.has-thumbnail::after{content:'▶';position:absolute;right:3px;bottom:3px;width:14px;height:14px;border-radius:50%;display:grid;place-items:center;padding-left:1px;background:rgba(0,0,0,.66);color:#fff;font-size:7px;line-height:1}
+    .file-preview-unavailable{flex:none;padding:2px 5px;border:1px solid #d6a4a4;border-radius:4px;background:#fff2f2;color:#a43c3c;font-size:10px;line-height:14px;white-space:nowrap}
+    body.dark .file-preview-unavailable{border-color:#744a4a;background:#422f31;color:#f0aaaa}
     .file-name-wrap{min-width:0;max-width:100%;display:flex;flex-direction:column;align-items:flex-start;overflow:hidden}
     .file-path{min-width:0}
     .file-name{display:block;max-width:100%;font-size:13px;font-weight:750;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -1255,6 +1257,7 @@ const fileThumbnailDesiredKeys = new Set();
 const fileThumbnailActiveReleases = new Map();
 const fileThumbnailFailureCounts = new Map();
 const fileThumbnailRetryDue = new Map();
+const fileThumbnailUnavailableKeys = new Set();
 let fileThumbnailGeneration = 0;
 let fileThumbnailActive = 0;
 let fileThumbnailScheduleToken = 0;
@@ -1501,7 +1504,7 @@ function createBrowserFallbackAPI(){
     async deleteInspiration(id){ const data=read(); data.inspirations=data.inspirations.filter(x=>x.id!==id); write(data); return data.inspirations; },
     async getSettings(){ return read().settings; },
     async saveSettings(settings){ const data=read(); data.settings={...data.settings,...settings}; write(data); return data.settings; },
-    async getUpdateState(){ return {status:'current',currentVersion:'7.0.7',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false}; },
+    async getUpdateState(){ return {status:'current',currentVersion:'7.0.8',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false}; },
     async checkForUpdates(){ return this.getUpdateState(); },
     async downloadUpdate(){ return this.getUpdateState(); },
     async installUpdate(){ return false; },
@@ -2289,6 +2292,7 @@ function resetFileThumbnailQueue(){
   fileThumbnailDesiredKeys.clear();
   fileThumbnailFailureCounts.clear();
   fileThumbnailRetryDue.clear();
+  fileThumbnailUnavailableKeys.clear();
   clearTimeout(fileThumbnailRetryTimer);
   fileThumbnailRetryTimer=null;
   Array.from(fileThumbnailActiveReleases.values()).forEach(release=>release());
@@ -2309,7 +2313,9 @@ function fileThumbnailTargets(key){
 
 function applyFileThumbnail(key,dataUrl){
   if(!dataUrl) return;
+  fileThumbnailUnavailableKeys.delete(key);
   fileThumbnailTargets(key).forEach(element=>{
+    element.closest('.file-primary')?.querySelector('.file-preview-unavailable')?.remove();
     if(element.dataset.thumbnailLoaded==='1') return;
     const image=document.createElement('img');
     image.className='file-thumbnail';
@@ -2319,6 +2325,19 @@ function applyFileThumbnail(key,dataUrl){
     element.replaceChildren(image);
     element.dataset.thumbnailLoaded='1';
     element.classList.add('has-thumbnail');
+  });
+}
+
+function markFileThumbnailUnavailable(key){
+  if(!key) return;
+  fileThumbnailUnavailableKeys.add(key);
+  fileThumbnailTargets(key).forEach(element=>{
+    const primary=element.closest('.file-primary');
+    if(!primary||primary.querySelector('.file-preview-unavailable')) return;
+    const marker=document.createElement('span');
+    marker.className='file-preview-unavailable';
+    marker.textContent='不可预览';
+    element.insertAdjacentElement('afterend',marker);
   });
 }
 
@@ -2419,6 +2438,7 @@ function pumpFileThumbnailQueue(){
     request.then(dataUrl=>{
       if(!fileThumbnailDesiredKeys.has(task.key)) return;
       if(!dataUrl){
+        markFileThumbnailUnavailable(task.key);
         scheduleFileThumbnailRetry(task);
         return;
       }
@@ -2613,9 +2633,10 @@ function renderFileSearchResults(){
     const previewable=['image','video'].includes(fileType);
     const thumbnailKey=previewable?fileThumbnailKey(item):'';
     const thumbnailAttributes=previewable?` data-file-thumbnail-key="${escapeHtml(thumbnailKey)}" data-file-thumbnail-path="${escapeHtml(item.path||'')}"`:'';
+    const unavailableMarkup=previewable&&fileThumbnailUnavailableKeys.has(thumbnailKey)?'<span class="file-preview-unavailable">不可预览</span>':'';
     const extension=item.kind==='folder'?'文件夹':((String(item.name||'').split('.').pop()||'文件').toUpperCase());
     rows.push(`<div class="file-row file-grid ${selected?'selected':''}" data-file-index="${index}" title="${escapeHtml(item.path||'')}">
-      <div class="file-primary"><span class="file-kind-icon ${item.kind==='folder'?'folder':fileType}"${thumbnailAttributes}>${fileSearchIcon(item.kind,fileType)}</span><span class="file-name-wrap"><span class="file-name">${escapeHtml(item.name||item.path||'')}</span><span class="file-extension">${escapeHtml(extension)}</span></span></div>
+      <div class="file-primary"><span class="file-kind-icon ${item.kind==='folder'?'folder':fileType}"${thumbnailAttributes}>${fileSearchIcon(item.kind,fileType)}</span>${unavailableMarkup}<span class="file-name-wrap"><span class="file-name">${escapeHtml(item.name||item.path||'')}</span><span class="file-extension">${escapeHtml(extension)}</span></span></div>
       <div class="file-path file-col-path">${escapeHtml(item.directory||'')}</div>
       <div class="file-size file-col-size">${escapeHtml(formatFileSize(item.size))}</div>
       <div class="file-modified file-col-modified">${escapeHtml(formatFileModified(item.modifiedAt))}</div>
@@ -5367,7 +5388,7 @@ function showUpdateDialog(){
   showModal(`
     <div data-update-dialog>
       <div class="modal-header"><h3>软件更新</h3><button class="modal-close" id="closeModal">×</button></div>
-      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '7.0.7')}</b><span>${update.version?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
+      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '7.0.8')}</b><span>${update.version?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
       <div class="modal-message">${escapeHtml(updateStatusText())}</div>
       <p class="update-network-tip">提示：开启 VPN 后再检测更新，结果会更加准确。</p>
       ${busy||downloaded?`<div class="update-progress"><span style="width:${downloaded?100:progress}%"></span></div>`:''}

@@ -521,6 +521,13 @@ async function run() {
       list.scrollTop=0;
       renderFileSearch();
       const range=fileThumbnailWindowRange(list,state.fileSearch.results.length);
+      const unavailableShown=await waitUntil(()=>{
+        for(let index=range.start;index<range.visibleEnd;index+=1){
+          const row=list.querySelector('[data-file-index="'+index+'"]');
+          if(row?.querySelector('.file-preview-unavailable')?.textContent!=='不可预览') return false;
+        }
+        return true;
+      });
       const recoveredWithoutScroll=await waitUntil(()=>{
         for(let index=range.start;index<range.visibleEnd;index+=1){
           const row=list.querySelector('[data-file-index="'+index+'"]');
@@ -534,15 +541,19 @@ async function run() {
           const key=fileThumbnailKey(state.fileSearch.results[index]);
           return !fileThumbnailFailureCounts.has(key)&&!fileThumbnailRetryDue.has(key);
         });
+      const unavailableCleared=Array.from({length:range.visibleEnd-range.start},(_,offset)=>range.start+offset)
+        .every(index=>!list.querySelector('[data-file-index="'+index+'"] .file-preview-unavailable'));
       resetFileThumbnailQueue();
       await waitUntil(()=>fileThumbnailActive===0&&fileThumbnailRequestKeys.size===0);
-      return {recoveredWithoutScroll,visibleAttempts,retryStateCleared};
+      return {unavailableShown,recoveredWithoutScroll,visibleAttempts,retryStateCleared,unavailableCleared};
     })()
   `, true);
   console.log(`file thumbnail retry metrics ${JSON.stringify(thumbnailRetryMetrics)}`);
+  assert.strictEqual(thumbnailRetryMetrics.unavailableShown, true, 'media that fails both preview paths must show an unavailable label before its name');
   assert.strictEqual(thumbnailRetryMetrics.recoveredWithoutScroll, true, 'visible thumbnail failures must recover without another scroll event');
   assert(thumbnailRetryMetrics.visibleAttempts.every(count => count >= 3), 'every visible failed thumbnail must keep retrying until it succeeds');
   assert.strictEqual(thumbnailRetryMetrics.retryStateCleared, true, 'successful thumbnails must clear retry state');
+  assert.strictEqual(thumbnailRetryMetrics.unavailableCleared, true, 'a recovered thumbnail must remove its unavailable label');
   const thumbnailRecoveryMetrics = await window.webContents.executeJavaScript(`
     (async()=>{
       const waitUntil=async(predicate,timeoutMs=7000)=>{
