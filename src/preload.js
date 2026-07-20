@@ -125,6 +125,9 @@ contextBridge.exposeInMainWorld('nativeAPI', {
   async showFileContextMenu(filePath) {
     return ipcRenderer.invoke('file:showContextMenu', filePath || '');
   },
+  async showItemContextMenu(kind, options = {}) {
+    return ipcRenderer.invoke('ui:showItemContextMenu', String(kind || ''), options || {});
+  },
   async getNoteProjects() {
     return (await load()).noteProjects;
   },
@@ -350,11 +353,39 @@ contextBridge.exposeInMainWorld('nativeAPI', {
   async listLocalMedia() {
     return ipcRenderer.invoke('media:listLocal');
   },
-  async favoriteLocalMedia(filePath) {
-    return ipcRenderer.invoke('media:favoriteLocal', filePath || '');
+  async favoriteLocalMedia(filePath, collection = '') {
+    return ipcRenderer.invoke('media:favoriteLocal', filePath || '', collection || '');
   },
-  async openMediaPortal(url, downloadTarget = 'download') {
-    return ipcRenderer.invoke('media:openPortal', url || '', downloadTarget || 'download');
+  async createMediaCollection(location, kind, name) {
+    return ipcRenderer.invoke('media:createCollection', location || 'downloads', kind || 'video', name || '');
+  },
+  async renameMediaCollection(location, kind, currentName, nextName) {
+    return ipcRenderer.invoke('media:renameCollection', location || 'downloads', kind || 'video', currentName || '', nextName || '');
+  },
+  async deleteMediaCollection(location, kind, name) {
+    return ipcRenderer.invoke('media:deleteCollection', location || 'downloads', kind || 'video', name || '');
+  },
+  async moveLocalMedia(filePath, location, collection = '') {
+    return ipcRenderer.invoke('media:moveLocal', filePath || '', location || 'downloads', collection || '');
+  },
+  async deleteLocalMedia(filePath, location) {
+    return ipcRenderer.invoke('media:deleteLocal', filePath || '', location || 'downloads');
+  },
+  async openMediaPortal(url, downloadTarget = 'download', sourceText = '', autoSubmit = false, collection = '') {
+    return ipcRenderer.invoke('media:openPortal', url || '', downloadTarget || 'download', sourceText || '', !!autoSubmit, collection || '');
+  },
+  setMediaBrowserBounds(bounds = {}, visible = false) {
+    ipcRenderer.send('media:browserBounds', bounds || {}, !!visible);
+    return true;
+  },
+  async getMediaBrowserState() {
+    return ipcRenderer.invoke('media:browserState');
+  },
+  async mediaBrowserAction(action) {
+    return ipcRenderer.invoke('media:browserAction', action || '');
+  },
+  async openMainNoteEditor(noteId) {
+    return ipcRenderer.invoke('main:openNoteEditor', noteId || '');
   },
   async selectMediaFolder(kind, currentPath) {
     return ipcRenderer.invoke('dialog:selectMediaFolder', kind || 'download', currentPath || '');
@@ -556,6 +587,12 @@ contextBridge.exposeInMainWorld('nativeAPI', {
   onMediaDownloadsChanged(callback) {
     ipcRenderer.on('media:downloadsChanged', (_event, payload) => callback(payload || {}));
   },
+  onMediaDownloadProgress(callback) {
+    ipcRenderer.on('media:downloadProgress', (_event, payload) => callback(payload || {}));
+  },
+  onMediaBrowserState(callback) {
+    ipcRenderer.on('media:browserState', (_event, payload) => callback(payload || {}));
+  },
   onStickyPinState(callback) {
     ipcRenderer.on('native-sticky-pin-state', (_event, ids) => callback(Array.isArray(ids) ? ids : []));
   },
@@ -564,6 +601,9 @@ contextBridge.exposeInMainWorld('nativeAPI', {
   },
   onMainNavigate(callback) {
     ipcRenderer.on('main:navigate', (_event, view) => callback(view));
+  },
+  onMainEditNote(callback) {
+    ipcRenderer.on('main:editNote', (_event, noteId) => callback(String(noteId || '')));
   },
   onFileSearchFocus(callback) {
     ipcRenderer.on('search:focus', callback);

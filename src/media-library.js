@@ -7,6 +7,7 @@ const VIDEO_EXTENSIONS = new Set([
 const AUDIO_EXTENSIONS = new Set([
   'mp3', 'wav', 'm4a', 'aac', 'flac', 'ogg', 'oga', 'opus', 'wma', 'aiff', 'ape',
 ]);
+const MEDIA_KIND_DIRECTORIES = Object.freeze({ video: '视频', audio: '音乐' });
 
 const VIDEO_PROVIDERS = [
   {
@@ -108,32 +109,63 @@ async function mapWithConcurrency(items, limit, worker) {
   return result;
 }
 
-async function scanMediaDirectory(directory, favorite = false, limit = 2500) {
-  const root = String(directory || '').trim();
-  if (!root || !path.isAbsolute(root)) return [];
+function normalizedPathKey(filePath) {
+  const resolved = path.resolve(String(filePath || ''));
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+}
+
+function isPathInside(filePath, directory) {
+  const relative = path.relative(path.resolve(String(directory || '')), path.resolve(String(filePath || '')));
+  return !!relative && relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+}
+
+function sanitizeCollectionName(value) {
+  const name = String(value || '')
+    .trim()
+    .replace(/[<>:"/\\|?*\x00-\x1f]/g, '')
+    .replace(/[. ]+$/g, '')
+    .slice(0, 48);
+  if (!name || name === '.' || name === '..') return '';
+  return name;
+}
+
+function mediaTypeDirectory(directory, kind) {
+  const folder = MEDIA_KIND_DIRECTORIES[kind];
+  return folder ? path.join(String(directory || ''), folder) : '';
+}
+
+function mediaCollectionDirectory(directory, kind, collection = '') {
+  const typeDirectory = mediaTypeDirectory(directory, kind);
+  const name = sanitizeCollectionName(collection);
+  return name ? path.join(typeDirectory, name) : typeDirectory;
+}
+
+async function scanMediaFilesInDirectory(directory, favorite, location, collection, remaining) {
+  if (remaining <= 0) return [];
   let entries;
   try {
-    entries = await fs.promises.readdir(root, { withFileTypes: true });
+    entries = await fs.promises.readdir(directory, { withFileTypes: true });
   } catch {
     return [];
   }
   const candidates = entries
     .filter((entry) => entry.isFile() && mediaKindForPath(entry.name))
-    .slice(0, Math.max(1, Number(limit) || 2500));
+    .slice(0, remaining);
   const items = await mapWithConcurrency(candidates, 24, async (entry) => {
-    const filePath = path.join(root, entry.name);
+    const filePath = path.join(directory, entry.name);
     try {
       const stat = await fs.promises.stat(filePath);
       if (!stat.isFile()) return null;
       return {
         path: filePath,
-        directory: root,
+        directory,
         name: entry.name,
         kind: mediaKindForPath(entry.name),
         size: stat.size,
         modifiedAt: stat.mtimeMs,
         favorite: !!favorite,
-        location: favorite ? 'favorites' : 'downloads',
+        location,
+        collection: collection || '',
       };
     } catch {
       return null;
@@ -142,9 +174,54 @@ async function scanMediaDirectory(directory, favorite = false, limit = 2500) {
   return items.filter(Boolean);
 }
 
-function normalizedPathKey(filePath) {
-  const resolved = path.resolve(String(filePath || ''));
-  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+async function listCollectionNames(directory, kind) {
+  const typeDirectory = mediaTypeDirectory(directory, kind);
+  if (!typeDirectory) return [];
+  let entries;
+  try {
+    entries = await fs.promises.readdir(typeDirectory, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  return entries
+    .filter((entry) => entry.isDirectory() && sanitizeCollectionName(entry.name) === entry.name)
+    .map((entry) => entry.name)
+    .sort((left, right) => left.localeCompare(right, 'zh-CN'));
+}
+
+async function listMediaCollections(directory) {
+  const [video, audio] = await Promise.all([
+    listCollectionNames(directory, 'video'),
+    listCollectionNames(directory, 'audio'),
+  ]);
+  return { video, audio };
+}
+
+async function scanMediaDirectory(directory, favorite = false, limit = 2500) {
+  const root = String(directory || '').trim();
+  if (!root || !path.isAbsolute(root)) return [];
+  const maxItems = Math.max(1, Number(limit) || 2500);
+  const location = favorite ? 'favorites' : 'downloads';
+  const items = await scanMediaFilesInDirectory(root, favorite, location, '', maxItems);
+  for (const kind of ['video', 'audio']) {
+    if (items.length >= maxItems) break;
+    const typeDirectory = mediaTypeDirectory(root, kind);
+    const unclassified = await scanMediaFilesInDirectory(typeDirectory, favorite, location, '', maxItems - items.length);
+    items.push(...unclassified.filter((item) => item.kind === kind));
+    const collections = await listCollectionNames(root, kind);
+    for (const collection of collections) {
+      if (items.length >= maxItems) break;
+      const collected = await scanMediaFilesInDirectory(
+        mediaCollectionDirectory(root, kind, collection),
+        favorite,
+        location,
+        collection,
+        maxItems - items.length,
+      );
+      items.push(...collected.filter((item) => item.kind === kind));
+    }
+  }
+  return items;
 }
 
 async function listMediaFiles(downloadDirectory, favoriteDirectory) {
@@ -178,7 +255,7 @@ function collisionFreePath(directory, filename) {
   return candidate;
 }
 
-async function copyMediaToFavorites(sourcePath, favoriteDirectory) {
+async function copyMediaToFavorites(sourcePath, favoriteDirectory, collection = '') {
   const source = String(sourcePath || '').trim();
   const destinationRoot = String(favoriteDirectory || '').trim();
   if (!source || !path.isAbsolute(source) || !mediaKindForPath(source)) {
@@ -194,12 +271,14 @@ async function copyMediaToFavorites(sourcePath, favoriteDirectory) {
     return { ok: false, reason: '文件已被移动或删除' };
   }
   if (!stat.isFile()) return { ok: false, reason: '只能收藏媒体文件' };
-  await fs.promises.mkdir(destinationRoot, { recursive: true });
+  const kind = mediaKindForPath(source);
+  const targetRoot = mediaCollectionDirectory(destinationRoot, kind, collection);
+  await fs.promises.mkdir(targetRoot, { recursive: true });
   const sourceKey = normalizedPathKey(source);
   const rootKey = `${normalizedPathKey(destinationRoot)}${path.sep}`;
   if (sourceKey.startsWith(rootKey)) return { ok: true, path: source, alreadyFavorite: true };
 
-  const sameNameTarget = path.join(destinationRoot, path.basename(source));
+  const sameNameTarget = path.join(targetRoot, path.basename(source));
   try {
     const existing = await fs.promises.stat(sameNameTarget);
     if (existing.isFile() && existing.size === stat.size) {
@@ -207,22 +286,115 @@ async function copyMediaToFavorites(sourcePath, favoriteDirectory) {
     }
   } catch {}
 
-  const target = collisionFreePath(destinationRoot, path.basename(source));
+  const target = collisionFreePath(targetRoot, path.basename(source));
   await fs.promises.copyFile(source, target, fs.constants.COPYFILE_EXCL);
   await fs.promises.utimes(target, stat.atime, stat.mtime).catch(() => {});
   return { ok: true, path: target, alreadyFavorite: false };
 }
 
+async function createMediaCollection(directory, kind, name) {
+  const root = String(directory || '').trim();
+  const collection = sanitizeCollectionName(name);
+  if (!root || !path.isAbsolute(root) || !MEDIA_KIND_DIRECTORIES[kind]) return { ok: false, reason: '收藏夹参数无效' };
+  if (!collection) return { ok: false, reason: '请输入有效的收藏夹名称' };
+  const target = mediaCollectionDirectory(root, kind, collection);
+  if (fs.existsSync(target)) return { ok: false, reason: '同名收藏夹已存在' };
+  await fs.promises.mkdir(target, { recursive: false }).catch(async (error) => {
+    if (error?.code !== 'ENOENT') throw error;
+    await fs.promises.mkdir(path.dirname(target), { recursive: true });
+    await fs.promises.mkdir(target, { recursive: false });
+  });
+  return { ok: true, name: collection, path: target };
+}
+
+async function renameMediaCollection(directory, kind, currentName, nextName) {
+  const root = String(directory || '').trim();
+  const current = sanitizeCollectionName(currentName);
+  const next = sanitizeCollectionName(nextName);
+  if (!root || !path.isAbsolute(root) || !MEDIA_KIND_DIRECTORIES[kind] || !current || !next) {
+    return { ok: false, reason: '收藏夹名称无效' };
+  }
+  if (current === next) return { ok: true, name: current, unchanged: true };
+  const source = mediaCollectionDirectory(root, kind, current);
+  const target = mediaCollectionDirectory(root, kind, next);
+  if (!fs.existsSync(source)) return { ok: false, reason: '收藏夹已不存在' };
+  if (fs.existsSync(target)) return { ok: false, reason: '同名收藏夹已存在' };
+  await fs.promises.rename(source, target);
+  return { ok: true, name: next, path: target };
+}
+
+async function moveFileAcrossVolumes(source, target) {
+  try {
+    await fs.promises.rename(source, target);
+  } catch (error) {
+    if (error?.code !== 'EXDEV') throw error;
+    await fs.promises.copyFile(source, target, fs.constants.COPYFILE_EXCL);
+    await fs.promises.unlink(source);
+  }
+}
+
+async function moveMediaToCollection(sourcePath, directory, collection = '') {
+  const source = String(sourcePath || '').trim();
+  const root = String(directory || '').trim();
+  const kind = mediaKindForPath(source);
+  if (!source || !path.isAbsolute(source) || !root || !path.isAbsolute(root) || !kind || !isPathInside(source, root)) {
+    return { ok: false, reason: '媒体文件或目录无效' };
+  }
+  const targetRoot = mediaCollectionDirectory(root, kind, collection);
+  await fs.promises.mkdir(targetRoot, { recursive: true });
+  if (normalizedPathKey(path.dirname(source)) === normalizedPathKey(targetRoot)) {
+    return { ok: true, path: source, unchanged: true };
+  }
+  const target = collisionFreePath(targetRoot, path.basename(source));
+  await moveFileAcrossVolumes(source, target);
+  return { ok: true, path: target };
+}
+
+async function deleteMediaCollection(directory, kind, name) {
+  const root = String(directory || '').trim();
+  const collection = sanitizeCollectionName(name);
+  if (!root || !path.isAbsolute(root) || !MEDIA_KIND_DIRECTORIES[kind] || !collection) {
+    return { ok: false, reason: '收藏夹参数无效' };
+  }
+  const source = mediaCollectionDirectory(root, kind, collection);
+  if (!fs.existsSync(source)) return { ok: false, reason: '收藏夹已不存在' };
+  const entries = await fs.promises.readdir(source, { withFileTypes: true });
+  if (entries.some((entry) => entry.isDirectory() || (entry.isFile() && mediaKindForPath(entry.name) !== kind))) {
+    return { ok: false, reason: '收藏夹中包含子文件夹或非媒体文件，请先在资源管理器中处理' };
+  }
+  const targetRoot = mediaCollectionDirectory(root, kind, '');
+  await fs.promises.mkdir(targetRoot, { recursive: true });
+  let moved = 0;
+  for (const entry of entries) {
+    if (!entry.isFile()) continue;
+    const filePath = path.join(source, entry.name);
+    if (mediaKindForPath(filePath) !== kind) continue;
+    await moveFileAcrossVolumes(filePath, collisionFreePath(targetRoot, entry.name));
+    moved += 1;
+  }
+  await fs.promises.rmdir(source);
+  return { ok: true, moved };
+}
+
 module.exports = {
   AUDIO_EXTENSIONS,
+  MEDIA_KIND_DIRECTORIES,
   VIDEO_EXTENSIONS,
   VIDEO_PROVIDERS,
   copyMediaToFavorites,
+  createMediaCollection,
+  deleteMediaCollection,
   detectVideoProvider,
   extractHttpUrl,
   isAllowedPortalUrl,
+  isPathInside,
+  listMediaCollections,
   listMediaFiles,
   mediaKindForPath,
+  mediaCollectionDirectory,
+  moveMediaToCollection,
   musicSearchUrl,
+  renameMediaCollection,
+  sanitizeCollectionName,
   scanMediaDirectory,
 };

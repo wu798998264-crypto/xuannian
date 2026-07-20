@@ -760,18 +760,20 @@ async function run() {
       const copiedText=[];
       const copiedFiles=[];
       const contextMenus=[];
+      const portalInputs=[];
       api.resolveMediaVideoProvider=async value=>resolveMediaVideoProviderFallback(value);
-      api.openMediaPortal=async(url,target)=>{ openedPortals.push(url); portalTargets.push(target); return true; };
+      api.openMediaPortal=async(url,target,sourceText,autoSubmit,collection)=>{ openedPortals.push(url); portalTargets.push(target); portalInputs.push({sourceText,autoSubmit,collection}); return true; };
       api.copyText=async value=>{ copiedText.push(value); return true; };
       api.copyFileToClipboard=async value=>{ copiedFiles.push(value); return true; };
-      api.showFileContextMenu=async value=>{ contextMenus.push(value); return true; };
+      api.showItemContextMenu=async(kind,options)=>{ contextMenus.push({kind,options}); return ''; };
       api.listLocalMedia=async()=>({
         ok:true,
         downloadPath:'C:/Downloads',
         favoritePath:'C:/Favorites',
+        collections:{downloads:{video:['项目视频'],audio:['常用音乐']},favorites:{video:[],audio:[]}},
         items:[
-          {path:'C:/Downloads/demo.mp4',directory:'C:/Downloads',name:'demo.mp4',kind:'video',size:2048,modifiedAt:2,favorite:false,location:'downloads'},
-          {path:'C:/Downloads/music.flac',directory:'C:/Downloads',name:'music.flac',kind:'audio',size:1024,modifiedAt:1,favorite:false,location:'downloads'},
+          {path:'C:/Downloads/demo.mp4',directory:'C:/Downloads',name:'demo.mp4',kind:'video',size:2048,modifiedAt:2,favorite:false,location:'downloads',collection:''},
+          {path:'C:/Downloads/music.flac',directory:'C:/Downloads',name:'music.flac',kind:'audio',size:1024,modifiedAt:1,favorite:false,location:'downloads',collection:''},
         ],
       });
       await switchView('media',{skipCoach:true});
@@ -786,11 +788,29 @@ async function run() {
       first.dispatchEvent(new MouseEvent('click',{bubbles:true,detail:1}));
       await new Promise(resolve=>setTimeout(resolve,240));
       first.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true}));
+      await new Promise(resolve=>setTimeout(resolve,20));
+      updateMediaDownloadTask({id:'runtime-download',name:'runtime.mp4',status:'downloading',receivedBytes:50,totalBytes:100,percent:50});
+      state.media.downloadsExpanded=true;
+      renderMediaDownloadBubble();
+      const downloadBubble={
+        active:document.querySelector('#mediaDownloadBubble').classList.contains('active'),
+        open:document.querySelector('#mediaDownloadBubble').classList.contains('open'),
+        ring:document.querySelector('#mediaDownloadRing').getAttribute('stroke-dasharray'),
+        tasks:document.querySelectorAll('#mediaDownloadTaskList .media-download-task').length,
+      };
+      state.media.downloadTasks=[];
+      state.media.downloadsExpanded=false;
+      renderMediaDownloadBubble();
       return {
-        openedPortals,portalTargets,copiedText,copiedFiles,contextMenus,
+        openedPortals,portalTargets,portalInputs,copiedText,copiedFiles,contextMenus,
         activeView:document.querySelector('.view.active')?.id||'',
         activeNav:document.querySelector('.nav-btn.active')?.dataset.view||'',
         rows:document.querySelectorAll('#mediaDownloadsList [data-media-row]').length,
+        typeOptions:[...document.querySelectorAll('#mediaTypeMenu [data-media-kind]')].map(button=>button.textContent.trim()),
+        hasAllFilter:!!document.querySelector('[data-media-filters] [data-media-type="all"]'),
+        copyActions:document.querySelectorAll('#mediaDownloadsList [data-media-action="copy"]').length,
+        deleteActions:document.querySelectorAll('#mediaDownloadsList [data-media-action="delete"]').length,
+        downloadBubble,
         provider:document.querySelector('#mediaVideoProvider').textContent.trim(),
       };
     })()
@@ -798,12 +818,18 @@ async function run() {
   console.log(`media library runtime metrics ${JSON.stringify(mediaLibraryMetrics)}`);
   assert.deepStrictEqual(mediaLibraryMetrics.openedPortals, ['https://www.seekin.ai/zh/bilibili-downloader/','https://www.seekin.ai/zh/bilibili-downloader/']);
   assert.deepStrictEqual(mediaLibraryMetrics.portalTargets, ['download','favorite']);
+  assert.strictEqual(mediaLibraryMetrics.portalInputs.every((item) => item.sourceText === 'https://www.bilibili.com/video/BV1runtime' && item.autoSubmit === true), true);
   assert.deepStrictEqual(mediaLibraryMetrics.copiedText, ['https://www.bilibili.com/video/BV1runtime','https://www.bilibili.com/video/BV1runtime']);
   assert.deepStrictEqual(mediaLibraryMetrics.copiedFiles, ['C:/Downloads/demo.mp4']);
-  assert.deepStrictEqual(mediaLibraryMetrics.contextMenus, ['C:/Downloads/demo.mp4']);
+  assert.deepStrictEqual(mediaLibraryMetrics.contextMenus.map(item=>item.kind), ['media']);
   assert.strictEqual(mediaLibraryMetrics.activeView, 'mediaView');
   assert.strictEqual(mediaLibraryMetrics.activeNav, 'media');
-  assert.strictEqual(mediaLibraryMetrics.rows, 2);
+  assert.strictEqual(mediaLibraryMetrics.rows, 1);
+  assert.deepStrictEqual(mediaLibraryMetrics.typeOptions, ['视频','音乐']);
+  assert.strictEqual(mediaLibraryMetrics.hasAllFilter, false);
+  assert.strictEqual(mediaLibraryMetrics.copyActions, 0);
+  assert.strictEqual(mediaLibraryMetrics.deleteActions, 1);
+  assert.deepStrictEqual(mediaLibraryMetrics.downloadBubble, {active:true,open:true,ring:'50 100',tasks:1});
   assert(mediaLibraryMetrics.provider.includes('哔哩哔哩'));
   assert.strictEqual(rendererErrors.length, 0, `renderer errors: ${rendererErrors.join(' | ')}`);
   if (process.env.XUANNIAN_RUNTIME_SCREENSHOT) {

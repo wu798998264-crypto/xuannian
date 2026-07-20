@@ -4,11 +4,16 @@ const os = require('os');
 const path = require('path');
 const {
   copyMediaToFavorites,
+  createMediaCollection,
+  deleteMediaCollection,
   detectVideoProvider,
   isAllowedPortalUrl,
+  listMediaCollections,
   listMediaFiles,
   mediaKindForPath,
+  moveMediaToCollection,
   musicSearchUrl,
+  renameMediaCollection,
 } = require('../src/media-library');
 
 async function run() {
@@ -39,7 +44,22 @@ async function run() {
     assert.strictEqual(fs.existsSync(copied.path), true);
     const duplicate = await copyMediaToFavorites(path.join(downloads, 'clip.mp4'), favorites);
     assert.strictEqual(duplicate.alreadyFavorite, true);
-    fs.unlinkSync(path.join(downloads, 'song.mp3'));
+    const created = await createMediaCollection(downloads, 'audio', '工作配乐');
+    assert.strictEqual(created.ok, true);
+    const moved = await moveMediaToCollection(path.join(downloads, 'song.mp3'), downloads, '工作配乐');
+    assert.strictEqual(moved.ok, true);
+    assert.strictEqual(fs.existsSync(moved.path), true);
+    let collections = await listMediaCollections(downloads);
+    assert.deepStrictEqual(collections.audio, ['工作配乐']);
+    const renamed = await renameMediaCollection(downloads, 'audio', '工作配乐', '常用配乐');
+    assert.strictEqual(renamed.ok, true);
+    collections = await listMediaCollections(downloads);
+    assert.deepStrictEqual(collections.audio, ['常用配乐']);
+    const removed = await deleteMediaCollection(downloads, 'audio', '常用配乐');
+    assert.strictEqual(removed.ok, true);
+    assert.strictEqual(removed.moved, 1);
+    assert.strictEqual(fs.existsSync(path.join(downloads, '音乐', 'song.mp3')), true);
+    fs.unlinkSync(path.join(downloads, '音乐', 'song.mp3'));
     items = await listMediaFiles(downloads, favorites);
     assert.strictEqual(items.some((item) => item.name === 'song.mp3'), false);
     assert.strictEqual(items.some((item) => item.favorite), true);

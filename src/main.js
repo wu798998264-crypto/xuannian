@@ -1,4 +1,5 @@
 ﻿const { app, BrowserWindow, ipcMain, dialog, globalShortcut, clipboard, desktopCapturer, screen, Menu, nativeImage, shell } = require('electron');
+const { WebContentsView } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
@@ -15,11 +16,17 @@ const {
 const { FileSearchService, fileTypeForPath } = require('./file-search');
 const {
   copyMediaToFavorites,
+  createMediaCollection,
+  deleteMediaCollection,
   detectVideoProvider,
   isAllowedPortalUrl,
+  listMediaCollections,
   listMediaFiles,
+  mediaCollectionDirectory,
   mediaKindForPath,
+  moveMediaToCollection,
   musicSearchUrl,
+  renameMediaCollection,
 } = require('./media-library');
 
 let mainWindow;
@@ -116,7 +123,10 @@ let videoThumbnailWindow = null;
 let videoThumbnailWindowReady = null;
 let videoThumbnailIdleTimer = null;
 let videoThumbnailActive = 0;
-const mediaPortalWindows = new Set();
+let mediaPortalView = null;
+let mediaPortalInputTimer = null;
+let mediaPortalRequestId = 0;
+let mediaPortalInputState = null;
 const configuredMediaDownloadSessions = new WeakSet();
 const mediaPortalDownloadTargets = new WeakMap();
 const recentClipboardDigests = new Map();
@@ -2321,6 +2331,11 @@ function createWindow() {
   });
   mainWindow.on('closed', () => {
     mainWindowResizeSession = null;
+    clearMediaPortalInputTimer();
+    if (mediaPortalView && !mediaPortalView.webContents.isDestroyed()) {
+      mediaPortalView.webContents.close();
+    }
+    mediaPortalView = null;
   });
   loadAppHtml(mainWindow, 'index.html');
 }
@@ -2343,6 +2358,20 @@ function mediaDirectories() {
 function notifyMediaDownloadsChanged(payload = {}) {
   if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
   mainWindow.webContents.send('media:downloadsChanged', payload || {});
+}
+
+function notifyMediaDownloadProgress(payload = {}) {
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
+  mainWindow.webContents.send('media:downloadProgress', payload || {});
+}
+
+async function runMediaFileOperation(label, operation) {
+  try {
+    return await operation();
+  } catch (error) {
+    runtimeLog(`${label} failed: ${error?.stack || error}`);
+    return { ok: false, reason: '文件操作失败，请检查目录权限或文件是否正被占用' };
+  }
 }
 
 function sanitizeDownloadFilename(value, mimeType = '') {
@@ -2381,84 +2410,224 @@ function configureMediaDownloadSession(electronSession) {
   electronSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
   electronSession.on('will-download', (_event, item, webContents) => {
     const directories = mediaDirectories();
-    const favoriteDownload = mediaPortalDownloadTargets.get(webContents) === 'favorite';
-    const downloadPath = favoriteDownload ? directories.favoritePath : directories.downloadPath;
+    const target = mediaPortalDownloadTargets.get(webContents) || {};
+    const favoriteDownload = target.location === 'favorite';
+    const rootPath = favoriteDownload ? directories.favoritePath : directories.downloadPath;
     const filename = sanitizeDownloadFilename(item.getFilename(), item.getMimeType());
-    if (!mediaKindForPath(filename)) {
+    const kind = mediaKindForPath(filename);
+    if (!kind) {
       item.cancel();
       notifyMediaDownloadsChanged({ status: 'blocked', message: '已拦截非音视频文件下载' });
       return;
     }
+    const downloadPath = mediaCollectionDirectory(rootPath, kind, target.collection || '');
+    fs.mkdirSync(downloadPath, { recursive: true });
     const destination = uniqueMediaDownloadPath(downloadPath, filename);
     item.setSavePath(destination);
+    const taskId = `media-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+    let lastProgressAt = 0;
+    const progressPayload = (status) => {
+      const receivedBytes = Math.max(0, Number(item.getReceivedBytes() || 0));
+      const totalBytes = Math.max(0, Number(item.getTotalBytes() || 0));
+      return {
+        id: taskId,
+        name: filename,
+        path: destination,
+        location: favoriteDownload ? 'favorites' : 'downloads',
+        status,
+        receivedBytes,
+        totalBytes,
+        percent: totalBytes > 0 ? Math.max(0, Math.min(100, Math.round((receivedBytes / totalBytes) * 100))) : 0,
+        updatedAt: Date.now(),
+      };
+    };
+    notifyMediaDownloadProgress(progressPayload('downloading'));
+    item.on('updated', (_updatedEvent, state) => {
+      const now = Date.now();
+      if (now - lastProgressAt < 120 && state === 'progressing') return;
+      lastProgressAt = now;
+      notifyMediaDownloadProgress(progressPayload(state === 'interrupted' ? 'interrupted' : (item.isPaused() ? 'paused' : 'downloading')));
+    });
     item.once('done', (_doneEvent, state) => {
       if (state === 'completed') {
+        notifyMediaDownloadProgress(progressPayload('completed'));
         notifyMediaDownloadsChanged({ status: 'completed', path: destination, favorite: favoriteDownload, message: favoriteDownload ? '媒体已下载到收藏目录' : '媒体已下载' });
       } else if (state !== 'cancelled') {
+        notifyMediaDownloadProgress(progressPayload('error'));
         notifyMediaDownloadsChanged({ status: 'error', message: '下载未完成，请在网站中重试' });
+      } else {
+        notifyMediaDownloadProgress(progressPayload('cancelled'));
       }
     });
   });
 }
 
-function secureMediaPortalWindow(win, downloadTarget = 'download') {
-  if (!win || win.isDestroyed()) return;
-  mediaPortalWindows.add(win);
-  mediaPortalDownloadTargets.set(win.webContents, downloadTarget === 'favorite' ? 'favorite' : 'download');
-  configureMediaDownloadSession(win.webContents.session);
-  win.webContents.setWindowOpenHandler(({ url }) => {
-    if (!/^https:\/\//i.test(String(url || ''))) return { action: 'deny' };
-    return {
-      action: 'allow',
-      overrideBrowserWindowOptions: {
-        width: 1060,
-        height: 760,
-        minWidth: 720,
-        minHeight: 560,
-        autoHideMenuBar: true,
-        icon: appIconPath(),
-        webPreferences: {
-          partition: 'persist:xuannian-media-portals',
-          contextIsolation: true,
-          nodeIntegration: false,
-          sandbox: true,
-          webSecurity: true,
-        },
-      },
-    };
-  });
-  win.webContents.on('did-create-window', (child) => secureMediaPortalWindow(child, downloadTarget));
-  win.webContents.on('will-navigate', (event, url) => {
-    if (!/^https:\/\//i.test(String(url || ''))) event.preventDefault();
-  });
-  win.on('closed', () => mediaPortalWindows.delete(win));
+function mediaBrowserState(extra = {}) {
+  const webContents = mediaPortalView?.webContents;
+  if (!webContents || webContents.isDestroyed()) {
+    return { ready: false, loading: false, url: '', title: '', canGoBack: false, canGoForward: false, ...extra };
+  }
+  const navigationHistory = webContents.navigationHistory;
+  return {
+    ready: true,
+    loading: webContents.isLoading(),
+    url: webContents.getURL(),
+    title: webContents.getTitle(),
+    canGoBack: navigationHistory.canGoBack(),
+    canGoForward: navigationHistory.canGoForward(),
+    ...extra,
+  };
 }
 
-function openMediaPortal(url, downloadTarget = 'download') {
-  const value = String(url || '').trim();
-  if (!isAllowedPortalUrl(value)) return false;
-  const win = new BrowserWindow({
-    width: 1120,
-    height: 800,
-    minWidth: 760,
-    minHeight: 580,
-    autoHideMenuBar: true,
-    icon: appIconPath(),
-    title: `玄念${app.getVersion()}媒体下载`,
-    backgroundColor: '#f4f4f4',
+function notifyMediaBrowserState(extra = {}) {
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
+  mainWindow.webContents.send('media:browserState', mediaBrowserState(extra));
+}
+
+function clearMediaPortalInputTimer() {
+  clearTimeout(mediaPortalInputTimer);
+  mediaPortalInputTimer = null;
+}
+
+function scheduleMediaPortalInput() {
+  clearMediaPortalInputTimer();
+  const view = mediaPortalView;
+  const state = mediaPortalInputState;
+  if (!view || view.webContents.isDestroyed() || !state?.value || state.requestId !== mediaPortalRequestId) return;
+  mediaPortalInputTimer = setTimeout(async () => {
+    if (!mediaPortalView || mediaPortalView.webContents.isDestroyed() || state.requestId !== mediaPortalRequestId) return;
+    const value = JSON.stringify(state.value);
+    const autoSubmit = state.autoSubmit ? 'true' : 'false';
+    const script = `(() => new Promise((resolve) => {
+      const value = ${value};
+      const autoSubmit = ${autoSubmit};
+      const deadline = Date.now() + 7000;
+      const visible = (element) => {
+        const rect = element.getBoundingClientRect();
+        const style = getComputedStyle(element);
+        return rect.width > 80 && rect.height > 18 && style.display !== 'none' && style.visibility !== 'hidden';
+      };
+      const score = (input) => {
+        const hint = [input.placeholder, input.name, input.id, input.getAttribute('aria-label')].filter(Boolean).join(' ').toLowerCase();
+        let valueScore = input.type === 'url' ? 12 : input.type === 'search' ? 5 : 2;
+        if (/link|url|链接|粘贴|视频|地址/.test(hint)) valueScore += 20;
+        if (/mail|phone|账号|password|密码/.test(hint)) valueScore -= 30;
+        return valueScore;
+      };
+      const setValue = (input) => {
+        const owner = input.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+        const setter = Object.getOwnPropertyDescriptor(owner, 'value')?.set;
+        if (setter) setter.call(input, value); else input.value = value;
+        input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: value }));
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+        input.focus();
+      };
+      const attempt = () => {
+        const inputs = [...document.querySelectorAll('input:not([type]),input[type="text"],input[type="url"],input[type="search"],textarea')]
+          .filter((input) => !input.disabled && !input.readOnly && visible(input))
+          .sort((left, right) => score(right) - score(left));
+        const input = inputs[0];
+        if (!input) {
+          if (Date.now() < deadline) setTimeout(attempt, 250); else resolve({ filled: false, submitted: false });
+          return;
+        }
+        setValue(input);
+        let submitted = false;
+        if (autoSubmit) {
+          const scope = input.closest('form') || input.parentElement?.parentElement || document;
+          const matchesAction = (item) => /下载|解析|开始|搜索|download|parse|start|search/i.test(String(item.innerText || item.value || item.getAttribute('aria-label') || ''));
+          const nearbyButtons = [...scope.querySelectorAll('button,input[type="submit"],[role="button"]')].filter(visible);
+          const button = nearbyButtons.find(matchesAction) || [...document.querySelectorAll('button,input[type="submit"],[role="button"]')].filter(visible).find(matchesAction);
+          if (button) {
+            setTimeout(() => button.click(), 120);
+            submitted = true;
+          }
+        }
+        resolve({ filled: true, submitted });
+      };
+      attempt();
+    }))()`;
+    try {
+      const result = await view.webContents.executeJavaScript(script, true);
+      if (state.requestId !== mediaPortalRequestId) return;
+      if (result?.filled) {
+        mediaPortalInputState = null;
+        notifyMediaBrowserState({ autoFilled: true, autoSubmitted: !!result.submitted });
+      }
+    } catch {
+      if (state.requestId === mediaPortalRequestId) scheduleMediaPortalInput();
+    }
+  }, 350);
+}
+
+function ensureMediaPortalView() {
+  if (mediaPortalView && !mediaPortalView.webContents.isDestroyed()) return mediaPortalView;
+  if (!mainWindow || mainWindow.isDestroyed()) return null;
+  const view = new WebContentsView({
     webPreferences: {
       partition: 'persist:xuannian-media-portals',
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
       webSecurity: true,
+      backgroundThrottling: true,
     },
   });
-  secureMediaPortalWindow(win, downloadTarget);
-  win.loadURL(value).catch((error) => {
-    runtimeLog(`media portal load failed: ${error?.message || error}`);
-    if (!win.isDestroyed()) win.close();
+  mediaPortalView = view;
+  view.setVisible(false);
+  mainWindow.contentView.addChildView(view);
+  configureMediaDownloadSession(view.webContents.session);
+  view.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https:\/\//i.test(String(url || ''))) {
+      setImmediate(() => view.webContents.loadURL(url).catch(() => {}));
+    }
+    return { action: 'deny' };
   });
+  view.webContents.on('will-navigate', (event, url) => {
+    if (!/^https:\/\//i.test(String(url || ''))) event.preventDefault();
+  });
+  for (const eventName of ['did-start-loading', 'did-stop-loading', 'did-navigate', 'did-navigate-in-page', 'page-title-updated']) {
+    view.webContents.on(eventName, () => notifyMediaBrowserState());
+  }
+  view.webContents.on('did-finish-load', scheduleMediaPortalInput);
+  view.webContents.on('render-process-gone', () => notifyMediaBrowserState({ crashed: true }));
+  return view;
+}
+
+function setMediaPortalBounds(bounds = {}, visible = false) {
+  const view = visible ? ensureMediaPortalView() : mediaPortalView;
+  if (!view || view.webContents.isDestroyed()) return false;
+  const content = mainWindow?.getContentBounds();
+  const maxWidth = Math.max(0, Number(content?.width || 0));
+  const maxHeight = Math.max(0, Number(content?.height || 0));
+  const x = Math.max(0, Math.min(maxWidth, Math.round(Number(bounds.x || 0))));
+  const y = Math.max(0, Math.min(maxHeight, Math.round(Number(bounds.y || 0))));
+  const width = Math.max(0, Math.min(maxWidth - x, Math.round(Number(bounds.width || 0))));
+  const height = Math.max(0, Math.min(maxHeight - y, Math.round(Number(bounds.height || 0))));
+  if (width >= 120 && height >= 80) view.setBounds({ x, y, width, height });
+  view.setVisible(!!visible && width >= 120 && height >= 80);
+  view.webContents.setAudioMuted(!visible);
+  return true;
+}
+
+function openMediaPortal(url, downloadTarget = 'download', sourceText = '', autoSubmit = false, collection = '') {
+  const value = String(url || '').trim();
+  if (!isAllowedPortalUrl(value)) return false;
+  const view = ensureMediaPortalView();
+  if (!view) return false;
+  mediaPortalRequestId += 1;
+  mediaPortalDownloadTargets.set(view.webContents, {
+    location: downloadTarget === 'favorite' ? 'favorite' : 'download',
+    collection: String(collection || '').trim(),
+  });
+  mediaPortalInputState = String(sourceText || '').trim()
+    ? { requestId: mediaPortalRequestId, value: String(sourceText).trim(), autoSubmit: !!autoSubmit }
+    : null;
+  view.webContents.loadURL(value).catch((error) => {
+    runtimeLog(`media portal load failed: ${error?.message || error}`);
+    notifyMediaBrowserState({ loadError: true });
+  });
+  notifyMediaBrowserState({ opening: true });
   return true;
 }
 
@@ -4927,16 +5096,90 @@ ipcMain.handle('media:musicSearchUrl', (_event, keyword) => musicSearchUrl(keywo
 ipcMain.handle('media:getConfig', () => mediaDirectories());
 ipcMain.handle('media:listLocal', async () => {
   const directories = mediaDirectories();
-  const items = await listMediaFiles(directories.downloadPath, directories.favoritePath);
-  return { ok: true, ...directories, items };
+  const [items, downloadCollections, favoriteCollections] = await Promise.all([
+    listMediaFiles(directories.downloadPath, directories.favoritePath),
+    listMediaCollections(directories.downloadPath),
+    listMediaCollections(directories.favoritePath),
+  ]);
+  return {
+    ok: true,
+    ...directories,
+    items,
+    collections: { downloads: downloadCollections, favorites: favoriteCollections },
+  };
 });
-ipcMain.handle('media:favoriteLocal', async (_event, filePath) => {
+ipcMain.handle('media:favoriteLocal', async (_event, filePath, collection = '') => {
   const { favoritePath } = mediaDirectories();
-  const result = await copyMediaToFavorites(filePath, favoritePath);
+  const result = await runMediaFileOperation('favorite media', () => copyMediaToFavorites(filePath, favoritePath, collection));
   if (result.ok) notifyMediaDownloadsChanged({ status: 'favorited', path: result.path });
   return result;
 });
-ipcMain.handle('media:openPortal', (_event, url, downloadTarget = 'download') => openMediaPortal(url, downloadTarget));
+ipcMain.handle('media:createCollection', async (_event, location, kind, name) => {
+  const directories = mediaDirectories();
+  const root = location === 'favorites' ? directories.favoritePath : directories.downloadPath;
+  return runMediaFileOperation('create media collection', () => createMediaCollection(root, kind, name));
+});
+ipcMain.handle('media:renameCollection', async (_event, location, kind, currentName, nextName) => {
+  const directories = mediaDirectories();
+  const root = location === 'favorites' ? directories.favoritePath : directories.downloadPath;
+  return runMediaFileOperation('rename media collection', () => renameMediaCollection(root, kind, currentName, nextName));
+});
+ipcMain.handle('media:deleteCollection', async (_event, location, kind, name) => {
+  const directories = mediaDirectories();
+  const root = location === 'favorites' ? directories.favoritePath : directories.downloadPath;
+  return runMediaFileOperation('delete media collection', () => deleteMediaCollection(root, kind, name));
+});
+ipcMain.handle('media:moveLocal', async (_event, filePath, location, collection = '') => {
+  const directories = mediaDirectories();
+  const root = location === 'favorites' ? directories.favoritePath : directories.downloadPath;
+  return runMediaFileOperation('move media file', () => moveMediaToCollection(filePath, root, collection));
+});
+ipcMain.handle('media:deleteLocal', async (_event, filePath, location) => {
+  const directories = mediaDirectories();
+  const root = location === 'favorites' ? directories.favoritePath : directories.downloadPath;
+  const value = String(filePath || '').trim();
+  if (!value || !path.isAbsolute(value) || !isPathInside(value, root) || !mediaKindForPath(value) || !fs.existsSync(value)) {
+    return { ok: false, reason: '文件已被移动或删除' };
+  }
+  return runMediaFileOperation('delete media file', async () => {
+    await shell.trashItem(value);
+    notifyMediaDownloadsChanged({ status: 'deleted', path: value });
+    return { ok: true };
+  });
+});
+ipcMain.handle('media:openPortal', (_event, url, downloadTarget = 'download', sourceText = '', autoSubmit = false, collection = '') => (
+  openMediaPortal(url, downloadTarget, sourceText, autoSubmit, collection)
+));
+ipcMain.on('media:browserBounds', (event, bounds = {}, visible = false) => {
+  if (!mainWindow || event.sender !== mainWindow.webContents) return;
+  setMediaPortalBounds(bounds, visible);
+});
+ipcMain.handle('media:browserState', () => mediaBrowserState());
+ipcMain.handle('media:browserAction', (event, action) => {
+  if (!mainWindow || event.sender !== mainWindow.webContents || !mediaPortalView || mediaPortalView.webContents.isDestroyed()) return false;
+  const webContents = mediaPortalView.webContents;
+  const navigationHistory = webContents.navigationHistory;
+  if (action === 'back' && navigationHistory.canGoBack()) navigationHistory.goBack();
+  else if (action === 'forward' && navigationHistory.canGoForward()) navigationHistory.goForward();
+  else if (action === 'reload') webContents.reload();
+  else if (action === 'stop' && webContents.isLoading()) webContents.stop();
+  else return false;
+  notifyMediaBrowserState();
+  return true;
+});
+ipcMain.handle('main:openNoteEditor', (_event, noteId) => {
+  const id = String(noteId || '').trim();
+  if (!id || !mainWindow || mainWindow.isDestroyed()) return false;
+  showMainWindow();
+  const send = () => {
+    if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
+    mainWindow.webContents.send('main:navigate', 'notes');
+    mainWindow.webContents.send('main:editNote', id);
+  };
+  if (mainWindow.webContents.isLoading()) mainWindow.webContents.once('did-finish-load', send);
+  else setTimeout(send, 40);
+  return true;
+});
 
 ipcMain.handle('update:getState', () => publicUpdateState());
 ipcMain.handle('update:check', () => checkForAppUpdates());
@@ -5392,6 +5635,72 @@ ipcMain.handle('file:showContextMenu', (event, filePath) => {
   ]);
   menu.popup({ window: owner || undefined });
   return true;
+});
+
+ipcMain.handle('ui:showItemContextMenu', (event, kind, options = {}) => {
+  const owner = BrowserWindow.fromWebContents(event.sender);
+  const items = [];
+  const action = (id, label, extra = {}) => ({ id, label, ...extra });
+  if (kind === 'clipboard') {
+    items.push(action('pin', options.pinned ? '取消置顶' : '置顶'));
+    items.push(action('favorite', options.saved ? '已收藏' : '收藏', { enabled: !options.saved }));
+    if (options.hasFile) {
+      items.push({ type: 'separator' });
+      items.push(action('open', '打开文件'));
+      items.push(action('reveal', '打开所在文件夹'));
+    }
+    items.push({ type: 'separator' });
+    items.push(action('delete', '删除'));
+  } else if (kind === 'note') {
+    items.push(action('pin', options.pinned ? '取消置顶' : '置顶'));
+    items.push(action('edit', '修改'));
+    if (options.hasFile) {
+      items.push({ type: 'separator' });
+      items.push(action('open', '打开文件'));
+      items.push(action('reveal', '打开所在文件夹'));
+    }
+    items.push({ type: 'separator' });
+    items.push(action('delete', '删除'));
+  } else if (kind === 'media') {
+    if (options.location !== 'favorites') {
+      items.push(action('favorite', options.favorite ? '已收藏' : '收藏', { enabled: !options.favorite }));
+    }
+    items.push(action('open', '打开文件'));
+    items.push(action('reveal', '打开所在文件夹'));
+    const collections = Array.isArray(options.collections)
+      ? options.collections.map((name) => String(name || '').trim()).filter(Boolean).slice(0, 50)
+      : [];
+    items.push({
+      label: '移动到收藏夹',
+      submenu: [
+        action('move:', '未分类', { type: 'checkbox', checked: !options.collection }),
+        ...collections.map((name) => action(`move:${name}`, name.slice(0, 48), { type: 'checkbox', checked: name === options.collection })),
+      ],
+    });
+    items.push({ type: 'separator' });
+    items.push(action('delete', '删除'));
+  } else if (kind === 'media-folder') {
+    items.push(action('rename', '修改收藏夹名称'));
+    items.push(action('delete', '删除收藏夹'));
+  } else {
+    return '';
+  }
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (value = '') => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+    const bind = (template) => template.map((item) => {
+      if (item.type === 'separator') return item;
+      if (Array.isArray(item.submenu)) return { ...item, submenu: bind(item.submenu) };
+      const { id, ...menuItem } = item;
+      return { ...menuItem, click: () => finish(id) };
+    });
+    const menu = Menu.buildFromTemplate(bind(items));
+    menu.popup({ window: owner || undefined, callback: () => finish('') });
+  });
 });
 
 ipcMain.handle('file:getIcon', async (_event, filePath) => {

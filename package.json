@@ -1,6 +1,6 @@
 {
   "name": "xuannian",
-  "version": "8.0.0",
+  "version": "8.0.1",
   "description": "玄念本地剪切板、收藏、置顶便签与全盘查找工具",
   "main": "src/main.js",
   "scripts": {

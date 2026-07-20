@@ -112,9 +112,11 @@ async function run() {
   assert(videoThumbnailSource.includes('window.captureImageThumbnail'), 'media decoder page must expose its image fallback');
   assert(videoThumbnailSource.includes('window.captureVideoThumbnail'), 'video thumbnail decoder page must expose its capture function');
   assert(videoThumbnailSource.includes("canvas.toDataURL('image/jpeg', 0.82)"), 'video fallback must return a compressed still frame');
-  assert(/function openMediaPortal\([\s\S]*?partition:\s*'persist:xuannian-media-portals'[\s\S]*?nodeIntegration:\s*false[\s\S]*?sandbox:\s*true/.test(mainSource), 'third-party media sites must run in an isolated sandboxed session');
+  assert(/function ensureMediaPortalView\([\s\S]*?new WebContentsView[\s\S]*?partition:\s*'persist:xuannian-media-portals'[\s\S]*?nodeIntegration:\s*false[\s\S]*?sandbox:\s*true/.test(mainSource), 'third-party media sites must run in an isolated sandboxed view');
+  assert(/setWindowOpenHandler\([\s\S]*?loadURL\(url\)[\s\S]*?action:\s*'deny'/.test(mainSource), 'third-party links must stay in the embedded media view');
   assert(mainSource.includes("ipcMain.handle('file:showContextMenu'"), 'local file rows need a native open/reveal context menu');
   assert(mediaLibrarySource.includes('async function scanMediaDirectory'), 'local media files must be derived from the selected folders');
+  assert(mediaLibrarySource.includes('async function deleteMediaCollection'), 'media collections need a file-preserving delete path');
   assert(!mediaLibrarySource.includes('fetch('), 'media library must not call third-party private download APIs');
 
   const indexSource = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
@@ -122,6 +124,9 @@ async function run() {
   const stickySource = fs.readFileSync(path.join(__dirname, '..', 'sticky.html'), 'utf8');
   const wheelSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'wheel-scroll.js'), 'utf8');
   const mediaStyleSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'media-library.css'), 'utf8');
+  assert(indexSource.includes('id="mediaBrowserSurface"'), 'media download sites must have an embedded browser surface');
+  assert(indexSource.includes('id="mediaDownloadBubble"'), 'download progress must remain visible in the main window');
+  assert(!indexSource.includes('data-media-filters="downloads"'), 'media lists must use only the shared video/music selector');
   assert(indexSource.includes('getFileThumbnail: (filePath,size)=> nativeApi.getFileThumbnail'), 'unified renderer API must forward native thumbnail requests');
   assert(indexSource.includes('<svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="5.5"></circle><path d="m15 15 5 5"></path></svg>'), 'full-disk search navigation must use a plain magnifying-glass icon');
   assert(!indexSource.includes('<path d="M4 4h5"></path><path d="M4 4v5"></path>'), 'full-disk search navigation must not include the old corner mark');
