@@ -1,7 +1,8 @@
 #mediaView{padding-bottom:14px}
 .media-nav{display:flex;align-items:center;gap:14px;margin-bottom:14px;width:100%;max-width:100%}
-.media-kind-tabs,.media-tabs{display:flex;align-items:center;gap:4px;padding:4px;border:1px solid var(--line);border-radius:8px;background:var(--panel-soft)}
-.media-tabs{margin-left:auto}
+.media-nav-left,.media-nav-right{display:flex;align-items:center;gap:12px;min-width:0}
+.media-nav-right{margin-left:auto;gap:8px}
+.media-kind-tabs,.media-tabs,.media-favorite-tabs{display:flex;align-items:center;gap:4px;padding:4px;border:1px solid var(--line);border-radius:8px;background:var(--panel-soft)}
 .media-tab{height:34px;padding:0 14px;border-radius:6px;color:var(--muted);font-size:12px;font-weight:800;white-space:nowrap}
 .media-tab.active{background:var(--panel);color:var(--text);box-shadow:0 1px 4px rgba(20,24,30,.09)}
 body.dark .media-tab.active{background:#3d3e42;box-shadow:none}
@@ -25,7 +26,8 @@ body.dark .media-tab.active{background:#3d3e42;box-shadow:none}
 .media-browser-status{flex:none;max-width:82px;color:var(--muted);font-size:11px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .media-browser-surface{position:relative;flex:1;min-height:220px;display:grid;place-items:center;background:var(--panel);color:var(--muted);font-size:12px}
 .media-browser-shell.has-content .media-browser-surface>span{display:none}
-.media-search-toolbar{height:40px;display:grid;grid-template-columns:30px minmax(0,1fr) 34px;align-items:center;margin-bottom:10px;border:1px solid var(--line);border-radius:8px;background:var(--panel)}
+.media-search-row{display:grid;grid-template-columns:minmax(0,1fr) auto 38px;align-items:center;gap:10px;margin-bottom:10px}
+.media-search-toolbar{height:40px;min-width:0;display:grid;grid-template-columns:30px minmax(0,1fr) 34px;align-items:center;border:1px solid var(--line);border-radius:8px;background:var(--panel)}
 .media-search-icon{display:grid;place-items:center;color:var(--muted)}
 .media-search-icon svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .media-search-input{height:38px;min-width:0;border:0;background:transparent;color:var(--text);font-size:12px;outline:none}
@@ -36,8 +38,6 @@ body.dark .media-tab.active{background:#3d3e42;box-shadow:none}
 .media-icon-button:hover{color:var(--text);background:var(--panel-soft)}
 .media-icon-button svg{width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
 .media-list-meta-row{display:flex;align-items:flex-start;gap:12px;min-height:40px;margin-bottom:10px}
-.media-downloads-meta-row{justify-content:flex-end}
-.media-list-toolbar{min-width:max-content;display:flex;align-items:center;justify-content:flex-end;gap:8px;margin-left:auto;min-height:40px}
 .media-list-summary{color:var(--muted);font-size:12px;font-weight:700;white-space:nowrap}
 .media-collections-toolbar{min-width:0;flex:1;display:flex;align-items:flex-start;gap:7px;min-height:40px;overflow:visible}
 .media-collections-toolbar>span{flex:none;color:var(--muted);font-size:11px;font-weight:800}
@@ -75,7 +75,7 @@ body.dark .media-row-action.active{color:#ffd862;background:#4d4523}
 .media-empty{height:100%;display:grid;place-items:center;padding:24px;color:var(--muted);font-size:12px;text-align:center}
 @media (max-width:900px){
   .media-nav{width:100%;overflow:visible}
-  .media-kind-tabs,.media-tabs{min-width:0;overflow-x:auto}
+  .media-kind-tabs,.media-tabs,.media-favorite-tabs{min-width:0;overflow-x:auto}
   .media-tab{padding:0 10px}
   .media-launch-band{grid-template-columns:1fr}
   .media-launch-actions{justify-content:flex-end}
@@ -84,11 +84,12 @@ body.dark .media-row-action.active{color:#ffd862;background:#4d4523}
 }
 @media (max-width:620px){
   .media-nav{gap:8px}
+  .media-nav-left,.media-nav-right{gap:7px}
   .media-tab{padding:0 8px}
   .media-browser-status{display:none}
   .media-row{grid-template-columns:minmax(150px,1fr) 132px;gap:6px;padding:0 8px}
   .media-size{display:none}
   .media-row-actions{gap:2px}
   .media-list-meta-row{gap:8px}
-  .media-list-toolbar{gap:5px}
+  .media-search-row{gap:6px}
 }

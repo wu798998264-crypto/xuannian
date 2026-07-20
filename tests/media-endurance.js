@@ -126,12 +126,27 @@ async function run() {
           totalBytes:100,
           percent:(iterations%100)+1,
         });
+        if(iterations%7===0){
+          updateMediaDownloadTask({
+            id:'endurance-completed-'+iterations,
+            name:'completed-'+iterations+'.mp4',
+            status:'completed',
+            receivedBytes:100,
+            totalBytes:100,
+            percent:100,
+            updatedAt:Date.now()+iterations,
+          });
+        }
         maxRows=Math.max(maxRows,document.querySelectorAll('#mediaDownloadsList [data-media-row],#mediaFavoritesList [data-media-row]').length);
         maxDomNodes=Math.max(maxDomNodes,document.querySelectorAll('*').length);
         iterations+=1;
         if(iterations%12===0) await new Promise(resolve=>requestAnimationFrame(resolve));
       }
-      return {iterations,maxRows,maxDomNodes,downloadTasks:state.media.downloadTasks.length};
+      return {
+        iterations,maxRows,maxDomNodes,
+        downloadTasks:state.media.downloadTasks.length,
+        completedTasks:state.media.downloadTasks.filter(task=>task.status==='completed').length,
+      };
     })()
   `, true);
   const finalHeap = await rendererHeap(window);
@@ -140,7 +155,8 @@ async function run() {
   assert(metrics.iterations > 100, `endurance loop completed too few iterations: ${metrics.iterations}`);
   assert(metrics.maxRows <= 96, `media virtual DOM exceeded 96 total rows: ${metrics.maxRows}`);
   assert(metrics.maxDomNodes < 3200, `media endurance DOM grew without bound: ${metrics.maxDomNodes}`);
-  assert(metrics.downloadTasks <= 8, `download task state grew without bound: ${metrics.downloadTasks}`);
+  assert(metrics.completedTasks <= 10, `completed download history exceeded ten records: ${metrics.completedTasks}`);
+  assert(metrics.downloadTasks <= 18, `download task state grew without bound: ${metrics.downloadTasks}`);
   assert(heapGrowth < 96 * 1024 * 1024, `renderer heap grew by ${heapGrowth} bytes`);
   window.destroy();
 }

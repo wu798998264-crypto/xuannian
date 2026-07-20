@@ -848,6 +848,38 @@ async function run() {
         ring:document.querySelector('#mediaDownloadRing').getAttribute('stroke-dasharray'),
         tasks:document.querySelectorAll('#mediaDownloadTaskList .media-download-task').length,
       };
+      for(let index=0;index<12;index+=1){
+        updateMediaDownloadTask({
+          id:'runtime-completed-'+index,
+          name:'completed-'+index+'.mp4',
+          status:'completed',
+          receivedBytes:100,
+          totalBytes:100,
+          percent:100,
+          updatedAt:1000+index,
+        });
+      }
+      const completedHistory={
+        count:state.media.downloadTasks.filter(task=>task.status==='completed').length,
+        names:state.media.downloadTasks.filter(task=>task.status==='completed').map(task=>task.name),
+        rendered:document.querySelectorAll('#mediaDownloadTaskList .media-download-task').length,
+        summary:document.querySelector('#mediaDownloadSummary').textContent.trim(),
+      };
+      const bubbleVisibility={};
+      for(const tab of ['portal','downloads','favorites']){
+        setMediaTab(tab);
+        bubbleVisibility[tab]=getComputedStyle(document.querySelector('#mediaDownloadBubble')).display!=='none';
+      }
+      setMediaTab('downloads');
+      const downloadsSearchRow=document.querySelector('#mediaDownloadsSearch').closest('.media-search-row');
+      const favoritesSearchRow=document.querySelector('#mediaFavoritesSearch').closest('.media-search-row');
+      const mediaLayout={
+        favoriteSeparate:!!document.querySelector('.media-nav-left > .media-favorite-tabs [data-media-tab="favorites"]'),
+        downloadsRight:!!document.querySelector('.media-nav-right #mediaTabs [data-media-tab="downloads"]'),
+        bubbleInNav:!!document.querySelector('.media-nav-right > #mediaDownloadBubble'),
+        downloadCountAfterSearch:downloadsSearchRow?.children[1]?.id==='mediaDownloadsSummary',
+        favoriteCountAfterSearch:favoritesSearchRow?.children[1]?.id==='mediaFavoritesSummary',
+      };
       state.media.downloadTasks=[];
       state.media.downloadsExpanded=false;
       renderMediaDownloadBubble();
@@ -866,7 +898,7 @@ async function run() {
         hasAllFilter:!!document.querySelector('[data-media-filters] [data-media-type="all"]'),
         copyActions:document.querySelectorAll('#mediaDownloadsList [data-media-action="copy"]').length,
         deleteActions:document.querySelectorAll('#mediaDownloadsList [data-media-action="delete"]').length,
-        downloadBubble,
+        downloadBubble,completedHistory,bubbleVisibility,mediaLayout,
         bubblePanel:document.querySelector('#mediaDownloadBubble').closest('[data-media-panel]')?.dataset.mediaPanel||'',
         provider:document.querySelector('#mediaVideoProvider').textContent.trim(),
       };
@@ -905,7 +937,20 @@ async function run() {
   assert.strictEqual(mediaLibraryMetrics.copyActions, 0);
   assert.strictEqual(mediaLibraryMetrics.deleteActions, mediaLibraryMetrics.rows);
   assert.deepStrictEqual(mediaLibraryMetrics.downloadBubble, {active:true,open:true,ring:'50 100',tasks:1});
-  assert.strictEqual(mediaLibraryMetrics.bubblePanel, 'downloads');
+  assert.strictEqual(mediaLibraryMetrics.completedHistory.count, 10);
+  assert.strictEqual(mediaLibraryMetrics.completedHistory.rendered, 11, 'active task plus ten completed records should be visible');
+  assert.strictEqual(mediaLibraryMetrics.completedHistory.names.includes('completed-0.mp4'), false);
+  assert.strictEqual(mediaLibraryMetrics.completedHistory.names.includes('completed-1.mp4'), false);
+  assert(mediaLibraryMetrics.completedHistory.summary.includes('1 项进行中'));
+  assert.deepStrictEqual(mediaLibraryMetrics.bubbleVisibility, {portal:true,downloads:true,favorites:true});
+  assert.deepStrictEqual(mediaLibraryMetrics.mediaLayout, {
+    favoriteSeparate:true,
+    downloadsRight:true,
+    bubbleInNav:true,
+    downloadCountAfterSearch:true,
+    favoriteCountAfterSearch:true,
+  });
+  assert.strictEqual(mediaLibraryMetrics.bubblePanel, '');
   assert(mediaLibraryMetrics.provider.includes('哔哩哔哩'));
   assert.strictEqual(rendererErrors.length, 0, `renderer errors: ${rendererErrors.join(' | ')}`);
   if (process.env.XUANNIAN_RUNTIME_SCREENSHOT) {

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>玄念8.0.3</title>
+  <title>玄念8.0.4</title>
   <link rel="icon" href="src/xuannian-logo-256.png" />
   <link rel="stylesheet" href="src/media-library.css" />
   <style>
@@ -1051,14 +1051,31 @@
         <h1>媒体库</h1>
         <p>视频下载与音乐搜索</p>
       </div>
-      <div class="media-nav">
-        <div class="media-kind-tabs" id="mediaKindTabs" role="tablist" aria-label="媒体类型">
-          <button class="media-tab active" data-media-kind="video" role="tab">视频</button>
-          <button class="media-tab" data-media-kind="audio" role="tab">音乐</button>
+      <div class="media-nav" id="mediaNav">
+        <div class="media-nav-left">
+          <div class="media-kind-tabs" id="mediaKindTabs" role="tablist" aria-label="媒体类型">
+            <button class="media-tab active" data-media-kind="video" role="tab">视频</button>
+            <button class="media-tab" data-media-kind="audio" role="tab">音乐</button>
+          </div>
+          <div class="media-favorite-tabs" role="tablist" aria-label="媒体收藏">
+            <button class="media-tab" data-media-tab="favorites" role="tab">收藏</button>
+          </div>
         </div>
-        <div class="media-tabs" id="mediaTabs" role="tablist" aria-label="媒体库视图">
-          <button class="media-tab" data-media-tab="downloads" role="tab">已下载</button>
-          <button class="media-tab" data-media-tab="favorites" role="tab">收藏</button>
+        <div class="media-nav-right">
+          <div class="media-tabs" id="mediaTabs" role="tablist" aria-label="已下载媒体">
+            <button class="media-tab" data-media-tab="downloads" role="tab">已下载</button>
+          </div>
+          <div class="media-download-bubble" id="mediaDownloadBubble">
+            <button class="media-download-toggle" id="mediaDownloadToggle" type="button" title="下载记录" aria-expanded="false">
+              <svg viewBox="0 0 24 24"><path d="M12 4v11"></path><path d="m8 11 4 4 4-4"></path><path d="M5 19h14"></path></svg>
+              <svg class="media-download-ring" viewBox="0 0 36 36"><circle id="mediaDownloadRing" cx="18" cy="18" r="16" pathLength="100" stroke-dasharray="0 100"></circle></svg>
+              <span class="media-download-count" id="mediaDownloadCount">0</span>
+            </button>
+            <div class="media-download-popover" id="mediaDownloadPopover">
+              <div class="media-download-head"><strong>下载记录</strong><span id="mediaDownloadSummary">暂无任务</span></div>
+              <div class="media-download-list" id="mediaDownloadTaskList"></div>
+            </div>
+          </div>
         </div>
       </div>
       <div class="media-panels">
@@ -1089,42 +1106,29 @@
           </div>
         </section>
         <section class="media-panel" data-media-panel="downloads">
-          <div class="media-search-toolbar">
-            <span class="media-search-icon"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"></circle><path d="m20 20-3.5-3.5"></path></svg></span>
-            <input class="media-search-input" id="mediaDownloadsSearch" placeholder="搜索已下载内容" autocomplete="off" spellcheck="false" />
-            <button class="media-search-clear" id="clearMediaDownloadsSearch" type="button" title="清空搜索">×</button>
-          </div>
-          <div class="media-list-meta-row media-downloads-meta-row">
-            <div class="media-list-toolbar">
-              <span class="media-list-summary" id="mediaDownloadsSummary"></span>
-              <div class="media-download-bubble" id="mediaDownloadBubble">
-                <button class="media-download-toggle" id="mediaDownloadToggle" type="button" title="下载进度" aria-expanded="false">
-                  <svg viewBox="0 0 24 24"><path d="M12 4v11"></path><path d="m8 11 4 4 4-4"></path><path d="M5 19h14"></path></svg>
-                  <svg class="media-download-ring" viewBox="0 0 36 36"><circle id="mediaDownloadRing" cx="18" cy="18" r="16" pathLength="100" stroke-dasharray="0 100"></circle></svg>
-                  <span class="media-download-count" id="mediaDownloadCount">0</span>
-                </button>
-                <div class="media-download-popover" id="mediaDownloadPopover">
-                  <div class="media-download-head"><strong>下载任务</strong><span id="mediaDownloadSummary">暂无任务</span></div>
-                  <div class="media-download-list" id="mediaDownloadTaskList"></div>
-                </div>
-              </div>
-              <button class="media-icon-button" data-media-refresh type="button" title="刷新"><svg viewBox="0 0 24 24"><path d="M20 7v5h-5"></path><path d="M4 17v-5h5"></path><path d="M6.1 9a7 7 0 0 1 11.7-2.6L20 8"></path><path d="m4 16 2.2 1.6A7 7 0 0 0 18 15"></path></svg></button>
+          <div class="media-search-row">
+            <div class="media-search-toolbar">
+              <span class="media-search-icon"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"></circle><path d="m20 20-3.5-3.5"></path></svg></span>
+              <input class="media-search-input" id="mediaDownloadsSearch" placeholder="搜索已下载内容" autocomplete="off" spellcheck="false" />
+              <button class="media-search-clear" id="clearMediaDownloadsSearch" type="button" title="清空搜索">×</button>
             </div>
+            <span class="media-list-summary" id="mediaDownloadsSummary"></span>
+            <button class="media-icon-button" data-media-refresh type="button" title="刷新"><svg viewBox="0 0 24 24"><path d="M20 7v5h-5"></path><path d="M4 17v-5h5"></path><path d="M6.1 9a7 7 0 0 1 11.7-2.6L20 8"></path><path d="m4 16 2.2 1.6A7 7 0 0 0 18 15"></path></svg></button>
           </div>
           <div class="media-list-shell"><div class="media-list" id="mediaDownloadsList"></div></div>
         </section>
         <section class="media-panel" data-media-panel="favorites">
-          <div class="media-search-toolbar">
-            <span class="media-search-icon"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"></circle><path d="m20 20-3.5-3.5"></path></svg></span>
-            <input class="media-search-input" id="mediaFavoritesSearch" placeholder="搜索收藏内容" autocomplete="off" spellcheck="false" />
-            <button class="media-search-clear" id="clearMediaFavoritesSearch" type="button" title="清空搜索">×</button>
+          <div class="media-search-row">
+            <div class="media-search-toolbar">
+              <span class="media-search-icon"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"></circle><path d="m20 20-3.5-3.5"></path></svg></span>
+              <input class="media-search-input" id="mediaFavoritesSearch" placeholder="搜索收藏内容" autocomplete="off" spellcheck="false" />
+              <button class="media-search-clear" id="clearMediaFavoritesSearch" type="button" title="清空搜索">×</button>
+            </div>
+            <span class="media-list-summary" id="mediaFavoritesSummary"></span>
+            <button class="media-icon-button" data-media-refresh type="button" title="刷新"><svg viewBox="0 0 24 24"><path d="M20 7v5h-5"></path><path d="M4 17v-5h5"></path><path d="M6.1 9a7 7 0 0 1 11.7-2.6L20 8"></path><path d="m4 16 2.2 1.6A7 7 0 0 0 18 15"></path></svg></button>
           </div>
           <div class="media-list-meta-row">
             <div class="media-collections-toolbar" data-media-collection-bar="favorites"><span>收藏夹</span><div class="media-collection-list" id="mediaFavoriteCollections"></div><button class="media-collection-add" data-media-add-collection="favorites" type="button" title="新建收藏夹">+</button></div>
-            <div class="media-list-toolbar">
-              <span class="media-list-summary" id="mediaFavoritesSummary"></span>
-              <button class="media-icon-button" data-media-refresh type="button" title="刷新"><svg viewBox="0 0 24 24"><path d="M20 7v5h-5"></path><path d="M4 17v-5h5"></path><path d="M6.1 9a7 7 0 0 1 11.7-2.6L20 8"></path><path d="m4 16 2.2 1.6A7 7 0 0 0 18 15"></path></svg></button>
-            </div>
           </div>
           <div class="media-list-shell"><div class="media-list" id="mediaFavoritesList"></div></div>
         </section>
@@ -1628,7 +1632,7 @@ function createBrowserFallbackAPI(){
     async cancelFileSearch(){ return true; },
     async resolveMediaVideoProvider(value){ return resolveMediaVideoProviderFallback(value); },
     async getMediaMusicSearchUrl(keyword){ return mediaMusicSearchUrlFallback(keyword); },
-    async getMediaConfig(){ return {downloadPath:'浏览器下载目录',favoritePath:'浏览器收藏目录'}; },
+    async getMediaConfig(){ return {downloadPath:'浏览器下载目录',favoritePath:'浏览器收藏目录',downloadHistory:[]}; },
     async listLocalMedia(){ return {ok:true,downloadPath:'浏览器下载目录',favoritePath:'浏览器收藏目录',items:[],collections:{downloads:{video:[],audio:[]},favorites:{video:[],audio:[]}}}; },
     async favoriteLocalMedia(){ return {ok:false,reason:'预览环境不支持本地文件收藏'}; },
     async createMediaCollection(){ return {ok:false,reason:'预览环境不支持收藏夹操作'}; },
@@ -1680,7 +1684,7 @@ function createBrowserFallbackAPI(){
     async deleteInspiration(id){ const data=read(); data.inspirations=data.inspirations.filter(x=>x.id!==id); write(data); return data.inspirations; },
     async getSettings(){ return read().settings; },
     async saveSettings(settings){ const data=read(); data.settings={...data.settings,...settings}; write(data); return data.settings; },
-    async getUpdateState(){ return {status:'current',currentVersion:'8.0.3',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false}; },
+    async getUpdateState(){ return {status:'current',currentVersion:'8.0.4',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false}; },
     async checkForUpdates(){ return this.getUpdateState(); },
     async downloadUpdate(){ return this.getUpdateState(); },
     async installUpdate(){ return false; },
@@ -1838,6 +1842,7 @@ async function init(){
   state.update=update;
   state.media.downloadPath=mediaConfig?.downloadPath||'';
   state.media.favoritePath=mediaConfig?.favoritePath||'';
+  state.media.downloadTasks=normalizeMediaDownloadHistory(mediaConfig?.downloadHistory);
   state.lastNativeRecordId=state.records[0]?.id||'';
   state.activeNoteProject=state.noteProjects[0]?.id || null;
   state.activeStickyProject=state.stickyProjects[0]?.id || null;
@@ -2113,7 +2118,7 @@ function bindEvents(){
     $('#fileSearchInput').focus();
   });
   $('#clearStickySearch').addEventListener('click', ()=>{ $('#stickySearch').value=''; renderStickyNotes(); });
-  $('#mediaTabs')?.addEventListener('click',event=>{
+  $('#mediaNav')?.addEventListener('click',event=>{
     const button=event.target.closest('[data-media-tab]');
     if(button) setMediaTab(button.dataset.mediaTab);
   });
@@ -3177,9 +3182,25 @@ function mediaDownloadStatusLabel(status){
   return '下载中';
 }
 
+function normalizeMediaDownloadHistory(items=[]){
+  return (Array.isArray(items)?items:[])
+    .filter(item=>item?.id&&item.status==='completed')
+    .map(item=>({
+      ...item,
+      id:String(item.id),
+      name:String(item.name||'下载任务'),
+      status:'completed',
+      percent:100,
+      updatedAt:Number(item.updatedAt||0),
+    }))
+    .sort((left,right)=>right.updatedAt-left.updatedAt)
+    .slice(0,10);
+}
+
 function renderMediaDownloadBubble(){
   const tasks=state.media.downloadTasks||[];
   const active=tasks.filter(task=>['downloading','paused','interrupted'].includes(task.status));
+  const completed=tasks.filter(task=>task.status==='completed');
   const bubble=$('#mediaDownloadBubble');
   if(!bubble) return;
   bubble.classList.toggle('active',tasks.length>0);
@@ -3192,7 +3213,7 @@ function renderMediaDownloadBubble(){
   const percent=weightedTotal>0?Math.round((weightedReceived/weightedTotal)*100):(active.length?Math.round(active.reduce((sum,task)=>sum+Number(task.percent||0),0)/active.length):0);
   $('#mediaDownloadRing')?.setAttribute('stroke-dasharray',`${Math.max(0,Math.min(100,percent))} 100`);
   const summary=$('#mediaDownloadSummary');
-  if(summary) summary.textContent=active.length?`${active.length} 项进行中 · ${percent}%`:(tasks.length?'正在整理已完成项目':'暂无任务');
+  if(summary) summary.textContent=active.length?`${active.length} 项进行中 · ${percent}%`:(completed.length?`最近 ${completed.length} 条已完成`:'暂无任务');
   const list=$('#mediaDownloadTaskList');
   if(!list) return;
   list.innerHTML=tasks.length?tasks.map(task=>{
@@ -3204,20 +3225,28 @@ function renderMediaDownloadBubble(){
 
 function updateMediaDownloadTask(task){
   if(!task?.id) return;
-  const index=state.media.downloadTasks.findIndex(item=>item.id===task.id);
-  if(index>=0) state.media.downloadTasks[index]={...state.media.downloadTasks[index],...task};
-  else state.media.downloadTasks.unshift(task);
+  const existing=state.media.downloadTasks.find(item=>item.id===task.id)||{};
+  const next={...existing,...task,updatedAt:Number(task.updatedAt||Date.now())};
+  state.media.downloadTasks=[next,...state.media.downloadTasks.filter(item=>item.id!==task.id)];
+  const retainedCompletedIds=new Set(
+    state.media.downloadTasks
+      .filter(item=>item.status==='completed')
+      .sort((left,right)=>Number(right.updatedAt||0)-Number(left.updatedAt||0))
+      .slice(0,10)
+      .map(item=>item.id)
+  );
+  state.media.downloadTasks=state.media.downloadTasks.filter(item=>item.status!=='completed'||retainedCompletedIds.has(item.id));
   clearTimeout(mediaDownloadRemovalTimers.get(task.id));
   mediaDownloadRemovalTimers.delete(task.id);
-  if(['completed','cancelled','error'].includes(task.status)){
+  if(['cancelled','error'].includes(task.status)){
     const timer=setTimeout(()=>{
       state.media.downloadTasks=state.media.downloadTasks.filter(item=>item.id!==task.id);
       mediaDownloadRemovalTimers.delete(task.id);
       renderMediaDownloadBubble();
-    },task.status==='completed'?4500:8000);
+    },8000);
     mediaDownloadRemovalTimers.set(task.id,timer);
-    if(task.status==='completed'&&state.view==='media') refreshMediaLibrary({quiet:true});
   }
+  if(task.status==='completed'&&state.view==='media') refreshMediaLibrary({quiet:true});
   renderMediaDownloadBubble();
 }
 
@@ -3352,7 +3381,7 @@ function setMediaKind(kind,{showPortal=false}={}){
 function setMediaTab(tab){
   if(!['portal','downloads','favorites'].includes(tab)) tab='portal';
   state.media.tab=tab;
-  $$('#mediaTabs [data-media-tab]').forEach(button=>button.classList.toggle('active',button.dataset.mediaTab===tab));
+  $$('#mediaNav [data-media-tab]').forEach(button=>button.classList.toggle('active',button.dataset.mediaTab===tab));
   $$('[data-media-panel]').forEach(panel=>panel.classList.toggle('active',panel.dataset.mediaPanel===tab));
   startMediaRefreshTimer();
   if(['downloads','favorites'].includes(tab)) refreshMediaLibrary({quiet:!!state.media.items.length});
@@ -6326,7 +6355,7 @@ function showUpdateDialog(){
   showModal(`
     <div data-update-dialog>
       <div class="modal-header"><h3>软件更新</h3><button class="modal-close" id="closeModal">×</button></div>
-      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '8.0.3')}</b><span>${update.version?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
+      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '8.0.4')}</b><span>${update.version?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
       <div class="modal-message">${escapeHtml(updateStatusText())}</div>
       <p class="update-network-tip">提示：开启 VPN 后再检测更新，结果会更加准确。</p>
       ${busy||downloaded?`<div class="update-progress"><span style="width:${downloaded?100:progress}%"></span></div>`:''}

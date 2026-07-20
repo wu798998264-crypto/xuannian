@@ -119,6 +119,9 @@ async function run() {
   assert(mainSource.includes('MEDIA_PORTAL_IDLE_DESTROY_MS = 3 * 60 * 1000'), 'idle media websites must release their renderer process');
   assert(mainSource.includes('MEDIA_PORTAL_HISTORY_LIMIT = 20'), 'embedded media navigation history must remain bounded');
   assert(mainSource.includes('MEDIA_PORTAL_CACHE_LIMIT_BYTES = 128 * 1024 * 1024'), 'embedded website HTTP cache must remain bounded');
+  assert(mainSource.includes("MEDIA_DOWNLOAD_HISTORY_FILE = 'xuannian-media-download-history.json'"), 'completed download history must be stored outside the main favorites data');
+  assert(mainSource.includes('function sanitizeMediaDownloadHistory(') && mainSource.includes('.slice(0, 10);'), 'completed download history must retain only the latest ten records');
+  assert(mainSource.includes('rememberCompletedMediaDownload(completedTask);'), 'completed downloads must be persisted before the renderer is notified');
   assert(mainSource.includes('function destroyMediaPortalView('), 'embedded media browser must have an explicit destruction path');
   assert(mainSource.includes('history.removeEntryAtIndex(removeIndex)'), 'embedded media history must prune old entries');
   assert(mainSource.includes('await portalSession.clearCache()'), 'oversized embedded website cache must be cleared');
@@ -136,8 +139,12 @@ async function run() {
   assert(indexSource.includes('id="mediaDownloadBubble"'), 'download progress must remain visible in the main window');
   assert(!indexSource.includes('data-media-filters="downloads"'), 'media lists must use only the shared video/music selector');
   assert(indexSource.includes('id="mediaKindTabs"'), 'video and music must use two direct buttons');
+  assert(indexSource.includes('class="media-favorite-tabs"'), 'favorites must remain a separate control beside video and music');
+  assert(indexSource.includes('class="media-nav-right"') && indexSource.includes('id="mediaDownloadBubble"'), 'downloads and their record bubble must stay in the right-side navigation group');
   assert(!indexSource.includes('data-media-tab="portal"'), 'the redundant media download tab must be removed');
   assert(indexSource.includes('id="mediaDownloadsSearch"') && indexSource.includes('id="mediaFavoritesSearch"'), 'downloaded and favorite media lists need search fields');
+  assert(indexSource.includes('class="media-search-row"'), 'media file counts must share the search row');
+  assert(indexSource.includes('function normalizeMediaDownloadHistory('), 'renderer must restore persisted completed-download history');
   assert(indexSource.includes('id="settingMediaDownloadPath"') && indexSource.includes('id="settingMediaFavoritePath"'), 'media paths must live in settings');
   assert(!indexSource.includes('id="clearMediaCache"') && !indexSource.includes('function clearMediaCache('), 'media temporary storage must not expose bulk cache deletion');
   assert(!indexSource.includes('id="mediaDownloadCollections"'), 'downloaded media must not be split into categories');

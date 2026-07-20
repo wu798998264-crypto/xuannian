@@ -155,6 +155,7 @@ const MEDIA_PORTAL_IDLE_DESTROY_MS = 3 * 60 * 1000;
 const MEDIA_PORTAL_HISTORY_LIMIT = 20;
 const MEDIA_PORTAL_CACHE_LIMIT_BYTES = 128 * 1024 * 1024;
 const MEDIA_PORTAL_CACHE_CHECK_INTERVAL_MS = 60 * 1000;
+const MEDIA_DOWNLOAD_HISTORY_FILE = 'xuannian-media-download-history.json';
 const STARTUP_MIGRATION_STATE_FILE = 'xuannian-migration-state.json';
 const RECORDS_JOURNAL_FILE = 'xuannian-records.json';
 const RESIZE_EDGES = new Set(['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw']);
@@ -2358,6 +2359,47 @@ function mediaDirectories() {
   return { downloadPath, favoritePath };
 }
 
+function sanitizeMediaDownloadHistory(items = []) {
+  return (Array.isArray(items) ? items : [])
+    .filter((item) => item && item.id && item.status === 'completed')
+    .map((item) => ({
+      id: String(item.id).slice(0, 160),
+      name: String(item.name || '下载任务').slice(0, 260),
+      path: String(item.path || '').slice(0, 4096),
+      location: item.location === 'favorites' ? 'favorites' : 'downloads',
+      status: 'completed',
+      receivedBytes: Math.max(0, Number(item.receivedBytes || 0)),
+      totalBytes: Math.max(0, Number(item.totalBytes || 0)),
+      percent: 100,
+      updatedAt: Math.max(0, Number(item.updatedAt || 0)),
+    }))
+    .sort((left, right) => right.updatedAt - left.updatedAt)
+    .slice(0, 10);
+}
+
+function mediaDownloadHistoryFile() {
+  return path.join(app.getPath('userData'), MEDIA_DOWNLOAD_HISTORY_FILE);
+}
+
+function loadMediaDownloadHistory() {
+  const payload = readJsonWithRecoverySync(mediaDownloadHistoryFile(), { version: 1, items: [] });
+  return sanitizeMediaDownloadHistory(payload?.items);
+}
+
+function rememberCompletedMediaDownload(task) {
+  try {
+    const items = sanitizeMediaDownloadHistory([
+      task,
+      ...loadMediaDownloadHistory().filter((item) => item.id !== task.id),
+    ]);
+    writeJsonAtomicSync(mediaDownloadHistoryFile(), JSON.stringify({ version: 1, items }));
+    return items;
+  } catch (error) {
+    runtimeLog(`media download history persistence failed: ${error?.stack || error}`);
+    return [];
+  }
+}
+
 function notifyMediaDownloadsChanged(payload = {}) {
   if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
   mainWindow.webContents.send('media:downloadsChanged', payload || {});
@@ -2453,7 +2495,9 @@ function configureMediaDownloadSession(electronSession) {
     });
     item.once('done', (_doneEvent, state) => {
       if (state === 'completed') {
-        notifyMediaDownloadProgress(progressPayload('completed'));
+        const completedTask = progressPayload('completed');
+        rememberCompletedMediaDownload(completedTask);
+        notifyMediaDownloadProgress(completedTask);
         notifyMediaDownloadsChanged({ status: 'completed', path: destination, favorite: favoriteDownload, message: favoriteDownload ? '媒体已下载到收藏目录' : '媒体已下载' });
       } else if (state !== 'cancelled') {
         notifyMediaDownloadProgress(progressPayload('error'));
@@ -5176,7 +5220,10 @@ ipcMain.handle('media:resolveVideoProvider', (_event, value) => {
   };
 });
 ipcMain.handle('media:musicSearchUrl', (_event, keyword) => musicSearchUrl(keyword));
-ipcMain.handle('media:getConfig', () => mediaDirectories());
+ipcMain.handle('media:getConfig', () => ({
+  ...mediaDirectories(),
+  downloadHistory: loadMediaDownloadHistory(),
+}));
 ipcMain.handle('media:listLocal', async () => {
   const directories = mediaDirectories();
   const [items, downloadCollections, favoriteCollections] = await Promise.all([
