@@ -718,7 +718,11 @@ async function run() {
   const fileDoubleClickMetrics = await window.webContents.executeJavaScript(`
     (async()=>{
       const opened=[];
+      const copied=[];
+      const contextMenus=[];
       api.openPath=async filePath=>{ opened.push(filePath); return true; };
+      api.copyFileToClipboard=async filePath=>{ copied.push(filePath); return true; };
+      api.showFileContextMenu=async filePath=>{ contextMenus.push(filePath); return true; };
       state.fileSearch.engineStatus='ready';
       state.fileSearch.query='double-click';
       state.fileSearch.results=[
@@ -734,14 +738,73 @@ async function run() {
       const rowPreserved=row.isConnected&&document.querySelector('#fileResultList [data-file-index="0"]')===row;
       row.dispatchEvent(new MouseEvent('click',{bubbles:true,detail:2}));
       row.dispatchEvent(new MouseEvent('dblclick',{bubbles:true,detail:2}));
-      await new Promise(resolve=>setTimeout(resolve,0));
-      return {rowPreserved,selectedIndex:state.fileSearch.selectedIndex,opened};
+      const selectedAfterDouble=state.fileSearch.selectedIndex;
+      const second=document.querySelector('#fileResultList [data-file-index="1"]');
+      second.dispatchEvent(new MouseEvent('click',{bubbles:true,detail:1}));
+      second.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true}));
+      second.dispatchEvent(new MouseEvent('click',{bubbles:true,detail:1}));
+      await new Promise(resolve=>setTimeout(resolve,250));
+      return {rowPreserved,selectedAfterDouble,selectedIndex:state.fileSearch.selectedIndex,opened,copied,contextMenus};
     })()
   `, true);
   console.log(`file result double-click metrics ${JSON.stringify(fileDoubleClickMetrics)}`);
   assert.strictEqual(fileDoubleClickMetrics.rowPreserved, true, 'single-click selection must preserve the row for a native double-click');
-  assert.strictEqual(fileDoubleClickMetrics.selectedIndex, 0, 'double-click should keep the clicked result selected');
+  assert.strictEqual(fileDoubleClickMetrics.selectedAfterDouble, 0, 'double-click should keep the clicked result selected');
   assert.deepStrictEqual(fileDoubleClickMetrics.opened, ['C:/Synthetic/double-click-one.txt'], 'double-clicking a result row should open that file exactly once');
+  assert.deepStrictEqual(fileDoubleClickMetrics.copied, ['C:/Synthetic/double-click-two.txt'], 'single-clicking a result row should copy that file exactly once');
+  assert.deepStrictEqual(fileDoubleClickMetrics.contextMenus, ['C:/Synthetic/double-click-two.txt'], 'right-clicking a result row should open its file context menu');
+  const mediaLibraryMetrics = await window.webContents.executeJavaScript(`
+    (async()=>{
+      const openedPortals=[];
+      const portalTargets=[];
+      const copiedText=[];
+      const copiedFiles=[];
+      const contextMenus=[];
+      api.resolveMediaVideoProvider=async value=>resolveMediaVideoProviderFallback(value);
+      api.openMediaPortal=async(url,target)=>{ openedPortals.push(url); portalTargets.push(target); return true; };
+      api.copyText=async value=>{ copiedText.push(value); return true; };
+      api.copyFileToClipboard=async value=>{ copiedFiles.push(value); return true; };
+      api.showFileContextMenu=async value=>{ contextMenus.push(value); return true; };
+      api.listLocalMedia=async()=>({
+        ok:true,
+        downloadPath:'C:/Downloads',
+        favoritePath:'C:/Favorites',
+        items:[
+          {path:'C:/Downloads/demo.mp4',directory:'C:/Downloads',name:'demo.mp4',kind:'video',size:2048,modifiedAt:2,favorite:false,location:'downloads'},
+          {path:'C:/Downloads/music.flac',directory:'C:/Downloads',name:'music.flac',kind:'audio',size:1024,modifiedAt:1,favorite:false,location:'downloads'},
+        ],
+      });
+      await switchView('media',{skipCoach:true});
+      const videoInput=document.querySelector('#mediaVideoInput');
+      videoInput.value='https://www.bilibili.com/video/BV1runtime';
+      videoInput.dispatchEvent(new Event('input',{bubbles:true}));
+      await openMediaVideoPortal(false);
+      await openMediaVideoPortal(false,true);
+      setMediaTab('downloads');
+      await new Promise(resolve=>setTimeout(resolve,20));
+      const first=document.querySelector('#mediaDownloadsList [data-media-row="0"]');
+      first.dispatchEvent(new MouseEvent('click',{bubbles:true,detail:1}));
+      await new Promise(resolve=>setTimeout(resolve,240));
+      first.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true}));
+      return {
+        openedPortals,portalTargets,copiedText,copiedFiles,contextMenus,
+        activeView:document.querySelector('.view.active')?.id||'',
+        activeNav:document.querySelector('.nav-btn.active')?.dataset.view||'',
+        rows:document.querySelectorAll('#mediaDownloadsList [data-media-row]').length,
+        provider:document.querySelector('#mediaVideoProvider').textContent.trim(),
+      };
+    })()
+  `, true);
+  console.log(`media library runtime metrics ${JSON.stringify(mediaLibraryMetrics)}`);
+  assert.deepStrictEqual(mediaLibraryMetrics.openedPortals, ['https://www.seekin.ai/zh/bilibili-downloader/','https://www.seekin.ai/zh/bilibili-downloader/']);
+  assert.deepStrictEqual(mediaLibraryMetrics.portalTargets, ['download','favorite']);
+  assert.deepStrictEqual(mediaLibraryMetrics.copiedText, ['https://www.bilibili.com/video/BV1runtime','https://www.bilibili.com/video/BV1runtime']);
+  assert.deepStrictEqual(mediaLibraryMetrics.copiedFiles, ['C:/Downloads/demo.mp4']);
+  assert.deepStrictEqual(mediaLibraryMetrics.contextMenus, ['C:/Downloads/demo.mp4']);
+  assert.strictEqual(mediaLibraryMetrics.activeView, 'mediaView');
+  assert.strictEqual(mediaLibraryMetrics.activeNav, 'media');
+  assert.strictEqual(mediaLibraryMetrics.rows, 2);
+  assert(mediaLibraryMetrics.provider.includes('哔哩哔哩'));
   assert.strictEqual(rendererErrors.length, 0, `renderer errors: ${rendererErrors.join(' | ')}`);
   if (process.env.XUANNIAN_RUNTIME_SCREENSHOT) {
     await window.webContents.executeJavaScript(`
@@ -785,7 +848,14 @@ async function run() {
     await new Promise((resolve) => setTimeout(resolve, 120));
     const settingsImage = await window.webContents.capturePage();
     fs.writeFileSync(screenshotPath.replace(/(\.png)?$/i, '-settings.png'), settingsImage.toPNG());
+    await window.webContents.executeJavaScript("switchView('media',{skipCoach:true}).then(()=>setMediaTab('downloads'))", true);
+    await new Promise((resolve) => setTimeout(resolve, 160));
+    const mediaImage = await window.webContents.capturePage();
+    fs.writeFileSync(screenshotPath.replace(/(\.png)?$/i, '-media.png'), mediaImage.toPNG());
     window.setSize(620, 760);
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    const narrowMediaImage = await window.webContents.capturePage();
+    fs.writeFileSync(screenshotPath.replace(/(\.png)?$/i, '-media-620.png'), narrowMediaImage.toPNG());
     await window.webContents.executeJavaScript("switchView('search',{skipCoach:true})", true);
     await new Promise((resolve) => setTimeout(resolve, 200));
     const narrowImage = await window.webContents.capturePage();

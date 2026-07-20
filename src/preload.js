@@ -122,6 +122,9 @@ contextBridge.exposeInMainWorld('nativeAPI', {
   async getFileThumbnail(filePath, size = {}) {
     return ipcRenderer.invoke('file:getThumbnail', filePath || '', size || {});
   },
+  async showFileContextMenu(filePath) {
+    return ipcRenderer.invoke('file:showContextMenu', filePath || '');
+  },
   async getNoteProjects() {
     return (await load()).noteProjects;
   },
@@ -335,6 +338,27 @@ contextBridge.exposeInMainWorld('nativeAPI', {
   async cancelFileSearch() {
     return ipcRenderer.invoke('search:cancel');
   },
+  async resolveMediaVideoProvider(value) {
+    return ipcRenderer.invoke('media:resolveVideoProvider', value || '');
+  },
+  async getMediaMusicSearchUrl(keyword) {
+    return ipcRenderer.invoke('media:musicSearchUrl', keyword || '');
+  },
+  async getMediaConfig() {
+    return ipcRenderer.invoke('media:getConfig');
+  },
+  async listLocalMedia() {
+    return ipcRenderer.invoke('media:listLocal');
+  },
+  async favoriteLocalMedia(filePath) {
+    return ipcRenderer.invoke('media:favoriteLocal', filePath || '');
+  },
+  async openMediaPortal(url, downloadTarget = 'download') {
+    return ipcRenderer.invoke('media:openPortal', url || '', downloadTarget || 'download');
+  },
+  async selectMediaFolder(kind, currentPath) {
+    return ipcRenderer.invoke('dialog:selectMediaFolder', kind || 'download', currentPath || '');
+  },
   async checkForUpdates() {
     return ipcRenderer.invoke('update:check');
   },
@@ -528,6 +552,9 @@ contextBridge.exposeInMainWorld('nativeAPI', {
   },
   onSettingsChanged(callback) {
     ipcRenderer.on('settings:changed', (_event, settings) => callback(settings || {}));
+  },
+  onMediaDownloadsChanged(callback) {
+    ipcRenderer.on('media:downloadsChanged', (_event, payload) => callback(payload || {}));
   },
   onStickyPinState(callback) {
     ipcRenderer.on('native-sticky-pin-state', (_event, ids) => callback(Array.isArray(ids) ? ids : []));

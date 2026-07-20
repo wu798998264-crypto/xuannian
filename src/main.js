@@ -13,6 +13,14 @@ const {
   writeJsonAtomicSync,
 } = require('./data-persistence');
 const { FileSearchService, fileTypeForPath } = require('./file-search');
+const {
+  copyMediaToFavorites,
+  detectVideoProvider,
+  isAllowedPortalUrl,
+  listMediaFiles,
+  mediaKindForPath,
+  musicSearchUrl,
+} = require('./media-library');
 
 let mainWindow;
 let quickWindow;
@@ -108,6 +116,9 @@ let videoThumbnailWindow = null;
 let videoThumbnailWindowReady = null;
 let videoThumbnailIdleTimer = null;
 let videoThumbnailActive = 0;
+const mediaPortalWindows = new Set();
+const configuredMediaDownloadSessions = new WeakSet();
+const mediaPortalDownloadTargets = new WeakMap();
 const recentClipboardDigests = new Map();
 const recentClipboardSequences = new Map();
 const pendingClipboardSequences = new Set();
@@ -2312,6 +2323,143 @@ function createWindow() {
     mainWindowResizeSession = null;
   });
   loadAppHtml(mainWindow, 'index.html');
+}
+
+function mediaDirectories() {
+  const settings = loadData({ clone: false }).settings || {};
+  const configuredDownload = String(settings.mediaDownloadPath || '').trim();
+  const configuredFavorite = String(settings.mediaFavoritePath || '').trim();
+  const downloadPath = configuredDownload && path.isAbsolute(configuredDownload)
+    ? configuredDownload
+    : app.getPath('downloads');
+  const favoritePath = configuredFavorite && path.isAbsolute(configuredFavorite)
+    ? configuredFavorite
+    : path.join(app.getPath('documents'), '玄念收藏', '媒体');
+  fs.mkdirSync(downloadPath, { recursive: true });
+  fs.mkdirSync(favoritePath, { recursive: true });
+  return { downloadPath, favoritePath };
+}
+
+function notifyMediaDownloadsChanged(payload = {}) {
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
+  mainWindow.webContents.send('media:downloadsChanged', payload || {});
+}
+
+function sanitizeDownloadFilename(value, mimeType = '') {
+  let filename = path.basename(String(value || '').trim())
+    .replace(/[<>:"/\\|?*\x00-\x1f]/g, '_')
+    .replace(/[. ]+$/g, '')
+    .slice(0, 180);
+  if (!filename) filename = `media-${Date.now()}`;
+  if (!mediaKindForPath(filename)) {
+    const mime = String(mimeType || '').toLowerCase();
+    if (mime.includes('video/mp4')) filename += '.mp4';
+    else if (mime.includes('video/webm')) filename += '.webm';
+    else if (mime.includes('audio/mpeg')) filename += '.mp3';
+    else if (mime.includes('audio/mp4')) filename += '.m4a';
+    else if (mime.includes('audio/flac')) filename += '.flac';
+    else if (mime.includes('audio/ogg')) filename += '.ogg';
+  }
+  return filename;
+}
+
+function uniqueMediaDownloadPath(directory, filename) {
+  const extension = path.extname(filename);
+  const stem = path.basename(filename, extension);
+  let candidate = path.join(directory, filename);
+  let suffix = 2;
+  while (fs.existsSync(candidate)) {
+    candidate = path.join(directory, `${stem} (${suffix})${extension}`);
+    suffix += 1;
+  }
+  return candidate;
+}
+
+function configureMediaDownloadSession(electronSession) {
+  if (!electronSession || configuredMediaDownloadSessions.has(electronSession)) return;
+  configuredMediaDownloadSessions.add(electronSession);
+  electronSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+  electronSession.on('will-download', (_event, item, webContents) => {
+    const directories = mediaDirectories();
+    const favoriteDownload = mediaPortalDownloadTargets.get(webContents) === 'favorite';
+    const downloadPath = favoriteDownload ? directories.favoritePath : directories.downloadPath;
+    const filename = sanitizeDownloadFilename(item.getFilename(), item.getMimeType());
+    if (!mediaKindForPath(filename)) {
+      item.cancel();
+      notifyMediaDownloadsChanged({ status: 'blocked', message: '已拦截非音视频文件下载' });
+      return;
+    }
+    const destination = uniqueMediaDownloadPath(downloadPath, filename);
+    item.setSavePath(destination);
+    item.once('done', (_doneEvent, state) => {
+      if (state === 'completed') {
+        notifyMediaDownloadsChanged({ status: 'completed', path: destination, favorite: favoriteDownload, message: favoriteDownload ? '媒体已下载到收藏目录' : '媒体已下载' });
+      } else if (state !== 'cancelled') {
+        notifyMediaDownloadsChanged({ status: 'error', message: '下载未完成，请在网站中重试' });
+      }
+    });
+  });
+}
+
+function secureMediaPortalWindow(win, downloadTarget = 'download') {
+  if (!win || win.isDestroyed()) return;
+  mediaPortalWindows.add(win);
+  mediaPortalDownloadTargets.set(win.webContents, downloadTarget === 'favorite' ? 'favorite' : 'download');
+  configureMediaDownloadSession(win.webContents.session);
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (!/^https:\/\//i.test(String(url || ''))) return { action: 'deny' };
+    return {
+      action: 'allow',
+      overrideBrowserWindowOptions: {
+        width: 1060,
+        height: 760,
+        minWidth: 720,
+        minHeight: 560,
+        autoHideMenuBar: true,
+        icon: appIconPath(),
+        webPreferences: {
+          partition: 'persist:xuannian-media-portals',
+          contextIsolation: true,
+          nodeIntegration: false,
+          sandbox: true,
+          webSecurity: true,
+        },
+      },
+    };
+  });
+  win.webContents.on('did-create-window', (child) => secureMediaPortalWindow(child, downloadTarget));
+  win.webContents.on('will-navigate', (event, url) => {
+    if (!/^https:\/\//i.test(String(url || ''))) event.preventDefault();
+  });
+  win.on('closed', () => mediaPortalWindows.delete(win));
+}
+
+function openMediaPortal(url, downloadTarget = 'download') {
+  const value = String(url || '').trim();
+  if (!isAllowedPortalUrl(value)) return false;
+  const win = new BrowserWindow({
+    width: 1120,
+    height: 800,
+    minWidth: 760,
+    minHeight: 580,
+    autoHideMenuBar: true,
+    icon: appIconPath(),
+    title: `玄念${app.getVersion()}媒体下载`,
+    backgroundColor: '#f4f4f4',
+    webPreferences: {
+      partition: 'persist:xuannian-media-portals',
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      webSecurity: true,
+    },
+  });
+  secureMediaPortalWindow(win, downloadTarget);
+  win.loadURL(value).catch((error) => {
+    runtimeLog(`media portal load failed: ${error?.message || error}`);
+    if (!win.isDestroyed()) win.close();
+  });
+  return true;
 }
 
 function resizeBoundsFromPointer(session, point) {
@@ -4764,6 +4912,31 @@ ipcMain.handle('search:status', () => getFileSearchService().getStatus());
 ipcMain.handle('search:initialize', () => getFileSearchService().initialize());
 ipcMain.handle('search:query', (_event, query, options = {}) => getFileSearchService().search(query, options));
 ipcMain.handle('search:cancel', () => getFileSearchService().cancel());
+ipcMain.handle('media:resolveVideoProvider', (_event, value) => {
+  const provider = detectVideoProvider(value);
+  if (!provider) return null;
+  return {
+    id: provider.id,
+    label: provider.label,
+    portalUrl: provider.portalUrl,
+    fallbackUrl: provider.fallbackUrl || '',
+    sourceUrl: provider.sourceUrl,
+  };
+});
+ipcMain.handle('media:musicSearchUrl', (_event, keyword) => musicSearchUrl(keyword));
+ipcMain.handle('media:getConfig', () => mediaDirectories());
+ipcMain.handle('media:listLocal', async () => {
+  const directories = mediaDirectories();
+  const items = await listMediaFiles(directories.downloadPath, directories.favoritePath);
+  return { ok: true, ...directories, items };
+});
+ipcMain.handle('media:favoriteLocal', async (_event, filePath) => {
+  const { favoritePath } = mediaDirectories();
+  const result = await copyMediaToFavorites(filePath, favoritePath);
+  if (result.ok) notifyMediaDownloadsChanged({ status: 'favorited', path: result.path });
+  return result;
+});
+ipcMain.handle('media:openPortal', (_event, url, downloadTarget = 'download') => openMediaPortal(url, downloadTarget));
 
 ipcMain.handle('update:getState', () => publicUpdateState());
 ipcMain.handle('update:check', () => checkForAppUpdates());
@@ -5142,6 +5315,19 @@ ipcMain.handle('dialog:selectStorageFolder', async (_event, currentPath = '') =>
   return result.canceled ? '' : result.filePaths[0];
 });
 
+ipcMain.handle('dialog:selectMediaFolder', async (_event, kind = 'download', currentPath = '') => {
+  const directories = mediaDirectories();
+  const requested = String(currentPath || '').trim();
+  const fallback = kind === 'favorite' ? directories.favoritePath : directories.downloadPath;
+  const defaultPath = requested && path.isAbsolute(requested) && fs.existsSync(requested) ? requested : fallback;
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: kind === 'favorite' ? '选择媒体收藏文件夹' : '选择媒体下载文件夹',
+    defaultPath,
+    properties: ['openDirectory', 'createDirectory'],
+  });
+  return result.canceled ? '' : result.filePaths[0];
+});
+
 ipcMain.handle('data:exportPackage', async (event) => {
   const result = await exportUserDataPackage(BrowserWindow.fromWebContents(event.sender));
   if (result?.ok && result.filePath) shell.showItemInFolder(result.filePath);
@@ -5181,6 +5367,30 @@ ipcMain.handle('shell:openExternal', async (_event, url) => {
 ipcMain.handle('file:showInFolder', (_event, filePath) => {
   if (!filePath || !path.isAbsolute(String(filePath)) || !fs.existsSync(filePath)) return false;
   shell.showItemInFolder(String(filePath));
+  return true;
+});
+
+ipcMain.handle('file:showContextMenu', (event, filePath) => {
+  const value = String(filePath || '').trim();
+  if (!value || !path.isAbsolute(value) || !fs.existsSync(value)) return false;
+  let directory = false;
+  try {
+    directory = fs.statSync(value).isDirectory();
+  } catch {
+    return false;
+  }
+  const owner = BrowserWindow.fromWebContents(event.sender);
+  const menu = Menu.buildFromTemplate([
+    {
+      label: directory ? '打开文件夹' : '打开文件',
+      click: () => shell.openPath(value),
+    },
+    {
+      label: '打开所在文件夹',
+      click: () => shell.showItemInFolder(value),
+    },
+  ]);
+  menu.popup({ window: owner || undefined });
   return true;
 });
 

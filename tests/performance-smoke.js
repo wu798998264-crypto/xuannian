@@ -93,6 +93,7 @@ async function run() {
   assert.strictEqual((await freshRequest)[0].id, 'fresh');
 
   const mainSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
+  const mediaLibrarySource = fs.readFileSync(path.join(__dirname, '..', 'src', 'media-library.js'), 'utf8');
   const videoThumbnailSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'video-thumbnail.html'), 'utf8');
   assert(/function createQuickWindow\(\)[\s\S]*?backgroundThrottling:\s*true/.test(mainSource), 'hidden quick window must allow Chromium background throttling');
   const warmRefreshStart = mainSource.indexOf('function scheduleQuickWindowWarmRefresh');
@@ -111,14 +112,24 @@ async function run() {
   assert(videoThumbnailSource.includes('window.captureImageThumbnail'), 'media decoder page must expose its image fallback');
   assert(videoThumbnailSource.includes('window.captureVideoThumbnail'), 'video thumbnail decoder page must expose its capture function');
   assert(videoThumbnailSource.includes("canvas.toDataURL('image/jpeg', 0.82)"), 'video fallback must return a compressed still frame');
+  assert(/function openMediaPortal\([\s\S]*?partition:\s*'persist:xuannian-media-portals'[\s\S]*?nodeIntegration:\s*false[\s\S]*?sandbox:\s*true/.test(mainSource), 'third-party media sites must run in an isolated sandboxed session');
+  assert(mainSource.includes("ipcMain.handle('file:showContextMenu'"), 'local file rows need a native open/reveal context menu');
+  assert(mediaLibrarySource.includes('async function scanMediaDirectory'), 'local media files must be derived from the selected folders');
+  assert(!mediaLibrarySource.includes('fetch('), 'media library must not call third-party private download APIs');
 
   const indexSource = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
   const quickSource = fs.readFileSync(path.join(__dirname, '..', 'quick.html'), 'utf8');
   const stickySource = fs.readFileSync(path.join(__dirname, '..', 'sticky.html'), 'utf8');
   const wheelSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'wheel-scroll.js'), 'utf8');
+  const mediaStyleSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'media-library.css'), 'utf8');
   assert(indexSource.includes('getFileThumbnail: (filePath,size)=> nativeApi.getFileThumbnail'), 'unified renderer API must forward native thumbnail requests');
   assert(indexSource.includes('<svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="5.5"></circle><path d="m15 15 5 5"></path></svg>'), 'full-disk search navigation must use a plain magnifying-glass icon');
   assert(!indexSource.includes('<path d="M4 4h5"></path><path d="M4 4v5"></path>'), 'full-disk search navigation must not include the old corner mark');
+  assert(indexSource.includes('id="mediaView"'), 'main window must expose the media library view');
+  assert(indexSource.includes("state.fileSearch.clickTimer=setTimeout(()=>performFileSearchAction('copy',index),220)"), 'single-clicking a full-disk result must copy the local file');
+  assert(indexSource.includes("api.showFileContextMenu(item.path)"), 'full-disk results must expose the local file context menu');
+  assert(indexSource.includes("state.media.refreshTimer=setInterval"), 'local media deletion checks must run only while the local media view is active');
+  assert(mediaStyleSource.includes('.media-row{height:64px'), 'media rows need stable dimensions');
   assert(indexSource.includes('const FILE_THUMBNAIL_PREFETCH_ROWS = 10'), 'file thumbnails must prefetch exactly ten rows below the viewport');
   assert(indexSource.includes('const FILE_THUMBNAIL_MAX_PENDING_REQUESTS = 9'), 'abandoned native thumbnail requests must remain bounded');
   assert(indexSource.includes('function fileThumbnailWindowRange('), 'file thumbnail loading must use a bounded result-index window');

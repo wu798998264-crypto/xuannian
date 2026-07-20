@@ -3,8 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>玄念7.0.9</title>
+  <title>玄念8.0.0</title>
   <link rel="icon" href="src/xuannian-logo-256.png" />
+  <link rel="stylesheet" href="src/media-library.css" />
   <style>
     :root{
       --bg:#f5f6f8;
@@ -884,6 +885,10 @@
           <svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="5.5"></circle><path d="m15 15 5 5"></path></svg>
           <span>查找</span>
         </button>
+        <button class="nav-btn" data-view="media" title="媒体库">
+          <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="m10 9 5 3-5 3Z"></path></svg>
+          <span>媒体</span>
+        </button>
         <button class="nav-btn" data-view="stickies" title="便签" hidden>
           <svg viewBox="0 0 24 24"><path d="M6 4h12a2 2 0 0 1 2 2v12l-4 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Z"></path><path d="M16 20v-4h4"></path></svg>
           <span>便签</span>
@@ -1012,6 +1017,75 @@
           <span>操作</span>
         </div>
         <div class="file-result-list" id="fileResultList" tabindex="0" aria-label="全盘查找结果"></div>
+      </div>
+    </section>
+
+    <section class="view" id="mediaView">
+      <div class="header">
+        <h1>媒体库</h1>
+        <p>视频下载与音乐搜索</p>
+      </div>
+      <div class="media-tabs" id="mediaTabs" role="tablist" aria-label="媒体库">
+        <button class="media-tab active" data-media-tab="video" role="tab">视频下载</button>
+        <button class="media-tab" data-media-tab="music" role="tab">音乐下载</button>
+        <button class="media-tab" data-media-tab="downloads" role="tab">已下载</button>
+        <button class="media-tab" data-media-tab="favorites" role="tab">收藏</button>
+      </div>
+      <div class="media-panels">
+        <section class="media-panel active" data-media-panel="video">
+          <div class="media-launch-band">
+            <input class="media-launch-input" id="mediaVideoInput" placeholder="粘贴抖音、TikTok、B站、小红书或快手链接" autocomplete="off" spellcheck="false" />
+            <div class="media-launch-actions">
+              <button class="ghost-btn" id="mediaVideoFallback" type="button" hidden>备用站</button>
+              <button class="media-icon-button" id="mediaFavoriteVideoPortal" type="button" title="收藏下载"><svg viewBox="0 0 24 24"><path d="M7 4h10a1 1 0 0 1 1 1v15l-6-3.5L6 20V5a1 1 0 0 1 1-1Z"></path></svg></button>
+              <button class="black-btn" id="mediaOpenVideoPortal" type="button">打开下载站</button>
+            </div>
+          </div>
+          <div class="media-provider-line"><span id="mediaVideoProvider">等待识别平台</span></div>
+        </section>
+        <section class="media-panel" data-media-panel="music">
+          <div class="media-launch-band">
+            <input class="media-launch-input" id="mediaMusicInput" placeholder="输入歌曲名、歌手或专辑" autocomplete="off" />
+            <div class="media-launch-actions"><button class="media-icon-button" id="mediaFavoriteMusicPortal" type="button" title="收藏下载"><svg viewBox="0 0 24 24"><path d="M7 4h10a1 1 0 0 1 1 1v15l-6-3.5L6 20V5a1 1 0 0 1 1-1Z"></path></svg></button><button class="black-btn" id="mediaOpenMusicPortal" type="button">搜索歌曲宝</button></div>
+          </div>
+          <div class="media-provider-line"><span class="media-provider-pill">歌曲宝</span></div>
+        </section>
+        <section class="media-panel" data-media-panel="downloads">
+          <div class="media-directory-toolbar">
+            <label for="mediaDownloadPath">下载目录</label>
+            <input class="media-directory-path" id="mediaDownloadPath" readonly />
+            <button class="media-icon-button" id="mediaBrowseDownload" type="button" title="选择下载目录"><svg viewBox="0 0 24 24"><path d="M3.5 7.5h6l2-2h9v13h-17Z"></path><path d="M3.5 9h17"></path></svg></button>
+            <button class="media-icon-button" id="mediaRevealDownload" type="button" title="打开下载目录"><svg viewBox="0 0 24 24"><path d="M8 5H5v14h14v-3"></path><path d="M12 5h7v7"></path><path d="m19 5-9 9"></path></svg></button>
+          </div>
+          <div class="media-list-toolbar">
+            <div class="chips" data-media-filters="downloads">
+              <button class="chip active" data-media-type="all">全部</button>
+              <button class="chip" data-media-type="video">视频</button>
+              <button class="chip" data-media-type="audio">音乐</button>
+            </div>
+            <span class="media-list-summary" id="mediaDownloadsSummary"></span>
+            <button class="media-icon-button" data-media-refresh type="button" title="刷新"><svg viewBox="0 0 24 24"><path d="M20 7v5h-5"></path><path d="M4 17v-5h5"></path><path d="M6.1 9a7 7 0 0 1 11.7-2.6L20 8"></path><path d="m4 16 2.2 1.6A7 7 0 0 0 18 15"></path></svg></button>
+          </div>
+          <div class="media-list-shell"><div class="media-list" id="mediaDownloadsList"></div></div>
+        </section>
+        <section class="media-panel" data-media-panel="favorites">
+          <div class="media-directory-toolbar">
+            <label for="mediaFavoritePath">收藏目录</label>
+            <input class="media-directory-path" id="mediaFavoritePath" readonly />
+            <button class="media-icon-button" id="mediaBrowseFavorite" type="button" title="选择收藏目录"><svg viewBox="0 0 24 24"><path d="M3.5 7.5h6l2-2h9v13h-17Z"></path><path d="M3.5 9h17"></path></svg></button>
+            <button class="media-icon-button" id="mediaRevealFavorite" type="button" title="打开收藏目录"><svg viewBox="0 0 24 24"><path d="M8 5H5v14h14v-3"></path><path d="M12 5h7v7"></path><path d="m19 5-9 9"></path></svg></button>
+          </div>
+          <div class="media-list-toolbar">
+            <div class="chips" data-media-filters="favorites">
+              <button class="chip active" data-media-type="all">全部</button>
+              <button class="chip" data-media-type="video">视频</button>
+              <button class="chip" data-media-type="audio">音乐</button>
+            </div>
+            <span class="media-list-summary" id="mediaFavoritesSummary"></span>
+            <button class="media-icon-button" data-media-refresh type="button" title="刷新"><svg viewBox="0 0 24 24"><path d="M20 7v5h-5"></path><path d="M4 17v-5h5"></path><path d="M6.1 9a7 7 0 0 1 11.7-2.6L20 8"></path><path d="m4 16 2.2 1.6A7 7 0 0 0 18 15"></path></svg></button>
+          </div>
+          <div class="media-list-shell"><div class="media-list" id="mediaFavoritesList"></div></div>
+        </section>
       </div>
     </section>
 
@@ -1221,6 +1295,20 @@ const state = {
     requestId:0,
     debounceTimer:null,
     statusPollTimer:null,
+    clickTimer:null,
+  },
+  media: {
+    tab:'video',
+    items:[],
+    downloadPath:'',
+    favoritePath:'',
+    downloadsType:'all',
+    favoritesType:'all',
+    loading:false,
+    requestId:0,
+    refreshTimer:null,
+    videoProvider:null,
+    clickTimer:null,
   },
   update: {status:'idle',currentVersion:'',version:'',percent:0,message:'',releaseNotes:'',portable:false,manualInstall:false,supported:true},
   clipboardWatcherTimer: null,
@@ -1444,10 +1532,12 @@ function createBrowserFallbackAPI(){
     async addRecord(record){ const data=read(); data.records.unshift({id:uid('rec'),createdAt:Date.now(),retentionDays:Number(data.settings?.retentionDays || 30),...record}); write(data); return data.records; },
     async deleteRecord(id){ const data=read(); data.records=data.records.filter(x=>x.id!==id); write(data); return data.records; },
     async copyText(text){ return writeClipboardText(text); },
+    async copyFileToClipboard(filePath){ return writeClipboardText(Array.isArray(filePath)?filePath.join('\n'):String(filePath||'')); },
     async localizeAttachmentsForCopy(attachments){ return Array.isArray(attachments) ? attachments : []; },
     async openExternal(url){ window.open(String(url || ''), '_blank', 'noopener'); return true; },
     async openPath(){ return false; },
     async showItemInFolder(){ return false; },
+    async showFileContextMenu(){ return false; },
     async getFileThumbnail(){ return ''; },
     async getFileSearchStatus(){ return {platform:'browser',engine:'preview',status:'ready',ready:true,message:'预览数据已就绪'}; },
     async initializeFileSearch(){ return this.getFileSearchStatus(); },
@@ -1465,6 +1555,13 @@ function createBrowserFallbackAPI(){
       return {platform:'browser',engine:'preview',status:'ready',ready:true,query,results,truncated:false,elapsedMs:4};
     },
     async cancelFileSearch(){ return true; },
+    async resolveMediaVideoProvider(value){ return resolveMediaVideoProviderFallback(value); },
+    async getMediaMusicSearchUrl(keyword){ return mediaMusicSearchUrlFallback(keyword); },
+    async getMediaConfig(){ return {downloadPath:'浏览器下载目录',favoritePath:'浏览器收藏目录'}; },
+    async listLocalMedia(){ return {ok:true,downloadPath:'浏览器下载目录',favoritePath:'浏览器收藏目录',items:[]}; },
+    async favoriteLocalMedia(){ return {ok:false,reason:'预览环境不支持本地文件收藏'}; },
+    async openMediaPortal(url){ return this.openExternal(url); },
+    async selectMediaFolder(){ return ''; },
     async getNoteProjects(){ return read().noteProjects; },
     async addNoteProject(project){ const data=read(); const item={id:uid('cp'),...project}; data.noteProjects.push(item); write(data); return item; },
     async updateNoteProject(id, patch){ const data=read(); data.noteProjects=data.noteProjects.map(x=>x.id===id?{...x,...patch}:x); write(data); return data.noteProjects; },
@@ -1504,7 +1601,7 @@ function createBrowserFallbackAPI(){
     async deleteInspiration(id){ const data=read(); data.inspirations=data.inspirations.filter(x=>x.id!==id); write(data); return data.inspirations; },
     async getSettings(){ return read().settings; },
     async saveSettings(settings){ const data=read(); data.settings={...data.settings,...settings}; write(data); return data.settings; },
-    async getUpdateState(){ return {status:'current',currentVersion:'7.0.9',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false}; },
+    async getUpdateState(){ return {status:'current',currentVersion:'8.0.0',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false}; },
     async checkForUpdates(){ return this.getUpdateState(); },
     async downloadUpdate(){ return this.getUpdateState(); },
     async installUpdate(){ return false; },
@@ -1557,15 +1654,24 @@ function createUnifiedAPI(nativeApi, fallback){
     addRecord: (record)=> nativeApi.addRecord ? nativeApi.addRecord(record) : fallback.addRecord(record),
     deleteRecord: (id)=> nativeApi.deleteRecord ? nativeApi.deleteRecord(id) : fallback.deleteRecord(id),
     copyText: (text)=> nativeApi.copyText ? nativeApi.copyText(text) : fallback.copyText(text),
+    copyFileToClipboard: (filePath,action,text)=> nativeApi.copyFileToClipboard ? nativeApi.copyFileToClipboard(filePath,action,text) : fallback.copyFileToClipboard(filePath,action,text),
     localizeAttachmentsForCopy: (attachments, scope)=> nativeApi.localizeAttachmentsForCopy ? nativeApi.localizeAttachmentsForCopy(attachments, scope) : fallback.localizeAttachmentsForCopy(attachments, scope),
     openExternal: (url)=> nativeApi.openExternal ? nativeApi.openExternal(url) : fallback.openExternal(url),
     openPath: (filePath)=> nativeApi.openPath ? nativeApi.openPath(filePath) : fallback.openPath(filePath),
     showItemInFolder: (filePath)=> nativeApi.showItemInFolder ? nativeApi.showItemInFolder(filePath) : fallback.showItemInFolder(filePath),
+    showFileContextMenu: (filePath)=> nativeApi.showFileContextMenu ? nativeApi.showFileContextMenu(filePath) : fallback.showFileContextMenu(filePath),
     getFileThumbnail: (filePath,size)=> nativeApi.getFileThumbnail ? nativeApi.getFileThumbnail(filePath,size) : fallback.getFileThumbnail(filePath,size),
     getFileSearchStatus: ()=> nativeApi.getFileSearchStatus ? nativeApi.getFileSearchStatus() : fallback.getFileSearchStatus(),
     initializeFileSearch: ()=> nativeApi.initializeFileSearch ? nativeApi.initializeFileSearch() : fallback.initializeFileSearch(),
     searchFiles: (query,options)=> nativeApi.searchFiles ? nativeApi.searchFiles(query,options) : fallback.searchFiles(query,options),
     cancelFileSearch: ()=> nativeApi.cancelFileSearch ? nativeApi.cancelFileSearch() : fallback.cancelFileSearch(),
+    resolveMediaVideoProvider: (value)=> nativeApi.resolveMediaVideoProvider ? nativeApi.resolveMediaVideoProvider(value) : fallback.resolveMediaVideoProvider(value),
+    getMediaMusicSearchUrl: (keyword)=> nativeApi.getMediaMusicSearchUrl ? nativeApi.getMediaMusicSearchUrl(keyword) : fallback.getMediaMusicSearchUrl(keyword),
+    getMediaConfig: ()=> nativeApi.getMediaConfig ? nativeApi.getMediaConfig() : fallback.getMediaConfig(),
+    listLocalMedia: ()=> nativeApi.listLocalMedia ? nativeApi.listLocalMedia() : fallback.listLocalMedia(),
+    favoriteLocalMedia: (filePath)=> nativeApi.favoriteLocalMedia ? nativeApi.favoriteLocalMedia(filePath) : fallback.favoriteLocalMedia(filePath),
+    openMediaPortal: (url,downloadTarget)=> nativeApi.openMediaPortal ? nativeApi.openMediaPortal(url,downloadTarget) : fallback.openMediaPortal(url,downloadTarget),
+    selectMediaFolder: (kind,currentPath)=> nativeApi.selectMediaFolder ? nativeApi.selectMediaFolder(kind,currentPath) : fallback.selectMediaFolder(kind,currentPath),
     getNoteProjects: ()=> nativeApi.getNoteProjects ? nativeApi.getNoteProjects() : fallback.getNoteProjects(),
     addNoteProject: (project)=> nativeApi.addNoteProject ? nativeApi.addNoteProject(project) : fallback.addNoteProject(project),
     updateNoteProject: (id,patch)=> nativeApi.updateNoteProject ? nativeApi.updateNoteProject(id,patch) : fallback.updateNoteProject(id,patch),
@@ -1700,6 +1806,10 @@ async function init(){
       input?.focus();
       input?.select();
     },80);
+  });
+  window.nativeAPI?.onMediaDownloadsChanged?.((payload)=>{
+    if(payload?.message) toast(payload.message);
+    if(state.view==='media') refreshMediaLibrary({quiet:true});
   });
   window.nativeAPI?.onMainSuspend?.(()=>{
     exitManagementModes();
@@ -1899,6 +2009,46 @@ function bindEvents(){
     $('#fileSearchInput').focus();
   });
   $('#clearStickySearch').addEventListener('click', ()=>{ $('#stickySearch').value=''; renderStickyNotes(); });
+  $('#mediaTabs')?.addEventListener('click',event=>{
+    const button=event.target.closest('[data-media-tab]');
+    if(button) setMediaTab(button.dataset.mediaTab);
+  });
+  $('#mediaVideoInput')?.addEventListener('input',updateMediaVideoProvider);
+  $('#mediaVideoInput')?.addEventListener('keydown',event=>{
+    if(event.key==='Enter'){
+      event.preventDefault();
+      openMediaVideoPortal(false);
+    }
+  });
+  $('#mediaOpenVideoPortal')?.addEventListener('click',()=>openMediaVideoPortal(false));
+  $('#mediaFavoriteVideoPortal')?.addEventListener('click',()=>openMediaVideoPortal(false,true));
+  $('#mediaVideoFallback')?.addEventListener('click',()=>openMediaVideoPortal(true));
+  $('#mediaMusicInput')?.addEventListener('keydown',event=>{
+    if(event.key==='Enter'){
+      event.preventDefault();
+      openMediaMusicPortal();
+    }
+  });
+  $('#mediaOpenMusicPortal')?.addEventListener('click',()=>openMediaMusicPortal(false));
+  $('#mediaFavoriteMusicPortal')?.addEventListener('click',()=>openMediaMusicPortal(true));
+  $('#mediaBrowseDownload')?.addEventListener('click',()=>chooseMediaDirectory('download'));
+  $('#mediaBrowseFavorite')?.addEventListener('click',()=>chooseMediaDirectory('favorite'));
+  $('#mediaRevealDownload')?.addEventListener('click',()=>openMediaDirectory('download'));
+  $('#mediaRevealFavorite')?.addEventListener('click',()=>openMediaDirectory('favorite'));
+  $$('[data-media-refresh]').forEach(button=>button.addEventListener('click',()=>refreshMediaLibrary()));
+  $$('[data-media-filters]').forEach(group=>group.addEventListener('click',event=>{
+    const button=event.target.closest('[data-media-type]');
+    if(!button) return;
+    const key=group.dataset.mediaFilters==='favorites'?'favoritesType':'downloadsType';
+    state.media[key]=button.dataset.mediaType;
+    renderMediaLists();
+  }));
+  $('#mediaDownloadsList')?.addEventListener('click',event=>handleMediaListClick(event,'downloads'));
+  $('#mediaFavoritesList')?.addEventListener('click',event=>handleMediaListClick(event,'favorites'));
+  $('#mediaDownloadsList')?.addEventListener('dblclick',event=>handleMediaListDoubleClick(event,'downloads'));
+  $('#mediaFavoritesList')?.addEventListener('dblclick',event=>handleMediaListDoubleClick(event,'favorites'));
+  $('#mediaDownloadsList')?.addEventListener('contextmenu',event=>handleMediaListContextMenu(event,'downloads'));
+  $('#mediaFavoritesList')?.addEventListener('contextmenu',event=>handleMediaListContextMenu(event,'favorites'));
   $('#closeAllStickyBtn').addEventListener('click', async()=>{
     const result=await api.closeAllStickyNotes();
     state.pinnedStickyIds.clear();
@@ -1920,6 +2070,16 @@ function bindEvents(){
     if(remove){ await deleteClipboardRecord(remove.dataset.deleteRecord); return; }
     const card=event.target.closest('[data-record-card]');
     if(card&&!event.target.closest('.record-actions')) await copyRecordById(card.dataset.recordCard);
+  });
+  $('#clipboardList').addEventListener('contextmenu',event=>{
+    const card=event.target.closest('[data-record-card]');
+    if(!card) return;
+    const record=state.records.find(item=>item.id===card.dataset.recordCard);
+    const targetPath=event.target.closest('[data-attachment-path]')?.dataset.attachmentPath
+      || (Array.isArray(record?.files)?record.files.find(Boolean):'');
+    if(!targetPath) return;
+    event.preventDefault();
+    api.showFileContextMenu(targetPath);
   });
   $('#fileSearchFilters')?.addEventListener('click',event=>{
     const button=event.target.closest('[data-file-type]');
@@ -1967,12 +2127,31 @@ function bindEvents(){
       return;
     }
     const row=event.target.closest('[data-file-index]');
-    if(row) selectFileSearchResult(Number(row.dataset.fileIndex));
+    if(!row) return;
+    const index=Number(row.dataset.fileIndex);
+    selectFileSearchResult(index);
+    clearTimeout(state.fileSearch.clickTimer);
+    if(event.detail>1) return;
+    state.fileSearch.clickTimer=setTimeout(()=>performFileSearchAction('copy',index),220);
   });
   $('#fileResultList')?.addEventListener('dblclick',event=>{
     if(event.target.closest('[data-file-action]')) return;
     const row=event.target.closest('[data-file-index]');
-    if(row) performFileSearchAction('open',row.dataset.fileIndex);
+    if(row){
+      clearTimeout(state.fileSearch.clickTimer);
+      performFileSearchAction('open',row.dataset.fileIndex);
+    }
+  });
+  $('#fileResultList')?.addEventListener('contextmenu',event=>{
+    const row=event.target.closest('[data-file-index]');
+    if(!row) return;
+    const index=Number(row.dataset.fileIndex);
+    const item=state.fileSearch.results[index];
+    if(!item?.path) return;
+    event.preventDefault();
+    clearTimeout(state.fileSearch.clickTimer);
+    selectFileSearchResult(index);
+    api.showFileContextMenu(item.path);
   });
   $('#fileResultList')?.addEventListener('keydown',event=>{
     const current=Math.max(0,state.fileSearch.selectedIndex);
@@ -2643,7 +2822,7 @@ function renderFileSearchResults(){
       <div class="file-actions">
         <button class="file-action" data-file-action="open" data-file-index="${index}" title="打开">${fileActionIcon('open')}</button>
         <button class="file-action" data-file-action="reveal" data-file-index="${index}" title="定位到文件夹">${fileActionIcon('reveal')}</button>
-        <button class="file-action" data-file-action="copy" data-file-index="${index}" title="复制路径">${fileActionIcon('copy')}</button>
+        <button class="file-action" data-file-action="copy" data-file-index="${index}" title="复制文件">${fileActionIcon('copy')}</button>
       </div>
     </div>`);
   }
@@ -2780,8 +2959,10 @@ async function performFileSearchAction(action,index){
   if(!item?.path) return;
   try{
     if(action==='copy'){
-      const copied=await api.copyText(item.path);
-      toast(copied===false?'复制失败':'路径已复制');
+      const copied=api.copyFileToClipboard
+        ? await api.copyFileToClipboard(item.path,'copy','')
+        : await api.copyText(item.path);
+      toast(copied===false?'复制失败':(item.kind==='folder'?'文件夹已复制':'文件已复制'));
       return;
     }
     if(action==='reveal'){
@@ -2818,8 +2999,239 @@ function selectFileSearchResult(index,{ensureVisible=false}={}){
   nextRow.classList.add('selected');
 }
 
+function resolveMediaVideoProviderFallback(value=''){
+  const match=String(value||'').trim().match(/https?:\/\/[^\s<>"']+/i);
+  if(!match) return null;
+  const sourceUrl=match[0].replace(/[，。！？、；：）】}>]+$/u,'');
+  let host='';
+  try{ host=new URL(sourceUrl).hostname.toLowerCase().replace(/^www\./,''); }catch{return null;}
+  const matches=(domains)=>domains.some(domain=>host===domain||host.endsWith(`.${domain}`));
+  if(matches(['douyin.com','iesdouyin.com','tiktok.com'])) return {id:'douyin-tiktok',label:'抖音 / TikTok',portalUrl:'https://dlpanda.com/zh-CN',fallbackUrl:'',sourceUrl};
+  if(matches(['bilibili.com','b23.tv'])) return {id:'bilibili',label:'哔哩哔哩',portalUrl:'https://www.seekin.ai/zh/bilibili-downloader/',fallbackUrl:'',sourceUrl};
+  if(matches(['xiaohongshu.com','xhslink.com'])) return {id:'xiaohongshu',label:'小红书',portalUrl:'https://www.xiaohongshua.com/',fallbackUrl:'https://www.hellotik.app/zh/rednote',sourceUrl};
+  if(matches(['kuaishou.com','gifshow.com','kwai.com'])) return {id:'kuaishou',label:'快手',portalUrl:'https://www.hellotik.app/zh/kuaishou',fallbackUrl:'',sourceUrl};
+  return null;
+}
+
+function mediaMusicSearchUrlFallback(keyword=''){
+  const value=String(keyword||'').trim();
+  return value?`https://www.gequbao.com/search-fallback?keyword=${encodeURIComponent(value)}`:'https://www.gequbao.com/';
+}
+
+function updateMediaVideoProvider(){
+  const provider=resolveMediaVideoProviderFallback($('#mediaVideoInput')?.value||'');
+  state.media.videoProvider=provider;
+  const label=$('#mediaVideoProvider');
+  if(label) label.innerHTML=provider?`<span class="media-provider-pill">${escapeHtml(provider.label)}</span>`:'等待识别平台';
+  const fallback=$('#mediaVideoFallback');
+  if(fallback) fallback.hidden=!provider?.fallbackUrl;
+}
+
+async function openMediaVideoPortal(useFallback=false,favorite=false){
+  const value=$('#mediaVideoInput')?.value||'';
+  const provider=await api.resolveMediaVideoProvider(value);
+  if(!provider){
+    toast('暂不支持这个链接');
+    return;
+  }
+  state.media.videoProvider=provider;
+  updateMediaVideoProvider();
+  const url=useFallback&&provider.fallbackUrl?provider.fallbackUrl:provider.portalUrl;
+  const copied=await api.copyText(provider.sourceUrl);
+  const opened=await api.openMediaPortal(url,favorite?'favorite':'download');
+  if(!opened){
+    toast('下载网站暂时无法打开');
+    return;
+  }
+  toast(favorite?'链接已复制，下载后将进入收藏目录':(copied===false?'已打开下载站':'链接已复制，请在下载站粘贴'));
+}
+
+async function openMediaMusicPortal(favorite=false){
+  const keyword=String($('#mediaMusicInput')?.value||'').trim();
+  if(!keyword){
+    toast('请输入歌曲名或歌手');
+    return;
+  }
+  const url=await api.getMediaMusicSearchUrl(keyword);
+  const copied=await api.copyText(keyword);
+  const opened=await api.openMediaPortal(url,favorite?'favorite':'download');
+  if(!opened){
+    toast('音乐网站暂时无法打开');
+    return;
+  }
+  toast(favorite?'已打开歌曲宝，下载后将进入收藏目录':(copied===false?'已打开歌曲宝':'关键词已复制，已打开歌曲宝'));
+}
+
+function stopMediaRefreshTimer(){
+  clearInterval(state.media.refreshTimer);
+  state.media.refreshTimer=null;
+  clearTimeout(state.media.clickTimer);
+  state.media.clickTimer=null;
+}
+
+function startMediaRefreshTimer(){
+  stopMediaRefreshTimer();
+  if(state.view!=='media'||!['downloads','favorites'].includes(state.media.tab)) return;
+  state.media.refreshTimer=setInterval(()=>{
+    if(state.view==='media'&&document.visibilityState==='visible') refreshMediaLibrary({quiet:true});
+  },8000);
+}
+
+function setMediaTab(tab){
+  if(!['video','music','downloads','favorites'].includes(tab)) tab='video';
+  state.media.tab=tab;
+  $$('#mediaTabs [data-media-tab]').forEach(button=>button.classList.toggle('active',button.dataset.mediaTab===tab));
+  $$('[data-media-panel]').forEach(panel=>panel.classList.toggle('active',panel.dataset.mediaPanel===tab));
+  startMediaRefreshTimer();
+  if(['downloads','favorites'].includes(tab)) refreshMediaLibrary({quiet:!!state.media.items.length});
+  else setTimeout(()=>$(tab==='video'?'#mediaVideoInput':'#mediaMusicInput')?.focus(),50);
+}
+
+function filteredMediaItems(tab){
+  const location=tab==='favorites'?'favorites':'downloads';
+  const type=tab==='favorites'?state.media.favoritesType:state.media.downloadsType;
+  return state.media.items.filter(item=>item.location===location&&(type==='all'||item.kind===type));
+}
+
+function mediaKindIcon(kind){
+  if(kind==='video') return '<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="m10 9 5 3-5 3Z"></path></svg>';
+  return '<svg viewBox="0 0 24 24"><path d="M9 18V5l10-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="16" cy="16" r="3"></circle></svg>';
+}
+
+function renderMediaList(tab){
+  const list=$(tab==='favorites'?'#mediaFavoritesList':'#mediaDownloadsList');
+  const summary=$(tab==='favorites'?'#mediaFavoritesSummary':'#mediaDownloadsSummary');
+  if(!list||!summary) return;
+  const items=filteredMediaItems(tab);
+  summary.textContent=state.media.loading?'正在刷新':`${items.length} 个文件`;
+  if(!items.length){
+    list.innerHTML=`<div class="media-empty">${state.media.loading?'正在读取目录':(tab==='favorites'?'暂无媒体收藏':'下载目录中暂无音视频文件')}</div>`;
+    return;
+  }
+  list.innerHTML=items.map((item,index)=>`<div class="media-row" data-media-row="${index}" data-media-list="${tab}" title="${escapeHtml(item.path||'')}">
+    <div class="media-primary"><span class="media-kind ${item.kind}">${mediaKindIcon(item.kind)}</span><span class="media-name-wrap"><span class="media-name">${escapeHtml(item.name||'')}</span><span class="media-type-label">${item.kind==='video'?'视频':'音乐'}</span></span></div>
+    <div class="media-path">${escapeHtml(item.directory||'')}</div>
+    <div class="media-size">${escapeHtml(formatFileSize(item.size))}</div>
+    <div class="media-date">${escapeHtml(formatFileModified(item.modifiedAt))}</div>
+    <div class="media-row-actions">
+      <button class="media-row-action ${item.favorite?'active':''}" data-media-action="favorite" data-media-index="${index}" data-media-list="${tab}" title="${item.favorite?'已收藏':'收藏'}">${iconSvg('bookmark')}</button>
+      <button class="media-row-action" data-media-action="copy" data-media-index="${index}" data-media-list="${tab}" title="复制文件">${iconSvg('copy')}</button>
+      <button class="media-row-action" data-media-action="open" data-media-index="${index}" data-media-list="${tab}" title="打开">${fileActionIcon('open')}</button>
+      <button class="media-row-action" data-media-action="reveal" data-media-index="${index}" data-media-list="${tab}" title="打开所在文件夹">${fileActionIcon('reveal')}</button>
+    </div>
+  </div>`).join('');
+}
+
+function renderMediaLists(){
+  $('#mediaDownloadPath').value=state.media.downloadPath||'';
+  $('#mediaFavoritePath').value=state.media.favoritePath||'';
+  $$('[data-media-filters="downloads"] [data-media-type]').forEach(button=>button.classList.toggle('active',button.dataset.mediaType===state.media.downloadsType));
+  $$('[data-media-filters="favorites"] [data-media-type]').forEach(button=>button.classList.toggle('active',button.dataset.mediaType===state.media.favoritesType));
+  renderMediaList('downloads');
+  renderMediaList('favorites');
+}
+
+async function refreshMediaLibrary({quiet=false}={}){
+  if(state.media.loading) return;
+  const requestId=++state.media.requestId;
+  state.media.loading=true;
+  if(!quiet) renderMediaLists();
+  try{
+    const result=await api.listLocalMedia();
+    if(requestId!==state.media.requestId) return;
+    state.media.items=Array.isArray(result?.items)?result.items:[];
+    state.media.downloadPath=result?.downloadPath||state.media.downloadPath;
+    state.media.favoritePath=result?.favoritePath||state.media.favoritePath;
+  }catch{
+    if(!quiet) toast('媒体目录暂时无法读取');
+  }finally{
+    if(requestId===state.media.requestId){
+      state.media.loading=false;
+      renderMediaLists();
+    }
+  }
+}
+
+function mediaItemAt(tab,index){
+  return filteredMediaItems(tab)[Number(index)]||null;
+}
+
+async function performMediaAction(action,tab,index){
+  const item=mediaItemAt(tab,index);
+  if(!item?.path) return;
+  if(action==='favorite'){
+    if(item.favorite){ toast('文件已在收藏目录'); return; }
+    const result=await api.favoriteLocalMedia(item.path);
+    toast(result?.ok?(result.alreadyFavorite?'文件已在收藏目录':'已转存到收藏目录'):(result?.reason||'收藏失败'));
+    if(result?.ok) await refreshMediaLibrary({quiet:true});
+    return;
+  }
+  if(action==='copy'){
+    const copied=await api.copyFileToClipboard(item.path,'copy','');
+    toast(copied===false?'复制失败':'文件已复制');
+    return;
+  }
+  if(action==='reveal'){
+    const shown=await api.showItemInFolder(item.path);
+    if(!shown){ toast('文件已被移动或删除'); await refreshMediaLibrary({quiet:true}); }
+    return;
+  }
+  const opened=await api.openPath(item.path);
+  if(!opened){ toast('文件已被移动或删除'); await refreshMediaLibrary({quiet:true}); }
+}
+
+function handleMediaListClick(event,tab){
+  const action=event.target.closest('[data-media-action]');
+  if(action){
+    event.stopPropagation();
+    performMediaAction(action.dataset.mediaAction,tab,action.dataset.mediaIndex);
+    return;
+  }
+  const row=event.target.closest('[data-media-row]');
+  if(!row) return;
+  clearTimeout(state.media.clickTimer);
+  if(event.detail>1) return;
+  state.media.clickTimer=setTimeout(()=>performMediaAction('copy',tab,row.dataset.mediaRow),220);
+}
+
+function handleMediaListDoubleClick(event,tab){
+  if(event.target.closest('[data-media-action]')) return;
+  const row=event.target.closest('[data-media-row]');
+  if(!row) return;
+  clearTimeout(state.media.clickTimer);
+  performMediaAction('open',tab,row.dataset.mediaRow);
+}
+
+function handleMediaListContextMenu(event,tab){
+  const row=event.target.closest('[data-media-row]');
+  if(!row) return;
+  const item=mediaItemAt(tab,row.dataset.mediaRow);
+  if(!item?.path) return;
+  event.preventDefault();
+  clearTimeout(state.media.clickTimer);
+  api.showFileContextMenu(item.path);
+}
+
+async function chooseMediaDirectory(kind){
+  const current=kind==='favorite'?state.media.favoritePath:state.media.downloadPath;
+  const selected=await api.selectMediaFolder(kind,current);
+  if(!selected) return;
+  const key=kind==='favorite'?'mediaFavoritePath':'mediaDownloadPath';
+  state.settings=await api.saveSettings({...state.settings,[key]:selected});
+  if(state.settings.__error){ delete state.settings.__error; toast('目录保存失败'); return; }
+  if(kind==='favorite') state.media.favoritePath=selected;
+  else state.media.downloadPath=selected;
+  await refreshMediaLibrary();
+  toast(kind==='favorite'?'收藏目录已更新':'下载目录已更新');
+}
+
+async function openMediaDirectory(kind){
+  const target=kind==='favorite'?state.media.favoritePath:state.media.downloadPath;
+  if(!target||!await api.openPath(target)) toast('目录暂时无法打开');
+}
+
 async function switchView(view,{skipCoach=false}={}){
-  if(!['clipboard','notes','search','stickies','settings','about'].includes(view)) view='clipboard';
+  if(!['clipboard','notes','search','media','stickies','settings','about'].includes(view)) view='clipboard';
   if(view===state.view){
     if(!skipCoach) showPageCoach(view);
     return;
@@ -2828,12 +3240,14 @@ async function switchView(view,{skipCoach=false}={}){
   if(previousView==='search' && view!=='search'){
     stopFileSearchPolling();
     clearTimeout(state.fileSearch.debounceTimer);
+    clearTimeout(state.fileSearch.clickTimer);
     hideFileThumbnailPreview();
     resetFileThumbnailQueue();
     state.fileSearch.requestId+=1;
     Promise.resolve(api.cancelFileSearch()).catch(()=>{});
   }
   if(previousView==='clipboard'&&view!=='clipboard') compactClipboardViewForBackground();
+  if(previousView==='media'&&view!=='media') stopMediaRefreshTimer();
   if(previousView==='settings' && view!=='settings') renderSettings();
   exitManagementModes();
   state.view=view;
@@ -2846,6 +3260,10 @@ async function switchView(view,{skipCoach=false}={}){
     renderFileSearch();
     loadFileSearchStatus();
     setTimeout(()=>$('#fileSearchInput')?.focus(),60);
+  }
+  if(view==='media'){
+    updateMediaVideoProvider();
+    setMediaTab(state.media.tab);
   }
   if(view==='stickies') renderStickyProjects(), renderStickyNotes();
   if(view==='settings') renderSettings();
@@ -2861,6 +3279,8 @@ function renderCurrentView(){
     renderNotes();
   }else if(state.view==='search'){
     renderFileSearch();
+  }else if(state.view==='media'){
+    setMediaTab(state.media.tab);
   }else if(state.view==='stickies'){
     renderStickyProjects();
     renderStickyNotes();
@@ -3111,16 +3531,16 @@ function renderClipboardFileThumbs(item){
     const name=escapeHtml(pathFileName(filePath));
     const src=escapeHtml(fileUrlFromPath(filePath));
     if(isImageAttachmentPath(filePath)){
-      return `<div class="clipboard-thumb"><img class="previewable-image" loading="lazy" data-preview-image="${src}" src="${src}" alt=""></div>`;
+      return `<div class="clipboard-thumb" data-attachment-path="${escapeHtml(filePath)}"><img class="previewable-image" loading="lazy" data-preview-image="${src}" src="${src}" alt=""></div>`;
     }
     if(isVideoAttachmentPath(filePath)){
-      return `<div class="clipboard-thumb">${videoThumbMarkup(src)}<span>${name}</span></div>`;
+      return `<div class="clipboard-thumb" data-attachment-path="${escapeHtml(filePath)}">${videoThumbMarkup(src)}<span>${name}</span></div>`;
     }
     if(isFolderLikePath(filePath)){
-      return `<div class="clipboard-thumb">${folderThumbMarkup(filePath)}<span>${name}</span></div>`;
+      return `<div class="clipboard-thumb" data-attachment-path="${escapeHtml(filePath)}">${folderThumbMarkup(filePath)}<span>${name}</span></div>`;
     }
     const ext=escapeHtml((String(name).split('.').pop() || 'file').slice(0,8));
-    return `<div class="clipboard-thumb">${fileThumbMarkup(filePath,ext)}<span>${name}</span></div>`;
+    return `<div class="clipboard-thumb" data-attachment-path="${escapeHtml(filePath)}">${fileThumbMarkup(filePath,ext)}<span>${name}</span></div>`;
   }).join('')}</div>`;
 }
 
@@ -3567,6 +3987,16 @@ function renderNotes(){
     if(event.target.closest('.record-actions,.previewable-image')) return;
     const card=event.target.closest('[data-note-card]');
     if(card) await copyNoteById(card.dataset.noteCard);
+  };
+  list.oncontextmenu=(event)=>{
+    const card=event.target.closest('[data-note-card]');
+    if(!card) return;
+    const note=allItems.find(item=>item.id===card.dataset.noteCard);
+    const targetPath=event.target.closest('[data-attachment-path]')?.dataset.attachmentPath
+      || noteFilePathsForCopy(note)[0];
+    if(!targetPath) return;
+    event.preventDefault();
+    api.showFileContextMenu(targetPath);
   };
   $$('[data-edit-note]').forEach(btn=>btn.onclick=(event)=>{
     event.stopPropagation();
@@ -4260,17 +4690,17 @@ function renderNoteAttachments(attachments=[]){
     const label=escapeHtml(attachmentLabel(item));
     if(item.kind==='image' && (item.dataUrl || item.path)){
       const src=escapeHtml(attachmentImageSrc(item));
-      return `<span class="bubble-attachment image"><img class="previewable-image" loading="lazy" data-preview-image="${src}" src="${src}" alt="${label}" /><span>${label}</span></span>`;
+      return `<span class="bubble-attachment image"${item.path?` data-attachment-path="${escapeHtml(item.path)}"`:''}><img class="previewable-image" loading="lazy" data-preview-image="${src}" src="${src}" alt="${label}" /><span>${label}</span></span>`;
     }
     if(item.kind==='video' && (item.path || item.dataUrl)){
       const src=escapeHtml(attachmentImageSrc(item));
-      return `<span class="bubble-attachment video">${videoThumbMarkup(src)}<span>${label}</span></span>`;
+      return `<span class="bubble-attachment video"${item.path?` data-attachment-path="${escapeHtml(item.path)}"`:''}>${videoThumbMarkup(src)}<span>${label}</span></span>`;
     }
     const ext=escapeHtml((item.ext || String(label).split('.').pop() || 'file').slice(0,6));
     if(item.kind==='folder' || isFolderLikePath(item.path || item.name)){
-      return `<span class="bubble-attachment folder">${folderThumbMarkup(item)}<span>${label}</span></span>`;
+      return `<span class="bubble-attachment folder"${item.path?` data-attachment-path="${escapeHtml(item.path)}"`:''}>${folderThumbMarkup(item)}<span>${label}</span></span>`;
     }
-    return `<span class="bubble-attachment file">${fileThumbMarkup(item,ext)}<span>${label}</span></span>`;
+    return `<span class="bubble-attachment file"${item.path?` data-attachment-path="${escapeHtml(item.path)}"`:''}>${fileThumbMarkup(item,ext)}<span>${label}</span></span>`;
   }).join('')}</div>`;
 }
 function renderPendingNoteAttachments(){
@@ -5388,7 +5818,7 @@ function showUpdateDialog(){
   showModal(`
     <div data-update-dialog>
       <div class="modal-header"><h3>软件更新</h3><button class="modal-close" id="closeModal">×</button></div>
-      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '7.0.9')}</b><span>${update.version?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
+      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '8.0.0')}</b><span>${update.version?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
       <div class="modal-message">${escapeHtml(updateStatusText())}</div>
       <p class="update-network-tip">提示：开启 VPN 后再检测更新，结果会更加准确。</p>
       ${busy||downloaded?`<div class="update-progress"><span style="width:${downloaded?100:progress}%"></span></div>`:''}
