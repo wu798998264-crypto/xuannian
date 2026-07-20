@@ -874,8 +874,8 @@ async function run() {
       const downloadsSearchRow=document.querySelector('#mediaDownloadsSearch').closest('.media-search-row');
       const favoritesSearchRow=document.querySelector('#mediaFavoritesSearch').closest('.media-search-row');
       const mediaLayout={
-        favoriteSeparate:!!document.querySelector('.media-nav-left > .media-favorite-tabs [data-media-tab="favorites"]'),
-        downloadsRight:!!document.querySelector('.media-nav-right #mediaTabs [data-media-tab="downloads"]'),
+        libraryTabsLeft:!!document.querySelector('.media-nav-left > #mediaTabs'),
+        libraryTabOrder:[...document.querySelectorAll('#mediaTabs [data-media-tab]')].map(button=>button.dataset.mediaTab),
         bubbleInNav:!!document.querySelector('.media-nav-right > #mediaDownloadBubble'),
         downloadCountAfterSearch:downloadsSearchRow?.children[1]?.id==='mediaDownloadsSummary',
         favoriteCountAfterSearch:favoritesSearchRow?.children[1]?.id==='mediaFavoritesSummary',
@@ -944,8 +944,8 @@ async function run() {
   assert(mediaLibraryMetrics.completedHistory.summary.includes('1 项进行中'));
   assert.deepStrictEqual(mediaLibraryMetrics.bubbleVisibility, {portal:true,downloads:true,favorites:true});
   assert.deepStrictEqual(mediaLibraryMetrics.mediaLayout, {
-    favoriteSeparate:true,
-    downloadsRight:true,
+    libraryTabsLeft:true,
+    libraryTabOrder:['downloads','favorites'],
     bubbleInNav:true,
     downloadCountAfterSearch:true,
     favoriteCountAfterSearch:true,

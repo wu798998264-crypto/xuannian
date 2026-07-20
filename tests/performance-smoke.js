@@ -139,8 +139,8 @@ async function run() {
   assert(indexSource.includes('id="mediaDownloadBubble"'), 'download progress must remain visible in the main window');
   assert(!indexSource.includes('data-media-filters="downloads"'), 'media lists must use only the shared video/music selector');
   assert(indexSource.includes('id="mediaKindTabs"'), 'video and music must use two direct buttons');
-  assert(indexSource.includes('class="media-favorite-tabs"'), 'favorites must remain a separate control beside video and music');
-  assert(indexSource.includes('class="media-nav-right"') && indexSource.includes('id="mediaDownloadBubble"'), 'downloads and their record bubble must stay in the right-side navigation group');
+  assert(/class="media-nav-left"[\s\S]*?id="mediaTabs"[\s\S]*?data-media-tab="downloads"[\s\S]*?data-media-tab="favorites"/.test(indexSource), 'downloaded media and favorites must form a left-side group in that order');
+  assert(/class="media-nav-right"[\s\S]*?id="mediaDownloadBubble"/.test(indexSource), 'the download record bubble must remain in the right-side navigation group');
   assert(!indexSource.includes('data-media-tab="portal"'), 'the redundant media download tab must be removed');
   assert(indexSource.includes('id="mediaDownloadsSearch"') && indexSource.includes('id="mediaFavoritesSearch"'), 'downloaded and favorite media lists need search fields');
   assert(indexSource.includes('class="media-search-row"'), 'media file counts must share the search row');

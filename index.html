@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>玄念8.0.4</title>
+  <title>玄念8.0.5</title>
   <link rel="icon" href="src/xuannian-logo-256.png" />
   <link rel="stylesheet" href="src/media-library.css" />
   <style>
@@ -1057,14 +1057,12 @@
             <button class="media-tab active" data-media-kind="video" role="tab">视频</button>
             <button class="media-tab" data-media-kind="audio" role="tab">音乐</button>
           </div>
-          <div class="media-favorite-tabs" role="tablist" aria-label="媒体收藏">
+          <div class="media-tabs" id="mediaTabs" role="tablist" aria-label="本地媒体">
+            <button class="media-tab" data-media-tab="downloads" role="tab">已下载</button>
             <button class="media-tab" data-media-tab="favorites" role="tab">收藏</button>
           </div>
         </div>
         <div class="media-nav-right">
-          <div class="media-tabs" id="mediaTabs" role="tablist" aria-label="已下载媒体">
-            <button class="media-tab" data-media-tab="downloads" role="tab">已下载</button>
-          </div>
           <div class="media-download-bubble" id="mediaDownloadBubble">
             <button class="media-download-toggle" id="mediaDownloadToggle" type="button" title="下载记录" aria-expanded="false">
               <svg viewBox="0 0 24 24"><path d="M12 4v11"></path><path d="m8 11 4 4 4-4"></path><path d="M5 19h14"></path></svg>
@@ -1684,7 +1682,7 @@ function createBrowserFallbackAPI(){
     async deleteInspiration(id){ const data=read(); data.inspirations=data.inspirations.filter(x=>x.id!==id); write(data); return data.inspirations; },
     async getSettings(){ return read().settings; },
     async saveSettings(settings){ const data=read(); data.settings={...data.settings,...settings}; write(data); return data.settings; },
-    async getUpdateState(){ return {status:'current',currentVersion:'8.0.4',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false}; },
+    async getUpdateState(){ return {status:'current',currentVersion:'8.0.5',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false}; },
     async checkForUpdates(){ return this.getUpdateState(); },
     async downloadUpdate(){ return this.getUpdateState(); },
     async installUpdate(){ return false; },
@@ -6355,7 +6353,7 @@ function showUpdateDialog(){
   showModal(`
     <div data-update-dialog>
       <div class="modal-header"><h3>软件更新</h3><button class="modal-close" id="closeModal">×</button></div>
-      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '8.0.4')}</b><span>${update.version?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
+      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '8.0.5')}</b><span>${update.version?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
       <div class="modal-message">${escapeHtml(updateStatusText())}</div>
       <p class="update-network-tip">提示：开启 VPN 后再检测更新，结果会更加准确。</p>
       ${busy||downloaded?`<div class="update-progress"><span style="width:${downloaded?100:progress}%"></span></div>`:''}
