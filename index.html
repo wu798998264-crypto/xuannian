@@ -1106,16 +1106,22 @@
             <div class="media-launch-actions">
               <button class="ghost-btn" id="mediaVideoFallback" type="button" hidden>备用站</button>
               <button class="media-icon-button" id="mediaFavoriteVideoPortal" type="button" title="收藏下载"><svg viewBox="0 0 24 24"><path d="M7 4h10a1 1 0 0 1 1 1v15l-6-3.5L6 20V5a1 1 0 0 1 1-1Z"></path></svg></button>
-              <button class="black-btn" id="mediaOpenVideoPortal" type="button">打开下载站</button>
+              <button class="black-btn" id="mediaOpenVideoPortal" type="button">最高画质下载</button>
             </div>
           </div>
           <div class="media-provider-line" data-media-launcher="video"><span id="mediaVideoProvider">等待识别平台</span></div>
           <div class="media-launch-band" data-media-launcher="audio" hidden>
             <input class="media-launch-input" id="mediaMusicInput" placeholder="输入歌曲名、歌手或专辑" autocomplete="off" />
-            <div class="media-launch-actions"><button class="media-icon-button" id="mediaFavoriteMusicPortal" type="button" title="收藏下载"><svg viewBox="0 0 24 24"><path d="M7 4h10a1 1 0 0 1 1 1v15l-6-3.5L6 20V5a1 1 0 0 1 1-1Z"></path></svg></button><button class="black-btn" id="mediaOpenMusicPortal" type="button">搜索歌曲宝</button></div>
+            <div class="media-launch-actions"><div class="media-format-tabs" id="mediaMusicFormats" role="tablist" aria-label="音乐格式"><button class="media-format-tab active" data-music-format="mp3" type="button">MP3</button><button class="media-format-tab" data-music-format="wav" type="button">WAV</button></div><button class="media-icon-button" id="mediaFavoriteMusicPortal" type="button" title="收藏下载"><svg viewBox="0 0 24 24"><path d="M7 4h10a1 1 0 0 1 1 1v15l-6-3.5L6 20V5a1 1 0 0 1 1-1Z"></path></svg></button><button class="black-btn" id="mediaOpenMusicPortal" type="button">直接下载</button></div>
           </div>
-          <div class="media-provider-line" data-media-launcher="audio" hidden><span class="media-provider-pill">歌曲宝</span></div>
-          <div class="media-browser-shell" id="mediaBrowserShell">
+          <div class="media-provider-line" data-media-launcher="audio" hidden><span class="media-provider-pill" id="mediaMusicProvider">歌曲宝 MP3</span></div>
+          <div class="media-direct-shell" id="mediaDirectShell">
+            <div class="media-direct-icon"><svg viewBox="0 0 24 24"><path d="M12 4v11"></path><path d="m8 11 4 4 4-4"></path><path d="M5 19h14"></path></svg></div>
+            <strong id="mediaDirectStatus">等待下载任务</strong>
+            <span id="mediaDirectAddress">解析网页将在后台运行</span>
+            <button class="media-icon-button" id="mediaToggleBrowser" type="button" title="显示下载网页"><svg viewBox="0 0 24 24"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"></path><circle cx="12" cy="12" r="2.5"></circle></svg></button>
+          </div>
+          <div class="media-browser-shell" id="mediaBrowserShell" hidden>
             <div class="media-browser-toolbar">
               <button class="media-browser-control" id="mediaBrowserBack" type="button" title="后退" disabled><svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"></path></svg></button>
               <button class="media-browser-control" id="mediaBrowserForward" type="button" title="前进" disabled><svg viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"></path></svg></button>
@@ -1396,8 +1402,10 @@ const state = {
     requestId:0,
     refreshTimer:null,
     videoProvider:null,
+    musicFormat:'mp3',
     clickTimer:null,
     browser:{ready:false,loading:false,url:'',title:'',canGoBack:false,canGoForward:false},
+    browserVisible:false,
     browserBoundsFrame:null,
     downloadTasks:[],
     downloadsExpanded:false,
@@ -1786,7 +1794,7 @@ function createUnifiedAPI(nativeApi, fallback){
     deleteMediaCollection: (location,kind,name)=> nativeApi.deleteMediaCollection ? nativeApi.deleteMediaCollection(location,kind,name) : fallback.deleteMediaCollection(location,kind,name),
     moveLocalMedia: (filePath,location,collection)=> nativeApi.moveLocalMedia ? nativeApi.moveLocalMedia(filePath,location,collection) : fallback.moveLocalMedia(filePath,location,collection),
     deleteLocalMedia: (filePath,location)=> nativeApi.deleteLocalMedia ? nativeApi.deleteLocalMedia(filePath,location) : fallback.deleteLocalMedia(filePath,location),
-    openMediaPortal: (url,downloadTarget,sourceText,autoSubmit,collection,qualityPreference)=> nativeApi.openMediaPortal ? nativeApi.openMediaPortal(url,downloadTarget,sourceText,autoSubmit,collection,qualityPreference) : fallback.openMediaPortal(url,downloadTarget,sourceText,autoSubmit,collection,qualityPreference),
+    openMediaPortal: (url,downloadTarget,sourceText,autoSubmit,collection,qualityPreference,automationMode)=> nativeApi.openMediaPortal ? nativeApi.openMediaPortal(url,downloadTarget,sourceText,autoSubmit,collection,qualityPreference,automationMode) : fallback.openMediaPortal(url,downloadTarget,sourceText,autoSubmit,collection,qualityPreference,automationMode),
     setMediaBrowserBounds: (bounds,visible)=> nativeApi.setMediaBrowserBounds ? nativeApi.setMediaBrowserBounds(bounds,visible) : fallback.setMediaBrowserBounds(bounds,visible),
     getMediaBrowserState: ()=> nativeApi.getMediaBrowserState ? nativeApi.getMediaBrowserState() : fallback.getMediaBrowserState(),
     mediaBrowserAction: (action)=> nativeApi.mediaBrowserAction ? nativeApi.mediaBrowserAction(action) : fallback.mediaBrowserAction(action),
@@ -1946,6 +1954,7 @@ async function init(){
   window.nativeAPI?.onMediaBrowserState?.((payload)=>{
     state.media.browser={...state.media.browser,...payload};
     renderMediaBrowserState();
+    if(payload?.autoActionMissing) toast('自动下载未完成，可点击眼睛图标显示网页处理');
   });
   window.nativeAPI?.onMainSuspend?.(()=>{
     exitManagementModes();
@@ -2172,6 +2181,11 @@ function bindEvents(){
   });
   $('#mediaOpenMusicPortal')?.addEventListener('click',()=>openMediaMusicPortal(false));
   $('#mediaFavoriteMusicPortal')?.addEventListener('click',()=>openMediaMusicPortal(true));
+  $$('#mediaMusicFormats [data-music-format]').forEach(button=>button.addEventListener('click',()=>setMediaMusicFormat(button.dataset.musicFormat)));
+  $('#mediaToggleBrowser')?.addEventListener('click',()=>{
+    state.media.browserVisible=!state.media.browserVisible;
+    renderMediaBrowserState();
+  });
   $('#mediaDownloadsSearch')?.addEventListener('input',()=>{ resetMediaListViewport('downloads'); renderMediaList('downloads',{force:true}); });
   $('#mediaFavoritesSearch')?.addEventListener('input',()=>{ resetMediaListViewport('favorites'); renderMediaList('favorites',{force:true}); });
   $('#clearMediaDownloadsSearch')?.addEventListener('click',()=>{
@@ -3229,8 +3243,7 @@ function resolveMediaVideoProviderFallback(value=''){
 }
 
 function mediaMusicSearchUrlFallback(keyword=''){
-  const value=String(keyword||'').trim();
-  return value?`https://www.gequbao.com/search-fallback?keyword=${encodeURIComponent(value)}`:'https://www.gequbao.com/';
+  return 'https://www.gequbao.com/';
 }
 
 function mediaDownloadStatusLabel(status){
@@ -3329,19 +3342,31 @@ async function openMediaVideoPortal(useFallback=false,favorite=false){
   state.media.videoProvider=provider;
   updateMediaVideoProvider();
   const url=useFallback&&provider.fallbackUrl?provider.fallbackUrl:provider.portalUrl;
-  const qualityPreference=useFallback?'':(provider.autoDownloadQuality||'');
+  const qualityPreference=useFallback?'':'highest';
   const collection=favorite?await showMediaCollectionPicker('video'):'';
   if(collection===null) return;
   const copied=await api.copyText(provider.sourceUrl);
-  const opened=await api.openMediaPortal(url,favorite?'favorite':'download',provider.sourceUrl,true,collection,qualityPreference);
+  const opened=await api.openMediaPortal(url,favorite?'favorite':'download',provider.sourceUrl,true,collection,qualityPreference,'video-direct');
   if(!opened){
     toast('下载网站暂时无法打开');
     return;
   }
-  state.media.browser={...state.media.browser,ready:true,loading:true,url,autoFilled:false,autoSubmitted:false,autoDownloadStarted:false,qualityLabel:''};
+  state.media.browserVisible=false;
+  state.media.browser={...state.media.browser,ready:true,loading:true,opening:true,url,autoFilled:false,autoSubmitted:false,autoDownloadStarted:false,autoActionMissing:false,qualityLabel:'',externalOpened:false};
   renderMediaBrowserState();
-  if(qualityPreference==='highest') toast(favorite?'正在解析最高画质，下载后将进入收藏目录':'正在自动解析并选择最高画质下载');
-  else toast(favorite?'正在自动填入链接，下载后将进入收藏目录':(copied===false?'正在打开下载站':'正在自动填入链接并尝试解析'));
+  toast(favorite?'正在后台解析最高画质，下载后将进入收藏目录':(copied===false?'正在后台解析视频':'正在后台解析并选择最高画质下载'));
+}
+
+function setMediaMusicFormat(format='mp3'){
+  state.media.musicFormat=format==='wav'?'wav':'mp3';
+  $$('#mediaMusicFormats [data-music-format]').forEach(button=>button.classList.toggle('active',button.dataset.musicFormat===state.media.musicFormat));
+  const wav=state.media.musicFormat==='wav';
+  const provider=$('#mediaMusicProvider');
+  if(provider) provider.textContent=wav?'阿里云盘 WAV':'歌曲宝 MP3';
+  const action=$('#mediaOpenMusicPortal');
+  if(action) action.textContent=wav?'打开阿里云盘':'直接下载';
+  const favorite=$('#mediaFavoriteMusicPortal');
+  if(favorite) favorite.hidden=wav;
 }
 
 async function openMediaMusicPortal(favorite=false){
@@ -3350,22 +3375,32 @@ async function openMediaMusicPortal(favorite=false){
     toast('请输入歌曲名或歌手');
     return;
   }
+  if(state.media.musicFormat==='wav'){
+    await api.copyText(keyword);
+    const opened=await api.openExternal('https://www.alipan.com/');
+    if(!opened){ toast('阿里云盘暂时无法打开'); return; }
+    state.media.browserVisible=false;
+    state.media.browser={...state.media.browser,ready:false,loading:false,opening:false,url:'https://www.alipan.com/',externalOpened:true,autoActionMissing:false};
+    renderMediaBrowserState();
+    toast('已复制搜索词并打开阿里云盘');
+    return;
+  }
   const url=await api.getMediaMusicSearchUrl(keyword);
   const collection=favorite?await showMediaCollectionPicker('audio'):'';
   if(collection===null) return;
-  const copied=await api.copyText(keyword);
-  const opened=await api.openMediaPortal(url,favorite?'favorite':'download',keyword,false,collection);
+  const opened=await api.openMediaPortal(url,favorite?'favorite':'download',keyword,true,collection,'','music-mp3-first');
   if(!opened){
     toast('音乐网站暂时无法打开');
     return;
   }
-  state.media.browser={...state.media.browser,ready:true,loading:true,url};
+  state.media.browserVisible=false;
+  state.media.browser={...state.media.browser,ready:true,loading:true,opening:true,url,autoFilled:false,autoSubmitted:false,autoDownloadStarted:false,autoActionMissing:false,qualityLabel:'',externalOpened:false};
   renderMediaBrowserState();
-  toast(favorite?'正在打开歌曲宝，下载后将进入收藏目录':(copied===false?'正在打开歌曲宝':'正在打开歌曲宝，关键词已复制'));
+  toast(favorite?'正在后台匹配 MP3，下载后将进入收藏目录':'正在后台匹配并下载首个最佳结果');
 }
 
 function mediaBrowserShouldShow(){
-  return state.view==='media'&&state.media.tab==='portal'&&!!state.media.browser.ready;
+  return state.view==='media'&&state.media.tab==='portal'&&state.media.browserVisible&&!!state.media.browser.ready;
 }
 
 function syncMediaBrowserBounds(){
@@ -3382,11 +3417,22 @@ function syncMediaBrowserBounds(){
 
 function renderMediaBrowserState(){
   const browser=state.media.browser||{};
-  $('#mediaBrowserShell')?.classList.toggle('has-content',!!browser.ready);
+  const showBrowser=mediaBrowserShouldShow();
+  const browserShell=$('#mediaBrowserShell');
+  const directShell=$('#mediaDirectShell');
+  if(browserShell){ browserShell.hidden=!showBrowser; browserShell.classList.toggle('has-content',!!browser.ready); }
+  if(directShell) directShell.hidden=showBrowser;
   const address=$('#mediaBrowserAddress');
   if(address){ address.textContent=browser.url||'下载网站将在这里打开'; address.title=browser.url||''; }
   const status=$('#mediaBrowserStatus');
-  if(status) status.textContent=browser.loading?'加载中':(browser.crashed?'页面需要刷新':(browser.autoDownloadStarted?'已选择最高画质':(browser.autoSubmitted?'已自动解析':(browser.autoFilled?'已自动填入':'就绪'))));
+  const statusText=browser.externalOpened?'已打开阿里云盘':(browser.crashed?'后台网页需要刷新':(browser.autoActionMissing?'自动下载未完成，请显示网页处理':(browser.autoDownloadStarted?(browser.qualityLabel==='MP3'?'已触发 MP3 下载':'已开始最高画质下载'):((browser.loading||browser.opening)?'后台解析中':(browser.autoSubmitted?'已自动解析':(browser.autoFilled?'已自动填入':'等待下载任务'))))));
+  if(status) status.textContent=statusText;
+  const directStatus=$('#mediaDirectStatus');
+  if(directStatus) directStatus.textContent=statusText;
+  const directAddress=$('#mediaDirectAddress');
+  if(directAddress){ directAddress.textContent=browser.autoActionMissing?'点击右上角眼睛图标手动处理':(browser.url||'解析网页将在后台运行'); directAddress.title=browser.url||''; }
+  const toggle=$('#mediaToggleBrowser');
+  if(toggle){ toggle.hidden=!browser.ready; toggle.title=showBrowser?'隐藏下载网页':'显示下载网页'; }
   if($('#mediaBrowserBack')) $('#mediaBrowserBack').disabled=!browser.canGoBack;
   if($('#mediaBrowserForward')) $('#mediaBrowserForward').disabled=!browser.canGoForward;
   if($('#mediaBrowserReload')) $('#mediaBrowserReload').title=browser.loading?'停止加载':'刷新';

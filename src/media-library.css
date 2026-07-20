@@ -14,8 +14,18 @@ body.dark .media-tab.active{background:#3d3e42;box-shadow:none}
 .media-launch-input:focus{border-color:#9ba4b0;box-shadow:0 0 0 3px rgba(80,92,108,.09)}
 .media-launch-actions{display:flex;align-items:center;gap:8px}
 .media-launch-actions .black-btn,.media-launch-actions .ghost-btn{height:42px;white-space:nowrap}
+.media-format-tabs{height:42px;display:flex;align-items:center;padding:3px;border:1px solid var(--line);border-radius:8px;background:var(--panel-soft)}
+.media-format-tab{height:34px;min-width:48px;padding:0 10px;border-radius:6px;color:var(--muted);font-size:12px;font-weight:800}
+.media-format-tab.active{background:var(--panel);color:var(--text);box-shadow:0 1px 3px rgba(0,0,0,.08)}
 .media-provider-line{height:30px;display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px;font-weight:700}
 .media-provider-pill{display:inline-flex;align-items:center;height:24px;padding:0 8px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--text)}
+.media-direct-shell{flex:1;min-height:260px;display:grid;place-content:center;justify-items:center;gap:10px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--muted);position:relative}
+.media-direct-shell[hidden],.media-browser-shell[hidden]{display:none}
+.media-direct-icon{width:42px;height:42px;display:grid;place-items:center;border-radius:8px;background:var(--panel-soft);color:var(--text)}
+.media-direct-icon svg{width:21px;height:21px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.media-direct-shell strong{font-size:14px;color:var(--text)}
+.media-direct-shell span{max-width:min(560px,75vw);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px}
+.media-direct-shell > .media-icon-button{position:absolute;right:10px;top:10px}
 .media-browser-shell{flex:1;min-height:260px;display:flex;flex-direction:column;border:1px solid var(--line);border-radius:8px;background:var(--panel);overflow:hidden}
 .media-browser-toolbar{height:42px;flex:none;display:flex;align-items:center;gap:5px;padding:0 8px;border-bottom:1px solid var(--line);background:var(--panel-soft)}
 .media-browser-control{width:30px;height:30px;display:grid;place-items:center;border-radius:6px;color:var(--muted)}

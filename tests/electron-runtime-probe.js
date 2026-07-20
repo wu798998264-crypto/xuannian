@@ -959,12 +959,14 @@ async function run() {
       const draggedFiles=[];
       const contextMenus=[];
       const portalInputs=[];
+      const externalUrls=[];
       const favoriteCollections=[];
       const movedFavorites=[];
       const deletedFavorites=[];
       const syntheticDownloads=Array.from({length:5000},(_,index)=>({path:'C:/Downloads/archive/video-'+index+'.mp4',directory:'C:/Downloads/archive',name:'video-'+index+'.mp4',kind:'video',size:4096+index,modifiedAt:index,favorite:false,location:'downloads',collection:'项目视频'}));
       api.resolveMediaVideoProvider=async value=>resolveMediaVideoProviderFallback(value);
-      api.openMediaPortal=async(url,target,sourceText,autoSubmit,collection,qualityPreference)=>{ openedPortals.push(url); portalTargets.push(target); portalInputs.push({sourceText,autoSubmit,collection,qualityPreference}); return true; };
+      api.openMediaPortal=async(url,target,sourceText,autoSubmit,collection,qualityPreference,automationMode)=>{ openedPortals.push(url); portalTargets.push(target); portalInputs.push({sourceText,autoSubmit,collection,qualityPreference,automationMode}); return true; };
+      api.openExternal=async url=>{ externalUrls.push(url); return true; };
       api.copyText=async value=>{ copiedText.push(value); return true; };
       api.copyFileToClipboard=async value=>{ copiedFiles.push(value); return true; };
       api.startFileDrag=value=>{ draggedFiles.push(value); return true; };
@@ -1002,6 +1004,15 @@ async function run() {
       document.querySelector('#mediaKindTabs [data-media-kind="audio"]').click();
       const audioPortalSelected=state.media.kind==='audio'&&state.media.tab==='portal';
       const videoProviderHiddenOnAudio=document.querySelector('#mediaVideoProvider').closest('[data-media-launcher]').hidden;
+      const musicInput=document.querySelector('#mediaMusicInput');
+      musicInput.value='测试歌曲 测试歌手';
+      await openMediaMusicPortal(false);
+      setMediaMusicFormat('wav');
+      await openMediaMusicPortal(false);
+      const wavUi={format:state.media.musicFormat,provider:document.querySelector('#mediaMusicProvider').textContent.trim(),action:document.querySelector('#mediaOpenMusicPortal').textContent.trim(),favoriteHidden:document.querySelector('#mediaFavoriteMusicPortal').hidden};
+      setMediaMusicFormat('mp3');
+      const mp3Ui={format:state.media.musicFormat,provider:document.querySelector('#mediaMusicProvider').textContent.trim(),action:document.querySelector('#mediaOpenMusicPortal').textContent.trim(),favoriteHidden:document.querySelector('#mediaFavoriteMusicPortal').hidden};
+      const backgroundPortal={browserHidden:document.querySelector('#mediaBrowserShell').hidden,directVisible:!document.querySelector('#mediaDirectShell').hidden};
       document.querySelector('#mediaKindTabs [data-media-kind="video"]').click();
       const videoPortalSelected=state.media.kind==='video'&&state.media.tab==='portal';
       setMediaTab('downloads');
@@ -1092,7 +1103,8 @@ async function run() {
       state.media.downloadsExpanded=false;
       renderMediaDownloadBubble();
       return {
-        openedPortals,portalTargets,portalInputs,copiedText,copiedFiles,draggedFiles,contextMenus,favoriteCollections,movedFavorites,deletedFavorites,
+        openedPortals,portalTargets,portalInputs,externalUrls,copiedText,copiedFiles,draggedFiles,contextMenus,favoriteCollections,movedFavorites,deletedFavorites,
+        wavUi,mp3Ui,backgroundPortal,
         providerRouting:{douyinProvider,tiktokProvider},
         activeView:document.querySelector('.view.active')?.id||'',
         activeNav:document.querySelector('.nav-btn.active')?.dataset.view||'',
@@ -1115,12 +1127,17 @@ async function run() {
     })()
   `, true);
   console.log(`media library runtime metrics ${JSON.stringify(mediaLibraryMetrics)}`);
-  assert.deepStrictEqual(mediaLibraryMetrics.openedPortals, ['https://www.hellotik.app/zh/douyin','https://www.seekin.ai/zh/bilibili-downloader/','https://www.seekin.ai/zh/bilibili-downloader/']);
-  assert.deepStrictEqual(mediaLibraryMetrics.portalTargets, ['download','download','favorite']);
+  assert.deepStrictEqual(mediaLibraryMetrics.openedPortals, ['https://www.hellotik.app/zh/douyin','https://www.seekin.ai/zh/bilibili-downloader/','https://www.seekin.ai/zh/bilibili-downloader/','https://www.gequbao.com/']);
+  assert.deepStrictEqual(mediaLibraryMetrics.portalTargets, ['download','download','favorite','download']);
   assert.strictEqual(mediaLibraryMetrics.portalInputs.every((item) => item.autoSubmit === true), true);
-  assert.deepStrictEqual(mediaLibraryMetrics.portalInputs.map((item) => item.collection), ['', '', '项目收藏']);
-  assert.deepStrictEqual(mediaLibraryMetrics.portalInputs.map((item) => item.qualityPreference || ''), ['highest','','']);
-  assert.deepStrictEqual(mediaLibraryMetrics.copiedText, ['https://v.douyin.com/runtime','https://www.bilibili.com/video/BV1runtime','https://www.bilibili.com/video/BV1runtime']);
+  assert.deepStrictEqual(mediaLibraryMetrics.portalInputs.map((item) => item.collection), ['', '', '项目收藏','']);
+  assert.deepStrictEqual(mediaLibraryMetrics.portalInputs.map((item) => item.qualityPreference || ''), ['highest','highest','highest','']);
+  assert.deepStrictEqual(mediaLibraryMetrics.portalInputs.map((item) => item.automationMode || ''), ['video-direct','video-direct','video-direct','music-mp3-first']);
+  assert.deepStrictEqual(mediaLibraryMetrics.externalUrls, ['https://www.alipan.com/']);
+  assert.deepStrictEqual(mediaLibraryMetrics.copiedText, ['https://v.douyin.com/runtime','https://www.bilibili.com/video/BV1runtime','https://www.bilibili.com/video/BV1runtime','测试歌曲 测试歌手']);
+  assert.deepStrictEqual(mediaLibraryMetrics.wavUi, {format:'wav',provider:'阿里云盘 WAV',action:'打开阿里云盘',favoriteHidden:true});
+  assert.deepStrictEqual(mediaLibraryMetrics.mp3Ui, {format:'mp3',provider:'歌曲宝 MP3',action:'直接下载',favoriteHidden:false});
+  assert.deepStrictEqual(mediaLibraryMetrics.backgroundPortal, {browserHidden:true,directVisible:true});
   assert.strictEqual(mediaLibraryMetrics.providerRouting.douyinProvider.id, 'douyin');
   assert.strictEqual(mediaLibraryMetrics.providerRouting.douyinProvider.portalUrl, 'https://www.hellotik.app/zh/douyin');
   assert.strictEqual(mediaLibraryMetrics.providerRouting.douyinProvider.autoDownloadQuality, 'highest');

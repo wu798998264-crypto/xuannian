@@ -124,7 +124,9 @@ async function run() {
   assert(mainSource.includes('function sanitizeMediaDownloadHistory(') && mainSource.includes('.slice(0, 10);'), 'completed download history must retain only the latest ten records');
   assert(mainSource.includes('rememberCompletedMediaDownload(completedTask);'), 'completed downloads must be persisted before the renderer is notified');
   assert(mainSource.includes('showMediaDownloadNotification({ status: \'completed\'') && mainSource.includes("new Notification({ title, body, silent: false })"), 'completed downloads must trigger a native XuanNian notification from the real download completion event');
-  assert(mainSource.includes("qualityPreference === 'highest'") && mainSource.includes('autoDownloadStarted: !!result.autoDownloadClicked'), 'Douyin automation must wait for and report the highest-quality download action');
+  assert(mainSource.includes("qualityPreference === 'highest'") && mainSource.includes('autoDownloadStarted: !!result.autoDownloadClicked'), 'video automation must wait for and report the highest-quality download action');
+  assert(mainSource.includes("automationMode === 'music-mp3-first'") && mainSource.includes("/\\/music\\/\\d+/i.test(path)"), 'MP3 background automation must search, select, and download without showing the website');
+  assert(mainSource.includes('activeMediaPortalDownloads') && mainSource.includes('backgroundThrottling: false'), 'hidden media workers must remain responsive while active and release after completion');
   assert(mainSource.includes('function destroyMediaPortalView('), 'embedded media browser must have an explicit destruction path');
   assert(mainSource.includes("kind === 'note-category'") && mainSource.includes("action('rename', '修改')") && mainSource.includes("action('delete', '删除'"), 'favorite category names need native rename and delete context-menu actions');
   assert(mainSource.includes("ipcMain.on('ui:setNativeTheme'") && mainSource.includes('nativeTheme.themeSource'), 'native context menus must follow the app color mode');
@@ -146,7 +148,10 @@ async function run() {
   const wheelSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'wheel-scroll.js'), 'utf8');
   const mediaStyleSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'media-library.css'), 'utf8');
   assert(indexSource.includes('id="mediaBrowserSurface"'), 'media download sites must have an embedded browser surface');
-  assert(indexSource.includes("browser.autoDownloadStarted?'已选择最高画质'"), 'embedded browser status must confirm highest-quality selection');
+  assert(indexSource.includes('id="mediaDirectShell"') && /id="mediaBrowserShell" hidden/.test(indexSource), 'download websites must be hidden behind the background task status by default');
+  assert(indexSource.includes("browser.qualityLabel==='MP3'?'已触发 MP3 下载':'已开始最高画质下载'"), 'background task status must distinguish MP3 and highest-quality video downloads');
+  assert(indexSource.includes('id="mediaMusicFormats"') && indexSource.includes('data-music-format="mp3"') && indexSource.includes('data-music-format="wav"'), 'music downloads must expose MP3 and WAV format controls');
+  assert(indexSource.includes("api.openExternal('https://www.alipan.com/')"), 'WAV selection must open Aliyun Drive without fabricating a converted file');
   assert(indexSource.includes('id="mediaDownloadBubble"'), 'download progress must remain visible in the main window');
   assert(!indexSource.includes('data-media-filters="downloads"'), 'media lists must use only the shared video/music selector');
   assert(indexSource.includes('id="mediaKindTabs"'), 'video and music must use two direct buttons');
