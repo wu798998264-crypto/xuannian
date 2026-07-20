@@ -44,6 +44,8 @@ jobs:
         run: npm run test:runtime
       - name: Run media switching and download endurance smoke
         timeout-minutes: 3
+        env:
+          XUANNIAN_ENDURANCE_SECONDS: 12
         run: npm run test:endurance:smoke
       - name: Build Windows packages
         run: npm run dist:all
