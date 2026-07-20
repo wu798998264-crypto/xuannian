@@ -761,6 +761,7 @@ async function run() {
       const copiedFiles=[];
       const contextMenus=[];
       const portalInputs=[];
+      let mediaCacheClearCalls=0;
       api.resolveMediaVideoProvider=async value=>resolveMediaVideoProviderFallback(value);
       api.openMediaPortal=async(url,target,sourceText,autoSubmit,collection)=>{ openedPortals.push(url); portalTargets.push(target); portalInputs.push({sourceText,autoSubmit,collection}); return true; };
       api.copyText=async value=>{ copiedText.push(value); return true; };
@@ -782,6 +783,10 @@ async function run() {
       videoInput.dispatchEvent(new Event('input',{bubbles:true}));
       await openMediaVideoPortal(false);
       await openMediaVideoPortal(false,true);
+      document.querySelector('#mediaKindTabs [data-media-kind="audio"]').click();
+      const audioPortalSelected=state.media.kind==='audio'&&state.media.tab==='portal';
+      document.querySelector('#mediaKindTabs [data-media-kind="video"]').click();
+      const videoPortalSelected=state.media.kind==='video'&&state.media.tab==='portal';
       setMediaTab('downloads');
       await new Promise(resolve=>setTimeout(resolve,20));
       const first=document.querySelector('#mediaDownloadsList [data-media-row="0"]');
@@ -789,6 +794,15 @@ async function run() {
       await new Promise(resolve=>setTimeout(resolve,240));
       first.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true}));
       await new Promise(resolve=>setTimeout(resolve,20));
+      const mediaSearch=document.querySelector('#mediaDownloadsSearch');
+      mediaSearch.value='demo';
+      mediaSearch.dispatchEvent(new Event('input',{bubbles:true}));
+      const matchingSearchRows=document.querySelectorAll('#mediaDownloadsList [data-media-row]').length;
+      mediaSearch.value='missing';
+      mediaSearch.dispatchEvent(new Event('input',{bubbles:true}));
+      const missingSearchRows=document.querySelectorAll('#mediaDownloadsList [data-media-row]').length;
+      mediaSearch.value='';
+      mediaSearch.dispatchEvent(new Event('input',{bubbles:true}));
       updateMediaDownloadTask({id:'runtime-download',name:'runtime.mp4',status:'downloading',receivedBytes:50,totalBytes:100,percent:50});
       state.media.downloadsExpanded=true;
       renderMediaDownloadBubble();
@@ -801,12 +815,28 @@ async function run() {
       state.media.downloadTasks=[];
       state.media.downloadsExpanded=false;
       renderMediaDownloadBubble();
+      api.clearMediaCache=async()=>{ mediaCacheClearCalls+=1; return {ok:true,cleared:2,failed:0,bytes:3072}; };
+      state.settings.mediaDownloadPath='C:/Downloads';
+      state.media.downloadPath='C:/Downloads';
+      await switchView('settings',{skipCoach:true});
+      const clearPromise=clearMediaCache();
+      await new Promise(resolve=>setTimeout(resolve,20));
+      document.querySelector('#confirmModal').click();
+      await clearPromise;
+      await switchView('media',{skipCoach:true});
+      setMediaKind('video');
+      setMediaTab('downloads');
+      await new Promise(resolve=>setTimeout(resolve,20));
       return {
         openedPortals,portalTargets,portalInputs,copiedText,copiedFiles,contextMenus,
         activeView:document.querySelector('.view.active')?.id||'',
         activeNav:document.querySelector('.nav-btn.active')?.dataset.view||'',
         rows:document.querySelectorAll('#mediaDownloadsList [data-media-row]').length,
-        typeOptions:[...document.querySelectorAll('#mediaTypeMenu [data-media-kind]')].map(button=>button.textContent.trim()),
+        typeOptions:[...document.querySelectorAll('#mediaKindTabs [data-media-kind]')].map(button=>button.textContent.trim()),
+        audioPortalSelected,videoPortalSelected,matchingSearchRows,missingSearchRows,
+        mediaCacheClearCalls,
+        hasDownloadTab:!!document.querySelector('#mediaTabs [data-media-tab="portal"]'),
+        hasInlinePaths:!!document.querySelector('#mediaDownloadPath, #mediaFavoritePath'),
         hasAllFilter:!!document.querySelector('[data-media-filters] [data-media-type="all"]'),
         copyActions:document.querySelectorAll('#mediaDownloadsList [data-media-action="copy"]').length,
         deleteActions:document.querySelectorAll('#mediaDownloadsList [data-media-action="delete"]').length,
@@ -826,6 +856,13 @@ async function run() {
   assert.strictEqual(mediaLibraryMetrics.activeNav, 'media');
   assert.strictEqual(mediaLibraryMetrics.rows, 1);
   assert.deepStrictEqual(mediaLibraryMetrics.typeOptions, ['视频','音乐']);
+  assert.strictEqual(mediaLibraryMetrics.audioPortalSelected, true);
+  assert.strictEqual(mediaLibraryMetrics.videoPortalSelected, true);
+  assert.strictEqual(mediaLibraryMetrics.matchingSearchRows, 1);
+  assert.strictEqual(mediaLibraryMetrics.missingSearchRows, 0);
+  assert.strictEqual(mediaLibraryMetrics.mediaCacheClearCalls, 1);
+  assert.strictEqual(mediaLibraryMetrics.hasDownloadTab, false);
+  assert.strictEqual(mediaLibraryMetrics.hasInlinePaths, false);
   assert.strictEqual(mediaLibraryMetrics.hasAllFilter, false);
   assert.strictEqual(mediaLibraryMetrics.copyActions, 0);
   assert.strictEqual(mediaLibraryMetrics.deleteActions, 1);
@@ -882,6 +919,10 @@ async function run() {
     await new Promise((resolve) => setTimeout(resolve, 120));
     const narrowMediaImage = await window.webContents.capturePage();
     fs.writeFileSync(screenshotPath.replace(/(\.png)?$/i, '-media-620.png'), narrowMediaImage.toPNG());
+    await window.webContents.executeJavaScript("switchView('settings',{skipCoach:true})", true);
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    const narrowSettingsImage = await window.webContents.capturePage();
+    fs.writeFileSync(screenshotPath.replace(/(\.png)?$/i, '-settings-620.png'), narrowSettingsImage.toPNG());
     await window.webContents.executeJavaScript("switchView('search',{skipCoach:true})", true);
     await new Promise((resolve) => setTimeout(resolve, 200));
     const narrowImage = await window.webContents.capturePage();

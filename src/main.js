@@ -20,6 +20,7 @@ const {
   deleteMediaCollection,
   detectVideoProvider,
   isAllowedPortalUrl,
+  listManagedMediaFiles,
   listMediaCollections,
   listMediaFiles,
   mediaCollectionDirectory,
@@ -5107,6 +5108,36 @@ ipcMain.handle('media:listLocal', async () => {
     items,
     collections: { downloads: downloadCollections, favorites: favoriteCollections },
   };
+});
+ipcMain.handle('media:clearCache', async () => {
+  const directories = mediaDirectories();
+  if (isPathInside(directories.downloadPath, directories.favoritePath) || isPathInside(directories.favoritePath, directories.downloadPath)) {
+    return { ok: false, reason: '媒体库临时储存路径与收藏路径存在包含关系，请先在设置中把两个路径分开' };
+  }
+  return runMediaFileOperation('clear media cache', async () => {
+    const items = await listManagedMediaFiles(directories.downloadPath, false, 100000);
+    let cursor = 0;
+    let cleared = 0;
+    let bytes = 0;
+    let failed = 0;
+    const workers = Array.from({ length: Math.min(4, items.length) }, async () => {
+      while (cursor < items.length) {
+        const item = items[cursor];
+        cursor += 1;
+        try {
+          await shell.trashItem(item.path);
+          cleared += 1;
+          bytes += Math.max(0, Number(item.size || 0));
+        } catch (error) {
+          failed += 1;
+          runtimeLog(`trash media cache item failed path=${item.path}: ${error?.message || error}`);
+        }
+      }
+    });
+    await Promise.all(workers);
+    notifyMediaDownloadsChanged({ status: 'cache-cleared', cleared, failed });
+    return { ok: true, cleared, failed, bytes };
+  });
 });
 ipcMain.handle('media:favoriteLocal', async (_event, filePath, collection = '') => {
   const { favoritePath } = mediaDirectories();

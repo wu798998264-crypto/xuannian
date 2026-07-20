@@ -115,7 +115,10 @@ async function run() {
   assert(/function ensureMediaPortalView\([\s\S]*?new WebContentsView[\s\S]*?partition:\s*'persist:xuannian-media-portals'[\s\S]*?nodeIntegration:\s*false[\s\S]*?sandbox:\s*true/.test(mainSource), 'third-party media sites must run in an isolated sandboxed view');
   assert(/setWindowOpenHandler\([\s\S]*?loadURL\(url\)[\s\S]*?action:\s*'deny'/.test(mainSource), 'third-party links must stay in the embedded media view');
   assert(mainSource.includes("ipcMain.handle('file:showContextMenu'"), 'local file rows need a native open/reveal context menu');
+  assert(mainSource.includes("ipcMain.handle('media:clearCache'"), 'media temporary files need an explicit cache cleanup handler');
+  assert(mainSource.includes('isPathInside(directories.downloadPath, directories.favoritePath)'), 'media cache cleanup must reject overlapping temporary and favorite paths');
   assert(mediaLibrarySource.includes('async function scanMediaDirectory'), 'local media files must be derived from the selected folders');
+  assert(mediaLibrarySource.includes('async function listManagedMediaFiles'), 'cache cleanup must enumerate only XuanNian-managed media folders');
   assert(mediaLibrarySource.includes('async function deleteMediaCollection'), 'media collections need a file-preserving delete path');
   assert(!mediaLibrarySource.includes('fetch('), 'media library must not call third-party private download APIs');
 
@@ -127,6 +130,11 @@ async function run() {
   assert(indexSource.includes('id="mediaBrowserSurface"'), 'media download sites must have an embedded browser surface');
   assert(indexSource.includes('id="mediaDownloadBubble"'), 'download progress must remain visible in the main window');
   assert(!indexSource.includes('data-media-filters="downloads"'), 'media lists must use only the shared video/music selector');
+  assert(indexSource.includes('id="mediaKindTabs"'), 'video and music must use two direct buttons');
+  assert(!indexSource.includes('data-media-tab="portal"'), 'the redundant media download tab must be removed');
+  assert(indexSource.includes('id="mediaDownloadsSearch"') && indexSource.includes('id="mediaFavoritesSearch"'), 'downloaded and favorite media lists need search fields');
+  assert(indexSource.includes('id="settingMediaDownloadPath"') && indexSource.includes('id="settingMediaFavoritePath"'), 'media paths must live in settings');
+  assert(indexSource.includes('id="clearMediaCache"'), 'settings must expose one-click media cache cleanup');
   assert(indexSource.includes('getFileThumbnail: (filePath,size)=> nativeApi.getFileThumbnail'), 'unified renderer API must forward native thumbnail requests');
   assert(indexSource.includes('<svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="5.5"></circle><path d="m15 15 5 5"></path></svg>'), 'full-disk search navigation must use a plain magnifying-glass icon');
   assert(!indexSource.includes('<path d="M4 4h5"></path><path d="M4 4v5"></path>'), 'full-disk search navigation must not include the old corner mark');

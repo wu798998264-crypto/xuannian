@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>玄念8.0.1</title>
+  <title>玄念8.0.2</title>
   <link rel="icon" href="src/xuannian-logo-256.png" />
   <link rel="stylesheet" href="src/media-library.css" />
   <style>
@@ -511,6 +511,10 @@
     .controls.align-right{justify-content:flex-end}
     select,.field-input{height:46px;padding:0 14px}
     .path-picker{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px}
+    .settings-path-picker{grid-template-columns:minmax(0,1fr) auto auto;gap:8px}
+    .settings-path-picker.media-cache-path-picker{grid-template-columns:minmax(0,1fr) auto auto auto}
+    #settingsView .settings-path-picker .media-icon-button{width:46px;height:46px;border-radius:8px;background:var(--panel);color:var(--muted)}
+    #settingsView .settings-path-picker .media-icon-button:hover{background:var(--work);color:var(--text)}
 
     #settingsView.active{overflow-y:auto;overflow-x:hidden;scrollbar-gutter:stable;padding-bottom:22px}
     #settingsView .controls{flex:none;padding-bottom:6px}
@@ -873,6 +877,8 @@
       .file-col-modified{display:none}
       .file-row,.file-result-head{padding-left:8px;padding-right:8px;column-gap:6px}
       .file-actions{opacity:1}
+      .settings-path-picker.media-cache-path-picker{grid-template-columns:minmax(0,1fr) auto auto}
+      .settings-path-picker.media-cache-path-picker .cache-clear-btn{grid-column:1/-1;justify-self:end}
     }
   </style>
 </head>
@@ -1060,15 +1066,11 @@
         <p>视频下载与音乐搜索</p>
       </div>
       <div class="media-nav">
-        <div class="media-type-select" id="mediaTypeSelect">
-          <button class="media-type-button" id="mediaTypeButton" type="button" aria-haspopup="menu" aria-expanded="false"><span id="mediaTypeLabel">视频</span><svg viewBox="0 0 24 24"><path d="m7 9 5 5 5-5"></path></svg></button>
-          <div class="media-type-menu" id="mediaTypeMenu" role="menu">
-            <button class="active" data-media-kind="video" role="menuitem">视频</button>
-            <button data-media-kind="audio" role="menuitem">音乐</button>
-          </div>
+        <div class="media-kind-tabs" id="mediaKindTabs" role="tablist" aria-label="媒体类型">
+          <button class="media-tab active" data-media-kind="video" role="tab">视频</button>
+          <button class="media-tab" data-media-kind="audio" role="tab">音乐</button>
         </div>
         <div class="media-tabs" id="mediaTabs" role="tablist" aria-label="媒体库视图">
-          <button class="media-tab active" data-media-tab="portal" role="tab">下载</button>
           <button class="media-tab" data-media-tab="downloads" role="tab">已下载</button>
           <button class="media-tab" data-media-tab="favorites" role="tab">收藏</button>
         </div>
@@ -1101,11 +1103,10 @@
           </div>
         </section>
         <section class="media-panel" data-media-panel="downloads">
-          <div class="media-directory-toolbar">
-            <label for="mediaDownloadPath">下载目录</label>
-            <input class="media-directory-path" id="mediaDownloadPath" readonly />
-            <button class="media-icon-button" id="mediaBrowseDownload" type="button" title="选择下载目录"><svg viewBox="0 0 24 24"><path d="M3.5 7.5h6l2-2h9v13h-17Z"></path><path d="M3.5 9h17"></path></svg></button>
-            <button class="media-icon-button" id="mediaRevealDownload" type="button" title="打开下载目录"><svg viewBox="0 0 24 24"><path d="M8 5H5v14h14v-3"></path><path d="M12 5h7v7"></path><path d="m19 5-9 9"></path></svg></button>
+          <div class="media-search-toolbar">
+            <span class="media-search-icon"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"></circle><path d="m20 20-3.5-3.5"></path></svg></span>
+            <input class="media-search-input" id="mediaDownloadsSearch" placeholder="搜索已下载内容" autocomplete="off" spellcheck="false" />
+            <button class="media-search-clear" id="clearMediaDownloadsSearch" type="button" title="清空搜索">×</button>
           </div>
           <div class="media-list-toolbar">
             <span class="media-list-summary" id="mediaDownloadsSummary"></span>
@@ -1115,11 +1116,10 @@
           <div class="media-list-shell"><div class="media-list" id="mediaDownloadsList"></div></div>
         </section>
         <section class="media-panel" data-media-panel="favorites">
-          <div class="media-directory-toolbar">
-            <label for="mediaFavoritePath">收藏目录</label>
-            <input class="media-directory-path" id="mediaFavoritePath" readonly />
-            <button class="media-icon-button" id="mediaBrowseFavorite" type="button" title="选择收藏目录"><svg viewBox="0 0 24 24"><path d="M3.5 7.5h6l2-2h9v13h-17Z"></path><path d="M3.5 9h17"></path></svg></button>
-            <button class="media-icon-button" id="mediaRevealFavorite" type="button" title="打开收藏目录"><svg viewBox="0 0 24 24"><path d="M8 5H5v14h14v-3"></path><path d="M12 5h7v7"></path><path d="m19 5-9 9"></path></svg></button>
+          <div class="media-search-toolbar">
+            <span class="media-search-icon"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"></circle><path d="m20 20-3.5-3.5"></path></svg></span>
+            <input class="media-search-input" id="mediaFavoritesSearch" placeholder="搜索收藏内容" autocomplete="off" spellcheck="false" />
+            <button class="media-search-clear" id="clearMediaFavoritesSearch" type="button" title="清空搜索">×</button>
           </div>
           <div class="media-list-toolbar">
             <span class="media-list-summary" id="mediaFavoritesSummary"></span>
@@ -1168,17 +1168,36 @@
       </div>
       <div class="settings-grid">
         <div class="setting-card">
-          <span>自定义存储路径</span>
-          <div class="path-picker">
-            <input class="field-input" id="settingStorage" placeholder="本地存储路径" />
-            <button class="ghost-btn" id="browseStorage">浏览</button>
+          <span>剪切板收藏储存路径</span>
+          <div class="path-picker settings-path-picker">
+            <input class="field-input" id="settingStorage" placeholder="剪切板、收藏与便签数据路径" />
+            <button class="media-icon-button" id="browseStorage" type="button" title="选择剪切板收藏储存路径" aria-label="选择剪切板收藏储存路径"><svg viewBox="0 0 24 24"><path d="M3.5 7.5h6l2-2h9v13h-17Z"></path><path d="M3.5 9h17"></path></svg></button>
+            <button class="media-icon-button" id="revealUserData" type="button" title="打开剪切板收藏储存路径" aria-label="打开剪切板收藏储存路径"><svg viewBox="0 0 24 24"><path d="M8 5H5v14h14v-3"></path><path d="M12 5h7v7"></path><path d="m19 5-9 9"></path></svg></button>
           </div>
           <div class="settings-inline">
             <button class="ghost-btn" id="exportUserData" type="button">收藏导出</button>
             <button class="ghost-btn" id="importUserData" type="button">收藏导入</button>
-            <button class="ghost-btn" id="revealUserData" type="button">打开数据文件夹</button>
           </div>
           <small class="setting-hint">导出包包含收藏、提示词、便签、灵感、附件和相关图片；导入会自动合并，不覆盖当前收藏。</small>
+        </div>
+        <div class="setting-card">
+          <span>媒体库临时储存路径</span>
+          <div class="path-picker settings-path-picker media-cache-path-picker">
+            <input class="field-input" id="settingMediaDownloadPath" placeholder="媒体下载临时路径" />
+            <button class="media-icon-button" id="browseMediaDownloadSetting" type="button" title="选择媒体库临时储存路径" aria-label="选择媒体库临时储存路径"><svg viewBox="0 0 24 24"><path d="M3.5 7.5h6l2-2h9v13h-17Z"></path><path d="M3.5 9h17"></path></svg></button>
+            <button class="media-icon-button" id="revealMediaDownloadSetting" type="button" title="打开媒体库临时储存路径" aria-label="打开媒体库临时储存路径"><svg viewBox="0 0 24 24"><path d="M8 5H5v14h14v-3"></path><path d="M12 5h7v7"></path><path d="m19 5-9 9"></path></svg></button>
+            <button class="ghost-btn cache-clear-btn" id="clearMediaCache" type="button">清理缓存</button>
+          </div>
+          <small class="setting-hint">清理时只移除玄念管理的视频和音乐临时文件，不影响媒体收藏或路径根目录中的其他文件。</small>
+        </div>
+        <div class="setting-card">
+          <span>媒体库收藏储存路径</span>
+          <div class="path-picker settings-path-picker">
+            <input class="field-input" id="settingMediaFavoritePath" placeholder="媒体收藏长期储存路径" />
+            <button class="media-icon-button" id="browseMediaFavoriteSetting" type="button" title="选择媒体库收藏储存路径" aria-label="选择媒体库收藏储存路径"><svg viewBox="0 0 24 24"><path d="M3.5 7.5h6l2-2h9v13h-17Z"></path><path d="M3.5 9h17"></path></svg></button>
+            <button class="media-icon-button" id="revealMediaFavoriteSetting" type="button" title="打开媒体库收藏储存路径" aria-label="打开媒体库收藏储存路径"><svg viewBox="0 0 24 24"><path d="M8 5H5v14h14v-3"></path><path d="M12 5h7v7"></path><path d="m19 5-9 9"></path></svg></button>
+          </div>
+          <small class="setting-hint">收藏的音乐和视频会长期保存在这里，清理临时媒体缓存不会删除此目录内容。</small>
         </div>
         <div class="setting-card">
           <span>剪切板保存时间（天）</span>
@@ -1608,6 +1627,7 @@ function createBrowserFallbackAPI(){
     async getMediaMusicSearchUrl(keyword){ return mediaMusicSearchUrlFallback(keyword); },
     async getMediaConfig(){ return {downloadPath:'浏览器下载目录',favoritePath:'浏览器收藏目录'}; },
     async listLocalMedia(){ return {ok:true,downloadPath:'浏览器下载目录',favoritePath:'浏览器收藏目录',items:[],collections:{downloads:{video:[],audio:[]},favorites:{video:[],audio:[]}}}; },
+    async clearMediaCache(){ return {ok:true,cleared:0,bytes:0}; },
     async favoriteLocalMedia(){ return {ok:false,reason:'预览环境不支持本地文件收藏'}; },
     async createMediaCollection(){ return {ok:false,reason:'预览环境不支持收藏夹操作'}; },
     async renameMediaCollection(){ return {ok:false,reason:'预览环境不支持收藏夹操作'}; },
@@ -1658,7 +1678,7 @@ function createBrowserFallbackAPI(){
     async deleteInspiration(id){ const data=read(); data.inspirations=data.inspirations.filter(x=>x.id!==id); write(data); return data.inspirations; },
     async getSettings(){ return read().settings; },
     async saveSettings(settings){ const data=read(); data.settings={...data.settings,...settings}; write(data); return data.settings; },
-    async getUpdateState(){ return {status:'current',currentVersion:'8.0.1',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false}; },
+    async getUpdateState(){ return {status:'current',currentVersion:'8.0.2',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false}; },
     async checkForUpdates(){ return this.getUpdateState(); },
     async downloadUpdate(){ return this.getUpdateState(); },
     async installUpdate(){ return false; },
@@ -1727,6 +1747,7 @@ function createUnifiedAPI(nativeApi, fallback){
     getMediaMusicSearchUrl: (keyword)=> nativeApi.getMediaMusicSearchUrl ? nativeApi.getMediaMusicSearchUrl(keyword) : fallback.getMediaMusicSearchUrl(keyword),
     getMediaConfig: ()=> nativeApi.getMediaConfig ? nativeApi.getMediaConfig() : fallback.getMediaConfig(),
     listLocalMedia: ()=> nativeApi.listLocalMedia ? nativeApi.listLocalMedia() : fallback.listLocalMedia(),
+    clearMediaCache: ()=> nativeApi.clearMediaCache ? nativeApi.clearMediaCache() : fallback.clearMediaCache(),
     favoriteLocalMedia: (filePath,collection)=> nativeApi.favoriteLocalMedia ? nativeApi.favoriteLocalMedia(filePath,collection) : fallback.favoriteLocalMedia(filePath,collection),
     createMediaCollection: (location,kind,name)=> nativeApi.createMediaCollection ? nativeApi.createMediaCollection(location,kind,name) : fallback.createMediaCollection(location,kind,name),
     renameMediaCollection: (location,kind,currentName,nextName)=> nativeApi.renameMediaCollection ? nativeApi.renameMediaCollection(location,kind,currentName,nextName) : fallback.renameMediaCollection(location,kind,currentName,nextName),
@@ -1793,7 +1814,7 @@ function createUnifiedAPI(nativeApi, fallback){
 }
 
 async function init(){
-  const [records,noteProjects,notes,stickyProjects,stickyNotes,pinnedStickyIds,settings,update] = await Promise.all([
+  const [records,noteProjects,notes,stickyProjects,stickyNotes,pinnedStickyIds,settings,update,mediaConfig] = await Promise.all([
     api.getRecords(),
     api.getNoteProjects(),
     api.getNotes(),
@@ -1802,6 +1823,7 @@ async function init(){
     api.getPinnedStickyIds(),
     api.getSettings(),
     api.getUpdateState(),
+    api.getMediaConfig(),
   ]);
   state.records=records;
   state.noteProjects=noteProjects;
@@ -1813,6 +1835,8 @@ async function init(){
   state.inspirations=[];
   state.settings=settings;
   state.update=update;
+  state.media.downloadPath=mediaConfig?.downloadPath||'';
+  state.media.favoritePath=mediaConfig?.favoritePath||'';
   state.lastNativeRecordId=state.records[0]?.id||'';
   state.activeNoteProject=state.noteProjects[0]?.id || null;
   state.activeStickyProject=state.stickyProjects[0]?.id || null;
@@ -2092,17 +2116,10 @@ function bindEvents(){
     const button=event.target.closest('[data-media-tab]');
     if(button) setMediaTab(button.dataset.mediaTab);
   });
-  $('#mediaTypeButton')?.addEventListener('click',event=>{
-    event.stopPropagation();
-    const select=$('#mediaTypeSelect');
-    const open=!select.classList.contains('open');
-    select.classList.toggle('open',open);
-    $('#mediaTypeButton').setAttribute('aria-expanded',String(open));
-  });
-  $('#mediaTypeMenu')?.addEventListener('click',event=>{
+  $('#mediaKindTabs')?.addEventListener('click',event=>{
     const button=event.target.closest('[data-media-kind]');
     if(!button) return;
-    setMediaKind(button.dataset.mediaKind);
+    setMediaKind(button.dataset.mediaKind,{showPortal:true});
   });
   $('#mediaVideoInput')?.addEventListener('input',updateMediaVideoProvider);
   $('#mediaVideoInput')?.addEventListener('keydown',event=>{
@@ -2122,10 +2139,18 @@ function bindEvents(){
   });
   $('#mediaOpenMusicPortal')?.addEventListener('click',()=>openMediaMusicPortal(false));
   $('#mediaFavoriteMusicPortal')?.addEventListener('click',()=>openMediaMusicPortal(true));
-  $('#mediaBrowseDownload')?.addEventListener('click',()=>chooseMediaDirectory('download'));
-  $('#mediaBrowseFavorite')?.addEventListener('click',()=>chooseMediaDirectory('favorite'));
-  $('#mediaRevealDownload')?.addEventListener('click',()=>openMediaDirectory('download'));
-  $('#mediaRevealFavorite')?.addEventListener('click',()=>openMediaDirectory('favorite'));
+  $('#mediaDownloadsSearch')?.addEventListener('input',()=>renderMediaList('downloads'));
+  $('#mediaFavoritesSearch')?.addEventListener('input',()=>renderMediaList('favorites'));
+  $('#clearMediaDownloadsSearch')?.addEventListener('click',()=>{
+    $('#mediaDownloadsSearch').value='';
+    renderMediaList('downloads');
+    $('#mediaDownloadsSearch').focus();
+  });
+  $('#clearMediaFavoritesSearch')?.addEventListener('click',()=>{
+    $('#mediaFavoritesSearch').value='';
+    renderMediaList('favorites');
+    $('#mediaFavoritesSearch').focus();
+  });
   $('#mediaBrowserBack')?.addEventListener('click',()=>api.mediaBrowserAction('back'));
   $('#mediaBrowserForward')?.addEventListener('click',()=>api.mediaBrowserAction('forward'));
   $('#mediaBrowserReload')?.addEventListener('click',()=>api.mediaBrowserAction(state.media.browser.loading?'stop':'reload'));
@@ -2304,6 +2329,11 @@ function bindEvents(){
     if(!added) toast('未检测到新的可读取文本');
   });
   $('#browseStorage').addEventListener('click', browseStoragePath);
+  $('#browseMediaDownloadSetting')?.addEventListener('click',()=>browseMediaSettingPath('download'));
+  $('#browseMediaFavoriteSetting')?.addEventListener('click',()=>browseMediaSettingPath('favorite'));
+  $('#revealMediaDownloadSetting')?.addEventListener('click',()=>openMediaSettingPath('download'));
+  $('#revealMediaFavoriteSetting')?.addEventListener('click',()=>openMediaSettingPath('favorite'));
+  $('#clearMediaCache')?.addEventListener('click',clearMediaCache);
   $('#exportUserData')?.addEventListener('click', exportUserDataPackage);
   $('#importUserData')?.addEventListener('click', importUserDataPackage);
   $('#revealUserData')?.addEventListener('click', revealUserDataFolder);
@@ -2363,10 +2393,6 @@ function bindEvents(){
   document.addEventListener('click', (e)=>{
     if(!e.target.closest('.menu-wrap')) $$('.menu-wrap').forEach(w=>w.classList.remove('open'));
     if(!e.target.closest('.shot-actions')) $$('.shot-actions').forEach(w=>w.classList.remove('open'));
-    if(!e.target.closest('#mediaTypeSelect')){
-      $('#mediaTypeSelect')?.classList.remove('open');
-      $('#mediaTypeButton')?.setAttribute('aria-expanded','false');
-    }
     if(!e.target.closest('#mediaDownloadBubble')&&state.media.downloadsExpanded){
       state.media.downloadsExpanded=false;
       renderMediaDownloadBubble();
@@ -3295,14 +3321,15 @@ function startMediaRefreshTimer(){
   },8000);
 }
 
-function setMediaKind(kind){
+function setMediaKind(kind,{showPortal=false}={}){
   if(!['video','audio'].includes(kind)) kind='video';
   state.media.kind=kind;
-  $('#mediaTypeLabel').textContent=kind==='video'?'视频':'音乐';
-  $$('#mediaTypeMenu [data-media-kind]').forEach(button=>button.classList.toggle('active',button.dataset.mediaKind===kind));
-  $('#mediaTypeSelect')?.classList.remove('open');
-  $('#mediaTypeButton')?.setAttribute('aria-expanded','false');
+  $$('#mediaKindTabs [data-media-kind]').forEach(button=>button.classList.toggle('active',button.dataset.mediaKind===kind));
   $$('[data-media-launcher]').forEach(element=>{ element.hidden=element.dataset.mediaLauncher!==kind; });
+  if(showPortal){
+    setMediaTab('portal');
+    return;
+  }
   renderMediaLists();
   if(state.media.tab==='portal') setTimeout(()=>$(kind==='video'?'#mediaVideoInput':'#mediaMusicInput')?.focus(),50);
   syncMediaBrowserBounds();
@@ -3338,7 +3365,14 @@ function setActiveMediaCollection(location,collection){
 function filteredMediaItems(tab){
   const location=tab==='favorites'?'favorites':'downloads';
   const collection=activeMediaCollection(location);
-  return state.media.items.filter(item=>item.location===location&&item.kind===state.media.kind&&String(item.collection||'')===collection);
+  const searchInput=$(tab==='favorites'?'#mediaFavoritesSearch':'#mediaDownloadsSearch');
+  const query=String(searchInput?.value||'').trim().toLocaleLowerCase();
+  return state.media.items.filter(item=>{
+    if(item.location!==location||item.kind!==state.media.kind||String(item.collection||'')!==collection) return false;
+    if(!query) return true;
+    return [item.name,item.path,item.directory,item.collection]
+      .some(value=>String(value||'').toLocaleLowerCase().includes(query));
+  });
 }
 
 function mediaKindIcon(kind){
@@ -3351,9 +3385,10 @@ function renderMediaList(tab){
   const summary=$(tab==='favorites'?'#mediaFavoritesSummary':'#mediaDownloadsSummary');
   if(!list||!summary) return;
   const items=filteredMediaItems(tab);
-  summary.textContent=state.media.loading?'正在刷新':`${state.media.kind==='video'?'视频':'音乐'} · ${items.length} 个文件`;
+  const query=String($(tab==='favorites'?'#mediaFavoritesSearch':'#mediaDownloadsSearch')?.value||'').trim();
+  summary.textContent=state.media.loading?'正在刷新':`${state.media.kind==='video'?'视频':'音乐'} · ${items.length} 个${query?'匹配':'文件'}`;
   if(!items.length){
-    list.innerHTML=`<div class="media-empty">${state.media.loading?'正在读取目录':(tab==='favorites'?'暂无媒体收藏':'下载目录中暂无音视频文件')}</div>`;
+    list.innerHTML=`<div class="media-empty">${state.media.loading?'正在读取目录':(query?'没有匹配的媒体文件':(tab==='favorites'?'暂无媒体收藏':'临时储存路径中暂无音视频文件'))}</div>`;
     return;
   }
   list.innerHTML=items.map((item,index)=>`<div class="media-row" data-media-row="${index}" data-media-list="${tab}" title="${escapeHtml(item.path||'')}">
@@ -3382,8 +3417,6 @@ function renderMediaCollections(location){
 }
 
 function renderMediaLists(){
-  $('#mediaDownloadPath').value=state.media.downloadPath||'';
-  $('#mediaFavoritePath').value=state.media.favoritePath||'';
   renderMediaCollections('downloads');
   renderMediaCollections('favorites');
   renderMediaList('downloads');
@@ -3540,21 +3573,18 @@ async function handleMediaCollectionContextMenu(event,location){
   }
 }
 
-async function chooseMediaDirectory(kind){
-  const current=kind==='favorite'?state.media.favoritePath:state.media.downloadPath;
+async function browseMediaSettingPath(kind){
+  const input=$(kind==='favorite'?'#settingMediaFavoritePath':'#settingMediaDownloadPath');
+  const current=input?.value||(kind==='favorite'?state.media.favoritePath:state.media.downloadPath);
   const selected=await api.selectMediaFolder(kind,current);
   if(!selected) return;
-  const key=kind==='favorite'?'mediaFavoritePath':'mediaDownloadPath';
-  state.settings=await api.saveSettings({...state.settings,[key]:selected});
-  if(state.settings.__error){ delete state.settings.__error; toast('目录保存失败'); return; }
-  if(kind==='favorite') state.media.favoritePath=selected;
-  else state.media.downloadPath=selected;
-  await refreshMediaLibrary();
-  toast(kind==='favorite'?'收藏目录已更新':'下载目录已更新');
+  if(input) input.value=selected;
+  toast('路径已选择，点击保存设置后生效');
 }
 
-async function openMediaDirectory(kind){
-  const target=kind==='favorite'?state.media.favoritePath:state.media.downloadPath;
+async function openMediaSettingPath(kind){
+  const input=$(kind==='favorite'?'#settingMediaFavoritePath':'#settingMediaDownloadPath');
+  const target=input?.value||(kind==='favorite'?state.media.favoritePath:state.media.downloadPath);
   if(!target||!await api.openPath(target)) toast('目录暂时无法打开');
 }
 
@@ -5751,6 +5781,8 @@ async function toggleAlwaysTop(){
 }
 function renderSettings(){
   $('#settingStorage').value=state.settings.storagePath || '';
+  $('#settingMediaDownloadPath').value=state.settings.mediaDownloadPath || state.media.downloadPath || '';
+  $('#settingMediaFavoritePath').value=state.settings.mediaFavoritePath || state.media.favoritePath || '';
   $('#settingRetention').value=state.settings.retentionDays || 30;
   $('#settingHotkey').value=state.settings.quickMenuHotkey || DEFAULT_HOTKEY_VALUES.settingHotkey;
   $('#settingScreenshotHotkey').value=state.settings.screenshotHotkey || DEFAULT_HOTKEY_VALUES.settingScreenshotHotkey;
@@ -5837,6 +5869,8 @@ async function importUserDataPackage(){
 }
 
 async function revealUserDataFolder(){
+  const target=String($('#settingStorage')?.value||'').trim();
+  if(target&&await api.openPath(target)) return;
   const result=await api.revealUserDataFolder?.();
   if(!result?.ok) toast(result?.reason || '无法打开数据文件夹');
 }
@@ -6028,6 +6062,39 @@ async function clearClipboardCache(){
   toast('剪切板缓存已清空');
 }
 
+async function clearMediaCache(){
+  const savedPath=String(state.settings.mediaDownloadPath||state.media.downloadPath||'').trim();
+  const inputPath=String($('#settingMediaDownloadPath')?.value||'').trim();
+  if(inputPath&&savedPath&&inputPath.toLocaleLowerCase()!==savedPath.toLocaleLowerCase()){
+    await showInfoModal({title:'请先保存路径',message:'媒体库临时储存路径尚未保存。请先点击“保存设置”，确认路径生效后再清理缓存。'});
+    return;
+  }
+  const confirmed=await showConfirmModal({
+    title:'清理媒体库临时缓存',
+    message:'将把玄念管理的视频和音乐临时文件移入系统回收站。媒体收藏、剪切板收藏以及临时路径根目录中的其他文件不会被删除。确定继续吗？',
+    confirmText:'清理缓存',
+    danger:true,
+  });
+  if(!confirmed) return;
+  const button=$('#clearMediaCache');
+  if(button) button.disabled=true;
+  try{
+    const result=await api.clearMediaCache();
+    if(!result?.ok){
+      await showInfoModal({title:'无法清理缓存',message:result?.reason||'媒体缓存清理失败，请检查目录权限后重试。'});
+      return;
+    }
+    await refreshMediaLibrary({quiet:true});
+    if(result.failed){
+      await showInfoModal({title:'部分文件未清理',message:`已清理 ${result.cleared||0} 个临时媒体文件，另有 ${result.failed} 个文件可能正被占用，请关闭播放器后重试。`});
+    }else{
+      toast(result.cleared?`已清理 ${result.cleared} 个临时媒体文件`:'没有需要清理的临时媒体文件');
+    }
+  }finally{
+    if(button) button.disabled=false;
+  }
+}
+
 async function saveSettings(){
   const hotkey=normalizeHotkey($('#settingHotkey').value);
   const screenshotHotkey=normalizeHotkey($('#settingScreenshotHotkey').value);
@@ -6093,10 +6160,20 @@ async function saveSettings(){
       return;
     }
   }
+  const mediaDownloadPath=String($('#settingMediaDownloadPath')?.value||'').trim();
+  const mediaFavoritePath=String($('#settingMediaFavoritePath')?.value||'').trim();
+  const normalizedMediaDownload=mediaDownloadPath.replace(/[\\/]+$/,'').toLocaleLowerCase();
+  const normalizedMediaFavorite=mediaFavoritePath.replace(/[\\/]+$/,'').toLocaleLowerCase();
+  if(normalizedMediaDownload&&normalizedMediaDownload===normalizedMediaFavorite){
+    await showInfoModal({title:'媒体路径不能相同',message:'媒体库临时储存路径和媒体库收藏储存路径必须分开，避免清理临时缓存时影响收藏。'});
+    return;
+  }
   state.settings=await api.saveSettings({
     ...state.settings,
     theme:$('#settingTheme') ? $('#settingTheme').value : (state.settings.theme || 'light'),
     storagePath:$('#settingStorage').value,
+    mediaDownloadPath,
+    mediaFavoritePath,
     retentionDays,
     quickMenuHotkey:hotkey,
     screenshotHotkey,
@@ -6120,6 +6197,10 @@ async function saveSettings(){
   $('#settingStickyMirrorHotkey').value=state.settings.stickyMirrorHotkey || DEFAULT_HOTKEY_VALUES.settingStickyMirrorHotkey;
   $('#settingStickyRotateHotkey').value=state.settings.stickyRotateHotkey || DEFAULT_HOTKEY_VALUES.settingStickyRotateHotkey;
   $('#settingStickyOpacityHotkey').value=state.settings.stickyOpacityHotkey || DEFAULT_HOTKEY_VALUES.settingStickyOpacityHotkey;
+  const mediaConfig=await api.getMediaConfig();
+  state.media.downloadPath=mediaConfig?.downloadPath||state.media.downloadPath;
+  state.media.favoritePath=mediaConfig?.favoritePath||state.media.favoritePath;
+  if(state.view==='media') await refreshMediaLibrary({quiet:true});
   renderClipboard();
   applyTheme(state.settings.theme || 'light');
   updateFileSearchControls();
@@ -6159,7 +6240,7 @@ function showUpdateDialog(){
   showModal(`
     <div data-update-dialog>
       <div class="modal-header"><h3>软件更新</h3><button class="modal-close" id="closeModal">×</button></div>
-      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '8.0.1')}</b><span>${update.version?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
+      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '8.0.2')}</b><span>${update.version?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
       <div class="modal-message">${escapeHtml(updateStatusText())}</div>
       <p class="update-network-tip">提示：开启 VPN 后再检测更新，结果会更加准确。</p>
       ${busy||downloaded?`<div class="update-progress"><span style="width:${downloaded?100:progress}%"></span></div>`:''}

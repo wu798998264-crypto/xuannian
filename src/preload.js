@@ -353,6 +353,9 @@ contextBridge.exposeInMainWorld('nativeAPI', {
   async listLocalMedia() {
     return ipcRenderer.invoke('media:listLocal');
   },
+  async clearMediaCache() {
+    return ipcRenderer.invoke('media:clearCache');
+  },
   async favoriteLocalMedia(filePath, collection = '') {
     return ipcRenderer.invoke('media:favoriteLocal', filePath || '', collection || '');
   },

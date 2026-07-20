@@ -8,6 +8,7 @@ const {
   deleteMediaCollection,
   detectVideoProvider,
   isAllowedPortalUrl,
+  listManagedMediaFiles,
   listMediaCollections,
   listMediaFiles,
   mediaKindForPath,
@@ -55,10 +56,15 @@ async function run() {
     assert.strictEqual(renamed.ok, true);
     collections = await listMediaCollections(downloads);
     assert.deepStrictEqual(collections.audio, ['常用配乐']);
+    let managed = await listManagedMediaFiles(downloads);
+    assert.deepStrictEqual(managed.map((item) => item.name), ['song.mp3']);
+    assert.strictEqual(managed.some((item) => item.name === 'clip.mp4'), false, 'cache cleanup must exclude media placed directly in the selected root');
     const removed = await deleteMediaCollection(downloads, 'audio', '常用配乐');
     assert.strictEqual(removed.ok, true);
     assert.strictEqual(removed.moved, 1);
     assert.strictEqual(fs.existsSync(path.join(downloads, '音乐', 'song.mp3')), true);
+    managed = await listManagedMediaFiles(downloads);
+    assert.deepStrictEqual(managed.map((item) => item.name), ['song.mp3']);
     fs.unlinkSync(path.join(downloads, '音乐', 'song.mp3'));
     items = await listMediaFiles(downloads, favorites);
     assert.strictEqual(items.some((item) => item.name === 'song.mp3'), false);

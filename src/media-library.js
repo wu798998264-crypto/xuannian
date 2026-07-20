@@ -197,12 +197,14 @@ async function listMediaCollections(directory) {
   return { video, audio };
 }
 
-async function scanMediaDirectory(directory, favorite = false, limit = 2500) {
+async function listManagedMediaFiles(directory, favorite = false, limit = 100000) {
   const root = String(directory || '').trim();
   if (!root || !path.isAbsolute(root)) return [];
-  const maxItems = Math.max(1, Number(limit) || 2500);
+  const requestedLimit = Number(limit);
+  if (Number.isFinite(requestedLimit) && requestedLimit <= 0) return [];
+  const maxItems = Math.max(1, requestedLimit || 100000);
   const location = favorite ? 'favorites' : 'downloads';
-  const items = await scanMediaFilesInDirectory(root, favorite, location, '', maxItems);
+  const items = [];
   for (const kind of ['video', 'audio']) {
     if (items.length >= maxItems) break;
     const typeDirectory = mediaTypeDirectory(root, kind);
@@ -221,6 +223,17 @@ async function scanMediaDirectory(directory, favorite = false, limit = 2500) {
       items.push(...collected.filter((item) => item.kind === kind));
     }
   }
+  return items;
+}
+
+async function scanMediaDirectory(directory, favorite = false, limit = 2500) {
+  const root = String(directory || '').trim();
+  if (!root || !path.isAbsolute(root)) return [];
+  const maxItems = Math.max(1, Number(limit) || 2500);
+  const location = favorite ? 'favorites' : 'downloads';
+  const items = await scanMediaFilesInDirectory(root, favorite, location, '', maxItems);
+  const managed = await listManagedMediaFiles(root, favorite, maxItems - items.length);
+  items.push(...managed);
   return items;
 }
 
@@ -388,6 +401,7 @@ module.exports = {
   extractHttpUrl,
   isAllowedPortalUrl,
   isPathInside,
+  listManagedMediaFiles,
   listMediaCollections,
   listMediaFiles,
   mediaKindForPath,
