@@ -381,6 +381,12 @@ contextBridge.exposeInMainWorld('nativeAPI', {
   async openMediaPortal(url, downloadTarget = 'download', sourceText = '', autoSubmit = false, collection = '', qualityPreference = '', automationMode = '') {
     return ipcRenderer.invoke('media:openPortal', url || '', downloadTarget || 'download', sourceText || '', !!autoSubmit, collection || '', qualityPreference || '', automationMode || '');
   },
+  async downloadParsedMediaVideo(downloadTarget = 'download', collection = '') {
+    return ipcRenderer.invoke('media:downloadParsedVideo', downloadTarget || 'download', collection || '');
+  },
+  async downloadMediaMusicResult(url, downloadTarget = 'download', collection = '', preferredName = '') {
+    return ipcRenderer.invoke('media:downloadMusicResult', url || '', downloadTarget || 'download', collection || '', preferredName || '');
+  },
   setMediaBrowserBounds(bounds = {}, visible = false) {
     ipcRenderer.send('media:browserBounds', bounds || {}, !!visible);
     return true;
@@ -599,6 +605,12 @@ contextBridge.exposeInMainWorld('nativeAPI', {
   },
   onMediaBrowserState(callback) {
     ipcRenderer.on('media:browserState', (_event, payload) => callback(payload || {}));
+  },
+  onMediaVideoParsed(callback) {
+    ipcRenderer.on('media:videoParsed', (_event, payload) => callback(payload || {}));
+  },
+  onMediaMusicResults(callback) {
+    ipcRenderer.on('media:musicResults', (_event, payload) => callback(payload || {}));
   },
   onStickyPinState(callback) {
     ipcRenderer.on('native-sticky-pin-state', (_event, ids) => callback(Array.isArray(ids) ? ids : []));

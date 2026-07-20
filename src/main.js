@@ -29,6 +29,11 @@ const {
   renameMediaCollection,
   scoreMediaDownloadQualityLabel,
 } = require('./media-library');
+const {
+  buildPortalScript,
+  classifyMediaPortalPopup,
+  isMediaUrl,
+} = require('./media-portal-automation');
 
 let mainWindow;
 let quickWindow;
@@ -131,6 +136,7 @@ let mediaPortalCacheCheckAt = 0;
 let mediaPortalCacheCheckPromise = null;
 let mediaPortalRequestId = 0;
 let mediaPortalInputState = null;
+let mediaPortalParsedVideo = null;
 let activeMediaPortalDownloads = 0;
 const configuredMediaDownloadSessions = new WeakSet();
 const mediaPortalDownloadTargets = new WeakMap();
@@ -2492,12 +2498,18 @@ function configureMediaDownloadSession(electronSession) {
     const target = mediaPortalDownloadTargets.get(webContents) || {};
     const favoriteDownload = target.location === 'favorite';
     const rootPath = favoriteDownload ? directories.favoritePath : directories.downloadPath;
-    const filename = sanitizeDownloadFilename(item.getFilename(), item.getMimeType());
-    const kind = mediaKindForPath(filename);
+    const receivedFilename = sanitizeDownloadFilename(item.getFilename(), item.getMimeType());
+    const kind = mediaKindForPath(receivedFilename);
     if (!kind) {
       item.cancel();
       notifyMediaDownloadsChanged({ status: 'blocked', message: '已拦截非音视频文件下载' });
       return;
+    }
+    let filename = receivedFilename;
+    if (kind === 'audio' && String(target.preferredName || '').trim()) {
+      const extension = path.extname(receivedFilename) || '.mp3';
+      const displayName = path.basename(String(target.preferredName).trim(), path.extname(String(target.preferredName).trim()));
+      filename = sanitizeDownloadFilename(`${displayName}${extension}`, item.getMimeType());
     }
     const downloadPath = mediaCollectionDirectory(rootPath, kind, target.collection || '');
     fs.mkdirSync(downloadPath, { recursive: true });
@@ -2558,6 +2570,7 @@ function destroyMediaPortalView({ notify = true } = {}) {
   cancelMediaPortalIdleDestroy();
   clearMediaPortalInputTimer();
   mediaPortalInputState = null;
+  mediaPortalParsedVideo = null;
   mediaPortalRequestId += 1;
   const view = mediaPortalView;
   mediaPortalView = null;
@@ -2638,187 +2651,211 @@ function clearMediaPortalInputTimer() {
   mediaPortalInputTimer = null;
 }
 
+function sendMediaPortalEvent(channel, payload = {}) {
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
+  mainWindow.webContents.send(channel, payload);
+}
+
+function sanitizeRemoteMediaUrl(value) {
+  const url = String(value || '').trim();
+  if (!/^https?:\/\//i.test(url) || url.length > 4096) return '';
+  return url;
+}
+
+function sanitizeMusicResults(results) {
+  if (!Array.isArray(results)) return [];
+  const seen = new Set();
+  const sanitized = [];
+  for (const item of results) {
+    const url = sanitizeRemoteMediaUrl(item?.url);
+    let parsed;
+    try { parsed = new URL(url); } catch { continue; }
+    const host = parsed.hostname.toLowerCase().replace(/^www\./, '');
+    if (host !== 'gequbao.com' || !/^\/music\/\d+(?:[/?#]|$)/i.test(parsed.pathname) || seen.has(url)) continue;
+    seen.add(url);
+    sanitized.push({
+      id: String(sanitized.length + 1),
+      url,
+      title: String(item?.title || item?.label || '未命名歌曲').trim().slice(0, 120),
+      artist: String(item?.artist || '').trim().slice(0, 120),
+      label: String(item?.label || '').trim().slice(0, 180),
+    });
+    if (sanitized.length >= 60) break;
+  }
+  return sanitized;
+}
+
+function completeMediaPortalAutomation(state, result = {}) {
+  if (state.requestId !== mediaPortalRequestId) return;
+  const view = mediaPortalView;
+  const mode = state.automationMode;
+  if (mode === 'video-parse') {
+    mediaPortalInputState = null;
+    const parsed = {
+      requestId: state.requestId,
+      ok: !!result.ok,
+      sourceUrl: state.value,
+      previewUrl: sanitizeRemoteMediaUrl(result.previewUrl),
+      title: String(result.title || '').trim().slice(0, 160),
+      downloadReady: !!result.downloadReady,
+      downloadActionReady: !!result.downloadActionReady,
+      qualityLabel: String(result.qualityLabel || '').trim().slice(0, 120),
+      qualityHref: sanitizeRemoteMediaUrl(result.qualityHref),
+      reason: String(result.reason || ''),
+    };
+    mediaPortalParsedVideo = parsed.ok && parsed.downloadReady ? parsed : null;
+    sendMediaPortalEvent('media:videoParsed', parsed);
+    notifyMediaBrowserState({
+      opening: false,
+      autoFilled: true,
+      autoSubmitted: true,
+      parsed: parsed.ok,
+      autoActionMissing: !parsed.ok || !parsed.downloadReady,
+      qualityLabel: parsed.qualityLabel,
+    });
+  } else if (mode === 'music-search') {
+    mediaPortalInputState = null;
+    const results = sanitizeMusicResults(result.results);
+    sendMediaPortalEvent('media:musicResults', {
+      requestId: state.requestId,
+      ok: !!result.ok && results.length > 0,
+      query: state.value,
+      results,
+      reason: String(result.reason || ''),
+    });
+    notifyMediaBrowserState({
+      opening: false,
+      musicResultsReady: results.length > 0,
+      autoActionMissing: results.length === 0,
+    });
+  } else if (mode === 'music-download') {
+    mediaPortalInputState = null;
+    const href = sanitizeRemoteMediaUrl(result.href);
+    if (result.ok && href && isMediaUrl(href) && view && !view.webContents.isDestroyed()) {
+      view.webContents.downloadURL(href);
+    }
+    notifyMediaBrowserState({
+      opening: false,
+      autoDownloadStarted: !!result.ok,
+      autoActionMissing: !result.ok,
+      qualityLabel: 'MP3',
+    });
+  }
+  if (!activeMediaPortalDownloads && !mediaPortalInputState) scheduleMediaPortalIdleDestroy();
+}
+
 function scheduleMediaPortalInput() {
   clearMediaPortalInputTimer();
   const view = mediaPortalView;
   const state = mediaPortalInputState;
-  if (!view || view.webContents.isDestroyed() || !state?.value || state.requestId !== mediaPortalRequestId) return;
+  if (!view || view.webContents.isDestroyed() || !state || state.requestId !== mediaPortalRequestId) return;
   mediaPortalInputTimer = setTimeout(async () => {
     if (!mediaPortalView || mediaPortalView.webContents.isDestroyed() || state.requestId !== mediaPortalRequestId) return;
-    const value = JSON.stringify(state.value);
-    const autoSubmit = state.autoSubmit ? 'true' : 'false';
-    const qualityPreference = JSON.stringify(state.qualityPreference || '');
-    const automationMode = JSON.stringify(state.automationMode || '');
-    const qualityScorer = scoreMediaDownloadQualityLabel.toString();
-    const script = `(() => new Promise((resolve) => {
-      const value = ${value};
-      const autoSubmit = ${autoSubmit};
-      const qualityPreference = ${qualityPreference};
-      const automationMode = ${automationMode};
-      const qualityScore = ${qualityScorer};
-      const inputDeadline = Date.now() + 7000;
-      let submittedButton = null;
-      const visible = (element) => {
-        const rect = element.getBoundingClientRect();
-        const style = getComputedStyle(element);
-        return rect.width > 48 && rect.height > 18 && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
-      };
-      const score = (input) => {
-        const hint = [input.placeholder, input.name, input.id, input.getAttribute('aria-label')].filter(Boolean).join(' ').toLowerCase();
-        let valueScore = input.type === 'url' ? 12 : input.type === 'search' ? 5 : 2;
-        if (/link|url|链接|粘贴|视频|地址/.test(hint)) valueScore += 20;
-        if (/mail|phone|账号|password|密码/.test(hint)) valueScore -= 30;
-        return valueScore;
-      };
-      const setValue = (input) => {
-        const owner = input.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
-        const setter = Object.getOwnPropertyDescriptor(owner, 'value')?.set;
-        if (setter) setter.call(input, value); else input.value = value;
-        input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: value }));
-        input.dispatchEvent(new Event('change', { bubbles: true }));
-        input.focus();
-      };
-      const waitForHighestQuality = (baseResult) => {
-        const qualityDeadline = Date.now() + 30000;
-        let candidatesVisibleAt = 0;
-        const attemptQuality = () => {
-          const candidates = [...document.querySelectorAll('button,[role="button"],a')]
-            .filter((element) => element !== submittedButton && !element.disabled && visible(element))
-            .map((element) => {
-              const label = String(element.innerText || element.textContent || element.value || element.getAttribute('aria-label') || '').trim();
-              const quality = qualityScore(label);
-              const href = String(element.href || element.getAttribute('href') || '');
-              let actionScore = quality >= 0 ? 100000 + quality : -1;
-              if (actionScore < 0 && !/(?:复制|copy|解析|parse|搜索|search|应用|app)/i.test(label) && /(?:下载|download|保存|save)/i.test(label)) actionScore = 10;
-              if (actionScore < 0 && (element.hasAttribute('download') || /\.(?:mp4|mov|webm|mp3|wav|flac)(?:[?#]|$)/i.test(href))) actionScore = 5;
-              return { element, label, score: actionScore };
-            })
-            .filter((candidate) => candidate.score >= 0)
-            .sort((left, right) => right.score - left.score);
-          if (!candidates.length) {
-            if (Date.now() < qualityDeadline) setTimeout(attemptQuality, 240);
-            else resolve({ ...baseResult, autoDownloadClicked: false, autoActionMissing: true, qualityLabel: '' });
-            return;
-          }
-          if (!candidatesVisibleAt) candidatesVisibleAt = Date.now();
-          if (Date.now() - candidatesVisibleAt < 900) {
-            setTimeout(attemptQuality, 180);
-            return;
-          }
-          const best = candidates[0];
-          best.element.click();
-          resolve({ ...baseResult, autoDownloadClicked: true, qualityLabel: best.label });
-        };
-        setTimeout(attemptQuality, 420);
-      };
-      const attemptMusicMp3 = () => {
-        const path = String(location.pathname || '');
-        if (/\/music\/\d+/i.test(path)) {
-          const download = [...document.querySelectorAll('button,a,[role="button"]')]
-            .filter((element) => !element.disabled && visible(element))
-            .map((element) => ({
-              element,
-              label: String(element.innerText || element.textContent || element.value || element.getAttribute('aria-label') || '').trim(),
-            }))
-            .filter((candidate) => /(?:下载歌曲|download\s*song)/i.test(candidate.label) && !/(?:歌词|lyric)/i.test(candidate.label))[0];
-          if (download) {
-            download.element.click();
-            resolve({ filled: true, submitted: true, autoDownloadClicked: true, qualityLabel: 'MP3' });
-            return;
-          }
-        } else {
-          const terms = String(value || '').toLowerCase().split(/\s+/).filter(Boolean);
-          const songLinks = [...document.querySelectorAll('a[href*="/music/"]')]
-            .filter(visible)
-            .map((element, index) => {
-              const label = String(element.innerText || element.textContent || '').trim();
-              const normalized = label.toLowerCase();
-              const matchScore = terms.reduce((total, term) => total + (normalized.includes(term) ? 20 : 0), 0) - index / 1000;
-              return { element, label, matchScore };
-            })
-            .sort((left, right) => right.matchScore - left.matchScore);
-          if (songLinks.length) {
-            songLinks[0].element.click();
-            setTimeout(() => resolve({ filled: true, submitted: true, continueAutomation: true, automationStage: 'song-selected' }), 1800);
-            return;
-          }
-          const inputs = [...document.querySelectorAll('input:not([type]),input[type="text"],input[type="search"],textarea')]
-            .filter((input) => !input.disabled && !input.readOnly && visible(input))
-            .sort((left, right) => score(right) - score(left));
-          const input = inputs[0];
-          if (input) {
-            setValue(input);
-            const scope = input.closest('form') || input.parentElement?.parentElement || document;
-            const searchButton = [...scope.querySelectorAll('button,input[type="submit"],[role="button"]')]
-              .filter(visible)
-              .find((element) => /(?:搜索|search)/i.test(String(element.innerText || element.value || element.getAttribute('aria-label') || '')));
-            if (searchButton) {
-              searchButton.click();
-              setTimeout(() => resolve({ filled: true, submitted: true, continueAutomation: true, automationStage: 'search-submitted' }), 1800);
-              return;
-            }
-          }
-        }
-        if (Date.now() < inputDeadline + 8000) setTimeout(attemptMusicMp3, 300);
-        else resolve({ filled: false, submitted: false, autoActionMissing: true });
-      };
-      const attempt = () => {
-        const inputs = [...document.querySelectorAll('input:not([type]),input[type="text"],input[type="url"],input[type="search"],textarea')]
-          .filter((input) => !input.disabled && !input.readOnly && visible(input))
-          .sort((left, right) => score(right) - score(left));
-        const input = inputs[0];
-        if (!input) {
-          if (Date.now() < inputDeadline) setTimeout(attempt, 250); else resolve({ filled: false, submitted: false });
-          return;
-        }
-        setValue(input);
-        let submitted = false;
-        if (autoSubmit) {
-          const scope = input.closest('form') || input.parentElement?.parentElement || document;
-          const matchesAction = (item) => /下载|解析|开始|搜索|download|parse|start|search/i.test(String(item.innerText || item.value || item.getAttribute('aria-label') || ''));
-          const nearbyButtons = [...scope.querySelectorAll('button,input[type="submit"],[role="button"]')].filter(visible);
-          const button = nearbyButtons.find(matchesAction) || [...document.querySelectorAll('button,input[type="submit"],[role="button"]')].filter(visible).find(matchesAction);
-          if (button) {
-            submittedButton = button;
-            setTimeout(() => button.click(), 120);
-            submitted = true;
-          }
-        }
-        const result = { filled: true, submitted };
-        if (submitted && qualityPreference === 'highest') waitForHighestQuality(result);
-        else resolve(result);
-      };
-      if (automationMode === 'music-mp3-first') attemptMusicMp3();
-      else attempt();
-    }))()`;
+    const script = buildPortalScript({
+      mode: state.automationMode,
+      phase: state.phase || '',
+      value: state.value || '',
+      timeoutMs: state.automationMode === 'video-parse' && state.phase === 'result' ? 45000 : 30000,
+    }, scoreMediaDownloadQualityLabel);
     try {
       const result = await view.webContents.executeJavaScript(script, true);
       if (state.requestId !== mediaPortalRequestId) return;
       if (result?.continueAutomation) {
-        notifyMediaBrowserState({ opening: true, automationStage: String(result.automationStage || '') });
+        state.phase = String(result.nextPhase || 'result');
+        notifyMediaBrowserState({ opening: true, automationStage: state.phase });
         scheduleMediaPortalInput();
         return;
       }
-      if (result?.filled) {
-        mediaPortalInputState = null;
-        notifyMediaBrowserState({
-          opening: false,
-          autoFilled: true,
-          autoSubmitted: !!result.submitted,
-          autoDownloadStarted: !!result.autoDownloadClicked,
-          autoActionMissing: !!result.autoActionMissing,
-          qualityLabel: String(result.qualityLabel || ''),
-        });
-        if (!activeMediaPortalDownloads) scheduleMediaPortalIdleDestroy();
-      } else if (result?.autoActionMissing) {
-        mediaPortalInputState = null;
-        notifyMediaBrowserState({ opening: false, autoActionMissing: true });
-        if (!activeMediaPortalDownloads) scheduleMediaPortalIdleDestroy();
+      completeMediaPortalAutomation(state, result || {});
+    } catch (error) {
+      if (state.requestId !== mediaPortalRequestId) return;
+      state.retryCount = Number(state.retryCount || 0) + 1;
+      if (state.retryCount <= 3) {
+        if (state.automationMode === 'video-parse' && state.phase !== 'result' && view.webContents.getURL() !== state.portalUrl) {
+          state.phase = 'result';
+        }
+        scheduleMediaPortalInput();
+        return;
       }
-    } catch {
-      if (state.requestId === mediaPortalRequestId) scheduleMediaPortalInput();
+      runtimeLog(`media portal automation failed: ${error?.message || error}`);
+      completeMediaPortalAutomation(state, { ok: false, reason: 'automation-error' });
     }
-  }, 350);
+  }, 320);
+}
+
+async function downloadParsedMediaVideo(downloadTarget = 'download', collection = '') {
+  const view = mediaPortalView;
+  const parsed = mediaPortalParsedVideo;
+  if (!view || view.webContents.isDestroyed() || !parsed?.downloadReady) {
+    return { ok: false, reason: '请先完成视频解析' };
+  }
+  mediaPortalDownloadTargets.set(view.webContents, {
+    location: downloadTarget === 'favorite' ? 'favorite' : 'download',
+    collection: String(collection || '').trim(),
+  });
+  cancelMediaPortalIdleDestroy();
+  notifyMediaBrowserState({ opening: true, automationStage: 'video-download', autoActionMissing: false });
+  const directUrl = parsed.qualityHref && isMediaUrl(parsed.qualityHref)
+    ? parsed.qualityHref
+    : (!parsed.downloadActionReady ? parsed.previewUrl : '');
+  if (directUrl) {
+    runtimeLog(`parsed video direct download source=${directUrl === parsed.previewUrl ? 'preview' : 'quality-link'}`);
+    view.webContents.downloadURL(directUrl);
+    notifyMediaBrowserState({
+      opening: false,
+      autoDownloadStarted: true,
+      autoActionMissing: false,
+      qualityLabel: parsed.qualityLabel,
+    });
+    return { ok: true, reason: '' };
+  }
+  try {
+    const result = await view.webContents.executeJavaScript(buildPortalScript({
+      mode: 'video-download',
+      timeoutMs: 20000,
+    }, scoreMediaDownloadQualityLabel), true);
+    const href = sanitizeRemoteMediaUrl(result?.href);
+    runtimeLog(`parsed video download action ok=${!!result?.ok} clicked=${!!result?.clicked} href=${href ? 'media' : 'none'} label=${String(result?.label || '').slice(0, 120)}`);
+    if (result?.ok && href && isMediaUrl(href)) view.webContents.downloadURL(href);
+    notifyMediaBrowserState({
+      opening: false,
+      autoDownloadStarted: !!result?.ok,
+      autoActionMissing: !result?.ok,
+      qualityLabel: String(result?.label || parsed.qualityLabel || ''),
+    });
+    if (!result?.ok) scheduleMediaPortalIdleDestroy();
+    return { ok: !!result?.ok, reason: String(result?.reason || '') };
+  } catch (error) {
+    runtimeLog(`parsed video download failed: ${error?.message || error}`);
+    notifyMediaBrowserState({ opening: false, autoActionMissing: true });
+    scheduleMediaPortalIdleDestroy();
+    return { ok: false, reason: '下载按钮暂时不可用，请重新解析' };
+  }
+}
+
+function isGequbaoMusicUrl(value) {
+  try {
+    const url = new URL(String(value || ''));
+    return url.protocol === 'https:'
+      && url.hostname.toLowerCase().replace(/^www\./, '') === 'gequbao.com'
+      && /^\/music\/\d+(?:[/?#]|$)/i.test(url.pathname);
+  } catch {
+    return false;
+  }
+}
+
+function downloadMediaMusicResult(url, downloadTarget = 'download', collection = '', preferredName = '') {
+  const value = String(url || '').trim();
+  if (!isGequbaoMusicUrl(value)) return false;
+  const opened = openMediaPortal(value, downloadTarget, '', false, collection, '', 'music-download');
+  if (opened && mediaPortalView && !mediaPortalView.webContents.isDestroyed()) {
+    mediaPortalDownloadTargets.set(mediaPortalView.webContents, {
+      location: downloadTarget === 'favorite' ? 'favorite' : 'download',
+      collection: String(collection || '').trim(),
+      preferredName: String(preferredName || '').trim().slice(0, 160),
+    });
+  }
+  return opened;
 }
 
 function ensureMediaPortalView() {
@@ -2836,18 +2873,34 @@ function ensureMediaPortalView() {
     },
   });
   mediaPortalView = view;
+  view.setBounds({ x: 0, y: 0, width: 1280, height: 900 });
   view.setVisible(false);
   mainWindow.contentView.addChildView(view);
   configureMediaDownloadSession(view.webContents.session);
   view.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https:\/\//i.test(String(url || ''))) {
+    const disposition = classifyMediaPortalPopup(url, view.webContents.getURL());
+    if (disposition === 'download') {
+      setImmediate(() => view.webContents.downloadURL(url));
+    } else if (disposition === 'same-site' && !mediaPortalInputState) {
       setImmediate(() => view.webContents.loadURL(url).catch(() => {}));
+    } else {
+      runtimeLog(`blocked media portal popup: ${String(url || '').slice(0, 300)}`);
+      setImmediate(() => notifyMediaBrowserState({ popupBlocked: true }));
     }
     return { action: 'deny' };
   });
   view.webContents.on('will-navigate', (event, url) => {
-    if (!/^https:\/\//i.test(String(url || ''))) event.preventDefault();
+    const disposition = classifyMediaPortalPopup(url, view.webContents.getURL());
+    if (disposition === 'download') {
+      event.preventDefault();
+      view.webContents.downloadURL(url);
+    } else if (disposition === 'block') {
+      event.preventDefault();
+      runtimeLog(`blocked media portal navigation: ${String(url || '').slice(0, 300)}`);
+      notifyMediaBrowserState({ popupBlocked: true });
+    }
   });
+  view.webContents.on('will-prevent-unload', (event) => event.preventDefault());
   view.webContents.on('did-start-loading', () => notifyMediaBrowserState());
   view.webContents.on('did-stop-loading', () => {
     trimMediaPortalHistory(view.webContents);
@@ -2897,19 +2950,26 @@ function openMediaPortal(url, downloadTarget = 'download', sourceText = '', auto
   const view = ensureMediaPortalView();
   if (!view) return false;
   mediaPortalRequestId += 1;
+  if (automationMode === 'video-parse') mediaPortalParsedVideo = null;
   mediaPortalDownloadTargets.set(view.webContents, {
     location: downloadTarget === 'favorite' ? 'favorite' : 'download',
     collection: String(collection || '').trim(),
   });
   const normalizedQualityPreference = qualityPreference === 'highest' ? 'highest' : '';
-  const normalizedAutomationMode = automationMode === 'music-mp3-first' ? 'music-mp3-first' : 'video-direct';
-  mediaPortalInputState = String(sourceText || '').trim()
+  const normalizedAutomationMode = ['video-parse', 'music-search', 'music-download'].includes(automationMode)
+    ? automationMode
+    : 'video-parse';
+  const automationValue = String(sourceText || '').trim();
+  mediaPortalInputState = automationValue || normalizedAutomationMode === 'music-search' || normalizedAutomationMode === 'music-download'
     ? {
       requestId: mediaPortalRequestId,
-      value: String(sourceText).trim(),
+      value: automationValue,
       autoSubmit: !!autoSubmit,
       qualityPreference: normalizedQualityPreference,
       automationMode: normalizedAutomationMode,
+      phase: normalizedAutomationMode === 'video-parse' ? 'input' : '',
+      portalUrl: value,
+      retryCount: 0,
     }
     : null;
   view.webContents.loadURL(value).catch((error) => {
@@ -5449,6 +5509,13 @@ ipcMain.handle('media:deleteLocal', async (_event, filePath, location) => {
 });
 ipcMain.handle('media:openPortal', (_event, url, downloadTarget = 'download', sourceText = '', autoSubmit = false, collection = '', qualityPreference = '', automationMode = '') => (
   openMediaPortal(url, downloadTarget, sourceText, autoSubmit, collection, qualityPreference, automationMode)
+));
+ipcMain.handle('media:downloadParsedVideo', (_event, downloadTarget = 'download', collection = '') => {
+  runtimeLog(`media:downloadParsedVideo invoked target=${downloadTarget === 'favorite' ? 'favorite' : 'download'}`);
+  return downloadParsedMediaVideo(downloadTarget, collection);
+});
+ipcMain.handle('media:downloadMusicResult', (_event, url, downloadTarget = 'download', collection = '', preferredName = '') => (
+  downloadMediaMusicResult(url, downloadTarget, collection, preferredName)
 ));
 ipcMain.on('media:browserBounds', (event, bounds = {}, visible = false) => {
   if (!mainWindow || event.sender !== mainWindow.webContents) return;

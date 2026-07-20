@@ -116,7 +116,10 @@ function scoreMediaDownloadQualityLabel(value) {
 }
 
 function musicSearchUrl(keyword) {
-  return 'https://www.gequbao.com/';
+  const query = String(keyword || '').trim();
+  return query
+    ? `https://www.gequbao.com/s/${encodeURIComponent(query)}`
+    : 'https://www.gequbao.com/';
 }
 
 function isAllowedPortalUrl(value) {

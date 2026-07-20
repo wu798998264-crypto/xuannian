@@ -38,7 +38,7 @@ async function run() {
   assert.strictEqual(isAllowedPortalUrl('https://www.hellotik.app/zh/kuaishou'), true);
   assert.strictEqual(isAllowedPortalUrl('https://www.hellotik.app/zh/douyin'), true);
   assert.strictEqual(isAllowedPortalUrl('https://evil.example/'), false);
-  assert.strictEqual(musicSearchUrl('测试 歌曲'), 'https://www.gequbao.com/');
+  assert.strictEqual(musicSearchUrl('测试 歌曲'), 'https://www.gequbao.com/s/%E6%B5%8B%E8%AF%95%20%E6%AD%8C%E6%9B%B2');
   assert(scoreMediaDownloadQualityLabel('下载原画 65 MB') > scoreMediaDownloadQualityLabel('下载 4K 40 MB'));
   assert(scoreMediaDownloadQualityLabel('下载 4K 40 MB') > scoreMediaDownloadQualityLabel('下载 1080P 80 MB'));
   assert(scoreMediaDownloadQualityLabel('下载 1080P 80 MB') > scoreMediaDownloadQualityLabel('下载高清 100 MB'));
