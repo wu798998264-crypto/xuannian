@@ -124,6 +124,8 @@ async function run() {
   assert(mainSource.includes('rememberCompletedMediaDownload(completedTask);'), 'completed downloads must be persisted before the renderer is notified');
   assert(mainSource.includes('function destroyMediaPortalView('), 'embedded media browser must have an explicit destruction path');
   assert(mainSource.includes("kind === 'note-category'") && mainSource.includes("action('rename', '修改')") && mainSource.includes("action('delete', '删除'"), 'favorite category names need native rename and delete context-menu actions');
+  assert(mainSource.includes("ipcMain.on('ui:setNativeTheme'") && mainSource.includes('nativeTheme.themeSource'), 'native context menus must follow the app color mode');
+  assert(mainSource.includes("kind === 'note-category-empty'") && mainSource.includes("action('create', '新建分类')"), 'favorite category blank space needs a native create menu');
   assert(mainSource.includes('history.removeEntryAtIndex(removeIndex)'), 'embedded media history must prune old entries');
   assert(mainSource.includes('await portalSession.clearCache()'), 'oversized embedded website cache must be cleared');
   assert(mediaLibrarySource.includes('async function scanMediaDirectory'), 'local media files must be derived from the selected folders');
@@ -147,6 +149,8 @@ async function run() {
   assert(indexSource.includes('class="media-search-row"'), 'media file counts must share the search row');
   assert(indexSource.includes('function normalizeMediaDownloadHistory('), 'renderer must restore persisted completed-download history');
   assert(indexSource.includes("api.showItemContextMenu('note-category'"), 'right-clicking a favorite category must open its management menu');
+  assert(indexSource.includes("api.showItemContextMenu('note-category-empty')"), 'right-clicking favorite category blank space must open its create menu');
+  assert(indexSource.includes('api.setNativeTheme(actual)'), 'theme changes must be forwarded to native context menus');
   assert(indexSource.includes('async function deleteNoteCategory('), 'favorite category deletion must reuse a guarded data operation');
   assert(indexSource.includes('id="settingMediaDownloadPath"') && indexSource.includes('id="settingMediaFavoritePath"'), 'media paths must live in settings');
   assert(!indexSource.includes('id="clearMediaCache"') && !indexSource.includes('function clearMediaCache('), 'media temporary storage must not expose bulk cache deletion');

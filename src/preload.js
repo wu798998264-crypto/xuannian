@@ -128,6 +128,10 @@ contextBridge.exposeInMainWorld('nativeAPI', {
   async showItemContextMenu(kind, options = {}) {
     return ipcRenderer.invoke('ui:showItemContextMenu', String(kind || ''), options || {});
   },
+  setNativeTheme(theme = 'system') {
+    ipcRenderer.send('ui:setNativeTheme', String(theme || 'system'));
+    return true;
+  },
   async getNoteProjects() {
     return (await load()).noteProjects;
   },

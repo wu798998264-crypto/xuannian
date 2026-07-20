@@ -1611,6 +1611,7 @@ function createBrowserFallbackAPI(){
     async showItemInFolder(){ return false; },
     async showFileContextMenu(){ return false; },
     async showItemContextMenu(){ return ''; },
+    setNativeTheme(){ return true; },
     async getFileThumbnail(){ return ''; },
     async getFileSearchStatus(){ return {platform:'browser',engine:'preview',status:'ready',ready:true,message:'预览数据已就绪'}; },
     async initializeFileSearch(){ return this.getFileSearchStatus(); },
@@ -1742,6 +1743,7 @@ function createUnifiedAPI(nativeApi, fallback){
     showItemInFolder: (filePath)=> nativeApi.showItemInFolder ? nativeApi.showItemInFolder(filePath) : fallback.showItemInFolder(filePath),
     showFileContextMenu: (filePath)=> nativeApi.showFileContextMenu ? nativeApi.showFileContextMenu(filePath) : fallback.showFileContextMenu(filePath),
     showItemContextMenu: (kind,options)=> nativeApi.showItemContextMenu ? nativeApi.showItemContextMenu(kind,options) : fallback.showItemContextMenu(kind,options),
+    setNativeTheme: (theme)=> nativeApi.setNativeTheme ? nativeApi.setNativeTheme(theme) : fallback.setNativeTheme(theme),
     getFileThumbnail: (filePath,size)=> nativeApi.getFileThumbnail ? nativeApi.getFileThumbnail(filePath,size) : fallback.getFileThumbnail(filePath,size),
     getFileSearchStatus: ()=> nativeApi.getFileSearchStatus ? nativeApi.getFileSearchStatus() : fallback.getFileSearchStatus(),
     initializeFileSearch: ()=> nativeApi.initializeFileSearch ? nativeApi.initializeFileSearch() : fallback.initializeFileSearch(),
@@ -2382,6 +2384,12 @@ function bindEvents(){
   bindWindowMoveStrip();
   $('#addNoteProjectBtn').addEventListener('click', ()=>showNoteProjectModal());
   $('#manageNoteProjectBtn').addEventListener('click', ()=>showNoteCategoryManager());
+  $('#noteProjectList').addEventListener('contextmenu',async event=>{
+    if(event.target.closest('[data-project-id]')) return;
+    event.preventDefault();
+    const action=await api.showItemContextMenu('note-category-empty');
+    if(action==='create') showNoteProjectModal();
+  });
   $('#addNoteBtn').addEventListener('click', ()=>showNoteEditorModal());
   $('#addStickyProjectBtn').addEventListener('click', ()=>showStickyProjectModal());
   $('#manageStickyProjectBtn').addEventListener('click', ()=>showStickyCategoryManager());
@@ -5917,6 +5925,7 @@ async function deleteInspirationById(id){
 function applyTheme(theme){
   const actual=theme==='system' ? (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light') : theme;
   document.body.classList.toggle('dark', actual==='dark');
+  api.setNativeTheme(actual);
   if($('#settingTheme')) $('#settingTheme').value=theme;
 }
 function applyAlwaysTop(enabled){

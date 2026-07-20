@@ -763,9 +763,11 @@ async function run() {
         updateNoteProject:api.updateNoteProject,
         deleteNoteProject:api.deleteNoteProject,
         getNotes:api.getNotes,
+        addNoteProject:api.addNoteProject,
+        getNoteProjects:api.getNoteProjects,
       };
       const menuCalls=[];
-      const menuActions=['rename','delete'];
+      const menuActions=['rename','delete','create'];
       state.noteProjects=[{id:'category-a',name:'分类甲'},{id:'category-b',name:'分类乙'}];
       state.notes=[{id:'category-note',projectId:'category-b',title:'分类收藏',content:'收藏内容',createdAt:1,order:1}];
       state.activeNoteProject='category-b';
@@ -777,6 +779,12 @@ async function run() {
         return remaining;
       };
       api.getNotes=async()=>state.notes;
+      api.addNoteProject=async project=>{
+        const item={id:'category-new',...project};
+        state.noteProjects.push(item);
+        return item;
+      };
+      api.getNoteProjects=async()=>state.noteProjects;
       await switchView('notes',{skipCoach:true});
       renderNoteProjects();
       document.querySelector('[data-project-id="category-a"]').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true}));
@@ -792,9 +800,17 @@ async function run() {
       const deleteMessage=document.querySelector('#modalBox .modal-message')?.textContent||'';
       document.querySelector('#confirmModal').click();
       await new Promise(resolve=>setTimeout(resolve,20));
+      const activeAfterDelete=state.activeNoteProject;
+      document.querySelector('#noteProjectList').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true}));
+      await new Promise(resolve=>setTimeout(resolve,10));
+      const createTitle=document.querySelector('#modalBox h3')?.textContent||'';
+      document.querySelector('#newProjectName').value='新增分类';
+      document.querySelector('#confirmProject').click();
+      await new Promise(resolve=>setTimeout(resolve,20));
       const result={
-        menuCalls,renameTitle,renamed,deleteTitle,deleteMessage,
+        menuCalls,renameTitle,renamed,deleteTitle,deleteMessage,activeAfterDelete,createTitle,
         remaining:state.noteProjects.map(project=>project.name),
+        created:state.noteProjects.find(project=>project.id==='category-new')?.name||'',
         movedProjectId:state.notes[0]?.projectId||'',
         activeProject:state.activeNoteProject,
       };
@@ -806,6 +822,8 @@ async function run() {
       api.updateNoteProject=original.updateNoteProject;
       api.deleteNoteProject=original.deleteNoteProject;
       api.getNotes=original.getNotes;
+      api.addNoteProject=original.addNoteProject;
+      api.getNoteProjects=original.getNoteProjects;
       renderNoteProjects();
       renderNotes();
       return result;
@@ -815,14 +833,18 @@ async function run() {
   assert.deepStrictEqual(noteCategoryMetrics.menuCalls, [
     {kind:'note-category',options:{canDelete:true}},
     {kind:'note-category',options:{canDelete:true}},
+    {kind:'note-category-empty',options:undefined},
   ]);
   assert.strictEqual(noteCategoryMetrics.renameTitle, '修改收藏分类');
   assert.strictEqual(noteCategoryMetrics.renamed, '修改后的分类');
   assert.strictEqual(noteCategoryMetrics.deleteTitle, '删除收藏分类');
   assert(noteCategoryMetrics.deleteMessage.includes('移动到剩余分类'));
-  assert.deepStrictEqual(noteCategoryMetrics.remaining, ['修改后的分类']);
+  assert.strictEqual(noteCategoryMetrics.activeAfterDelete, 'category-a');
+  assert.strictEqual(noteCategoryMetrics.createTitle, '新建收藏分类');
+  assert.deepStrictEqual(noteCategoryMetrics.remaining, ['修改后的分类','新增分类']);
+  assert.strictEqual(noteCategoryMetrics.created, '新增分类');
   assert.strictEqual(noteCategoryMetrics.movedProjectId, 'category-a');
-  assert.strictEqual(noteCategoryMetrics.activeProject, 'category-a');
+  assert.strictEqual(noteCategoryMetrics.activeProject, 'category-new');
   const mediaLibraryMetrics = await window.webContents.executeJavaScript(`
     (async()=>{
       const openedPortals=[];

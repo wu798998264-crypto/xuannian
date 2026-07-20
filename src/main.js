@@ -1,5 +1,5 @@
 ﻿const { app, BrowserWindow, ipcMain, dialog, globalShortcut, clipboard, desktopCapturer, screen, Menu, nativeImage, shell } = require('electron');
-const { WebContentsView } = require('electron');
+const { WebContentsView, nativeTheme } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
@@ -5743,6 +5743,10 @@ ipcMain.handle('file:showInFolder', (_event, filePath) => {
   return true;
 });
 
+ipcMain.on('ui:setNativeTheme', (_event, theme) => {
+  nativeTheme.themeSource = theme === 'dark' ? 'dark' : theme === 'light' ? 'light' : 'system';
+});
+
 ipcMain.handle('file:showContextMenu', (event, filePath) => {
   const value = String(filePath || '').trim();
   if (!value || !path.isAbsolute(value) || !fs.existsSync(value)) return false;
@@ -5817,6 +5821,8 @@ ipcMain.handle('ui:showItemContextMenu', (event, kind, options = {}) => {
   } else if (kind === 'note-category') {
     items.push(action('rename', '修改'));
     items.push(action('delete', '删除', { enabled: options.canDelete !== false }));
+  } else if (kind === 'note-category-empty') {
+    items.push(action('create', '新建分类'));
   } else {
     return '';
   }
