@@ -5814,6 +5814,9 @@ ipcMain.handle('ui:showItemContextMenu', (event, kind, options = {}) => {
   } else if (kind === 'media-folder') {
     items.push(action('rename', '修改收藏夹名称'));
     items.push(action('delete', '删除收藏夹'));
+  } else if (kind === 'note-category') {
+    items.push(action('rename', '修改'));
+    items.push(action('delete', '删除', { enabled: options.canDelete !== false }));
   } else {
     return '';
   }

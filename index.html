@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>玄念8.0.5</title>
+  <title>玄念8.0.6</title>
   <link rel="icon" href="src/xuannian-logo-256.png" />
   <link rel="stylesheet" href="src/media-library.css" />
   <style>
@@ -1682,7 +1682,7 @@ function createBrowserFallbackAPI(){
     async deleteInspiration(id){ const data=read(); data.inspirations=data.inspirations.filter(x=>x.id!==id); write(data); return data.inspirations; },
     async getSettings(){ return read().settings; },
     async saveSettings(settings){ const data=read(); data.settings={...data.settings,...settings}; write(data); return data.settings; },
-    async getUpdateState(){ return {status:'current',currentVersion:'8.0.5',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false}; },
+    async getUpdateState(){ return {status:'current',currentVersion:'8.0.6',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false}; },
     async checkForUpdates(){ return this.getUpdateState(); },
     async downloadUpdate(){ return this.getUpdateState(); },
     async installUpdate(){ return false; },
@@ -3361,7 +3361,7 @@ function setMediaKind(kind,{showPortal=false}={}){
   if(!['video','audio'].includes(kind)) kind='video';
   const changed=state.media.kind!==kind;
   state.media.kind=kind;
-  $$('#mediaKindTabs [data-media-kind]').forEach(button=>button.classList.toggle('active',button.dataset.mediaKind===kind));
+  $$('#mediaKindTabs [data-media-kind]').forEach(button=>button.classList.toggle('active',state.media.tab==='portal'&&button.dataset.mediaKind===kind));
   $$('[data-media-launcher]').forEach(element=>{ element.hidden=element.dataset.mediaLauncher!==kind; });
   if(changed){
     resetMediaListViewport('downloads');
@@ -3379,6 +3379,7 @@ function setMediaKind(kind,{showPortal=false}={}){
 function setMediaTab(tab){
   if(!['portal','downloads','favorites'].includes(tab)) tab='portal';
   state.media.tab=tab;
+  $$('#mediaKindTabs [data-media-kind]').forEach(button=>button.classList.toggle('active',tab==='portal'&&button.dataset.mediaKind===state.media.kind));
   $$('#mediaNav [data-media-tab]').forEach(button=>button.classList.toggle('active',button.dataset.mediaTab===tab));
   $$('[data-media-panel]').forEach(panel=>panel.classList.toggle('active',panel.dataset.mediaPanel===tab));
   startMediaRefreshTimer();
@@ -4405,6 +4406,14 @@ function renderNoteProjects(){
     state.noteVirtualStart=-1;
     renderNoteProjects();
     renderNotes();
+  });
+  $$('[data-project-id]').forEach(btn=>btn.oncontextmenu=async event=>{
+    event.preventDefault();
+    event.stopPropagation();
+    const projectId=btn.dataset.projectId;
+    const action=await api.showItemContextMenu('note-category',{canDelete:state.noteProjects.length>1});
+    if(action==='rename') showEditNoteCategoryModal(projectId);
+    if(action==='delete') await deleteNoteCategory(projectId);
   });
   bindCategoryDropTargets('note');
   bindProjectDragSort('note');
@@ -6353,7 +6362,7 @@ function showUpdateDialog(){
   showModal(`
     <div data-update-dialog>
       <div class="modal-header"><h3>软件更新</h3><button class="modal-close" id="closeModal">×</button></div>
-      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '8.0.5')}</b><span>${update.version?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
+      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '8.0.6')}</b><span>${update.version?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
       <div class="modal-message">${escapeHtml(updateStatusText())}</div>
       <p class="update-network-tip">提示：开启 VPN 后再检测更新，结果会更加准确。</p>
       ${busy||downloaded?`<div class="update-progress"><span style="width:${downloaded?100:progress}%"></span></div>`:''}
@@ -6585,16 +6594,28 @@ function showNoteCategoryManager(){
     </div>`);
   $('#closeModal').onclick=closeModal;
   $$('[data-edit-note-category]').forEach(btn=>btn.onclick=()=>showEditNoteCategoryModal(btn.dataset.editNoteCategory));
-  $$('[data-delete-note-category]').forEach(btn=>btn.onclick=async()=>{
-    if(state.noteProjects.length<=1){ await showInfoModal({title:'无法删除', message:'至少需要保留一个收藏分类。'}); return; }
-    const item=state.noteProjects.find(x=>x.id===btn.dataset.deleteNoteCategory);
-    const ok=await showConfirmModal({title:'删除收藏分类', message:`确定删除「${item?.name||''}」吗？该分类下的收藏会移动到剩余分类。`, confirmText:'删除', danger:true});
-    if(!ok) return;
-    state.noteProjects=await api.deleteNoteProject(btn.dataset.deleteNoteCategory);
-    state.notes=await api.getNotes();
-    state.activeNoteProject=state.noteProjects[0]?.id || null;
-    renderNoteProjects(); renderNotes(); closeModal(); toast('分类已删除');
-  });
+  $$('[data-delete-note-category]').forEach(btn=>btn.onclick=()=>deleteNoteCategory(btn.dataset.deleteNoteCategory));
+}
+
+async function deleteNoteCategory(id){
+  if(state.noteProjects.length<=1){
+    await showInfoModal({title:'无法删除', message:'至少需要保留一个收藏分类。'});
+    return false;
+  }
+  const item=state.noteProjects.find(project=>project.id===id);
+  if(!item) return false;
+  const ok=await showConfirmModal({title:'删除收藏分类', message:`确定删除「${item.name||''}」吗？该分类下的收藏会移动到剩余分类。`, confirmText:'删除', danger:true});
+  if(!ok) return false;
+  const previousActiveProject=state.activeNoteProject;
+  state.noteProjects=await api.deleteNoteProject(id);
+  state.notes=await api.getNotes();
+  state.activeNoteProject=state.noteProjects.some(project=>project.id===previousActiveProject)
+    ? previousActiveProject
+    : (state.noteProjects[0]?.id || null);
+  renderNoteProjects();
+  renderNotes();
+  toast('分类已删除');
+  return true;
 }
 
 function showEditNoteCategoryModal(id){

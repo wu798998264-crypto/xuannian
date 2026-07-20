@@ -123,6 +123,7 @@ async function run() {
   assert(mainSource.includes('function sanitizeMediaDownloadHistory(') && mainSource.includes('.slice(0, 10);'), 'completed download history must retain only the latest ten records');
   assert(mainSource.includes('rememberCompletedMediaDownload(completedTask);'), 'completed downloads must be persisted before the renderer is notified');
   assert(mainSource.includes('function destroyMediaPortalView('), 'embedded media browser must have an explicit destruction path');
+  assert(mainSource.includes("kind === 'note-category'") && mainSource.includes("action('rename', '修改')") && mainSource.includes("action('delete', '删除'"), 'favorite category names need native rename and delete context-menu actions');
   assert(mainSource.includes('history.removeEntryAtIndex(removeIndex)'), 'embedded media history must prune old entries');
   assert(mainSource.includes('await portalSession.clearCache()'), 'oversized embedded website cache must be cleared');
   assert(mediaLibrarySource.includes('async function scanMediaDirectory'), 'local media files must be derived from the selected folders');
@@ -145,6 +146,8 @@ async function run() {
   assert(indexSource.includes('id="mediaDownloadsSearch"') && indexSource.includes('id="mediaFavoritesSearch"'), 'downloaded and favorite media lists need search fields');
   assert(indexSource.includes('class="media-search-row"'), 'media file counts must share the search row');
   assert(indexSource.includes('function normalizeMediaDownloadHistory('), 'renderer must restore persisted completed-download history');
+  assert(indexSource.includes("api.showItemContextMenu('note-category'"), 'right-clicking a favorite category must open its management menu');
+  assert(indexSource.includes('async function deleteNoteCategory('), 'favorite category deletion must reuse a guarded data operation');
   assert(indexSource.includes('id="settingMediaDownloadPath"') && indexSource.includes('id="settingMediaFavoritePath"'), 'media paths must live in settings');
   assert(!indexSource.includes('id="clearMediaCache"') && !indexSource.includes('function clearMediaCache('), 'media temporary storage must not expose bulk cache deletion');
   assert(!indexSource.includes('id="mediaDownloadCollections"'), 'downloaded media must not be split into categories');

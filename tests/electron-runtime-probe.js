@@ -753,6 +753,76 @@ async function run() {
   assert.deepStrictEqual(fileDoubleClickMetrics.opened, ['C:/Synthetic/double-click-one.txt'], 'double-clicking a result row should open that file exactly once');
   assert.deepStrictEqual(fileDoubleClickMetrics.copied, ['C:/Synthetic/double-click-two.txt'], 'single-clicking a result row should copy that file exactly once');
   assert.deepStrictEqual(fileDoubleClickMetrics.contextMenus, ['C:/Synthetic/double-click-two.txt'], 'right-clicking a result row should open its file context menu');
+  const noteCategoryMetrics = await window.webContents.executeJavaScript(`
+    (async()=>{
+      const original={
+        projects:state.noteProjects,
+        notes:state.notes,
+        active:state.activeNoteProject,
+        showItemContextMenu:api.showItemContextMenu,
+        updateNoteProject:api.updateNoteProject,
+        deleteNoteProject:api.deleteNoteProject,
+        getNotes:api.getNotes,
+      };
+      const menuCalls=[];
+      const menuActions=['rename','delete'];
+      state.noteProjects=[{id:'category-a',name:'分类甲'},{id:'category-b',name:'分类乙'}];
+      state.notes=[{id:'category-note',projectId:'category-b',title:'分类收藏',content:'收藏内容',createdAt:1,order:1}];
+      state.activeNoteProject='category-b';
+      api.showItemContextMenu=async(kind,options)=>{ menuCalls.push({kind,options}); return menuActions.shift()||''; };
+      api.updateNoteProject=async(id,patch)=>state.noteProjects.map(project=>project.id===id?{...project,...patch}:project);
+      api.deleteNoteProject=async id=>{
+        const remaining=state.noteProjects.filter(project=>project.id!==id);
+        state.notes=state.notes.map(note=>note.projectId===id?{...note,projectId:remaining[0].id}:note);
+        return remaining;
+      };
+      api.getNotes=async()=>state.notes;
+      await switchView('notes',{skipCoach:true});
+      renderNoteProjects();
+      document.querySelector('[data-project-id="category-a"]').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true}));
+      await new Promise(resolve=>setTimeout(resolve,10));
+      const renameTitle=document.querySelector('#modalBox h3')?.textContent||'';
+      document.querySelector('#editCategoryName').value='修改后的分类';
+      document.querySelector('#saveCategory').click();
+      await new Promise(resolve=>setTimeout(resolve,10));
+      const renamed=state.noteProjects.find(project=>project.id==='category-a')?.name||'';
+      document.querySelector('[data-project-id="category-b"]').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true}));
+      await new Promise(resolve=>setTimeout(resolve,10));
+      const deleteTitle=document.querySelector('#modalBox h3')?.textContent||'';
+      const deleteMessage=document.querySelector('#modalBox .modal-message')?.textContent||'';
+      document.querySelector('#confirmModal').click();
+      await new Promise(resolve=>setTimeout(resolve,20));
+      const result={
+        menuCalls,renameTitle,renamed,deleteTitle,deleteMessage,
+        remaining:state.noteProjects.map(project=>project.name),
+        movedProjectId:state.notes[0]?.projectId||'',
+        activeProject:state.activeNoteProject,
+      };
+      state.noteProjects=original.projects;
+      state.notes=original.notes;
+      state.activeNoteProject=original.active;
+      state.noteFilterCache=null;
+      api.showItemContextMenu=original.showItemContextMenu;
+      api.updateNoteProject=original.updateNoteProject;
+      api.deleteNoteProject=original.deleteNoteProject;
+      api.getNotes=original.getNotes;
+      renderNoteProjects();
+      renderNotes();
+      return result;
+    })()
+  `, true);
+  console.log(`note category context-menu metrics ${JSON.stringify(noteCategoryMetrics)}`);
+  assert.deepStrictEqual(noteCategoryMetrics.menuCalls, [
+    {kind:'note-category',options:{canDelete:true}},
+    {kind:'note-category',options:{canDelete:true}},
+  ]);
+  assert.strictEqual(noteCategoryMetrics.renameTitle, '修改收藏分类');
+  assert.strictEqual(noteCategoryMetrics.renamed, '修改后的分类');
+  assert.strictEqual(noteCategoryMetrics.deleteTitle, '删除收藏分类');
+  assert(noteCategoryMetrics.deleteMessage.includes('移动到剩余分类'));
+  assert.deepStrictEqual(noteCategoryMetrics.remaining, ['修改后的分类']);
+  assert.strictEqual(noteCategoryMetrics.movedProjectId, 'category-a');
+  assert.strictEqual(noteCategoryMetrics.activeProject, 'category-a');
   const mediaLibraryMetrics = await window.webContents.executeJavaScript(`
     (async()=>{
       const openedPortals=[];
@@ -801,6 +871,7 @@ async function run() {
       document.querySelector('#mediaKindTabs [data-media-kind="video"]').click();
       const videoPortalSelected=state.media.kind==='video'&&state.media.tab==='portal';
       setMediaTab('downloads');
+      const noKindSelectedOnDownloads=!document.querySelector('#mediaKindTabs [data-media-kind].active');
       await new Promise(resolve=>setTimeout(resolve,20));
       const allDownloadedCount=filteredMediaItems('downloads').length;
       const initialVirtualRows=document.querySelectorAll('#mediaDownloadsList [data-media-row]').length;
@@ -829,6 +900,7 @@ async function run() {
       document.querySelector('#confirmModal').click();
       await favoritePromise;
       setMediaTab('favorites');
+      const noKindSelectedOnFavorites=!document.querySelector('#mediaKindTabs [data-media-kind].active');
       await new Promise(resolve=>setTimeout(resolve,30));
       state.media.draggedFavoritePath='C:/Favorites/favorite.mp4';
       const favoriteFolder=document.querySelector('#mediaFavoriteCollections [data-media-collection="项目收藏"]');
@@ -889,7 +961,7 @@ async function run() {
         activeNav:document.querySelector('.nav-btn.active')?.dataset.view||'',
         rows:document.querySelectorAll('#mediaDownloadsList [data-media-row]').length,
         typeOptions:[...document.querySelectorAll('#mediaKindTabs [data-media-kind]')].map(button=>button.textContent.trim()),
-        audioPortalSelected,videoPortalSelected,videoProviderHiddenOnAudio,matchingSearchRows,missingSearchRows,
+        audioPortalSelected,videoPortalSelected,noKindSelectedOnDownloads,noKindSelectedOnFavorites,videoProviderHiddenOnAudio,matchingSearchRows,missingSearchRows,
         allDownloadedCount,initialVirtualRows,maxVirtualRows,reachedLastDownload,
         hasDownloadTab:!!document.querySelector('#mediaTabs [data-media-tab="portal"]'),
         hasDownloadCollections:!!document.querySelector('#mediaDownloadCollections'),
@@ -922,6 +994,8 @@ async function run() {
   assert.deepStrictEqual(mediaLibraryMetrics.typeOptions, ['视频','音乐']);
   assert.strictEqual(mediaLibraryMetrics.audioPortalSelected, true);
   assert.strictEqual(mediaLibraryMetrics.videoPortalSelected, true);
+  assert.strictEqual(mediaLibraryMetrics.noKindSelectedOnDownloads, true);
+  assert.strictEqual(mediaLibraryMetrics.noKindSelectedOnFavorites, true);
   assert.strictEqual(mediaLibraryMetrics.videoProviderHiddenOnAudio, true);
   assert.strictEqual(mediaLibraryMetrics.matchingSearchRows, 1);
   assert.strictEqual(mediaLibraryMetrics.missingSearchRows, 0);
