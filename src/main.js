@@ -5747,6 +5747,22 @@ ipcMain.on('ui:setNativeTheme', (_event, theme) => {
   nativeTheme.themeSource = theme === 'dark' ? 'dark' : theme === 'light' ? 'light' : 'system';
 });
 
+ipcMain.handle('file:startDrag', (event, filePath) => {
+  const value = String(filePath || '').trim();
+  if (!value || !path.isAbsolute(value) || !fs.existsSync(value) || event.sender.isDestroyed()) return false;
+  try {
+    const pngIcon = path.join(__dirname, 'xuannian-logo-256.png');
+    const iconPath = fs.existsSync(pngIcon) ? pngIcon : appIconPath();
+    let icon = iconPath ? nativeImage.createFromPath(iconPath) : nativeImage.createEmpty();
+    if (icon && !icon.isEmpty()) icon = icon.resize({ width: 64, height: 64, quality: 'best' });
+    event.sender.startDrag({ file: value, files: [value], icon });
+    return true;
+  } catch (error) {
+    runtimeLog(`native file drag failed: ${error?.message || error}`);
+    return false;
+  }
+});
+
 ipcMain.handle('file:showContextMenu', (event, filePath) => {
   const value = String(filePath || '').trim();
   if (!value || !path.isAbsolute(value) || !fs.existsSync(value)) return false;
@@ -5784,6 +5800,7 @@ ipcMain.handle('ui:showItemContextMenu', (event, kind, options = {}) => {
       items.push(action('reveal', '打开所在文件夹'));
     }
     items.push({ type: 'separator' });
+    items.push(action('batch-delete', '批量删除'));
     items.push(action('delete', '删除'));
   } else if (kind === 'note') {
     items.push(action('pin', options.pinned ? '取消置顶' : '置顶'));

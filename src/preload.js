@@ -128,6 +128,9 @@ contextBridge.exposeInMainWorld('nativeAPI', {
   async showItemContextMenu(kind, options = {}) {
     return ipcRenderer.invoke('ui:showItemContextMenu', String(kind || ''), options || {});
   },
+  async startFileDrag(filePath) {
+    return ipcRenderer.invoke('file:startDrag', filePath || '');
+  },
   setNativeTheme(theme = 'system') {
     ipcRenderer.send('ui:setNativeTheme', String(theme || 'system'));
     return true;

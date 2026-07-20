@@ -234,6 +234,106 @@ async function run() {
   assert(clipboardRoundTwo.renderP95Ms < 80, `clipboard rerender p95 is too slow: ${clipboardRoundTwo.renderP95Ms}ms`);
   assert(clipboardHeapTwo <= clipboardHeapOne + 8 * 1024 * 1024, `clipboard heap kept growing after GC: ${clipboardHeapTwo - clipboardHeapOne} bytes`);
   assert.deepStrictEqual(clipboardCompaction, { compacted: true, renderLimit: 60, recordNodes: 0 });
+  const clipboardBatchDeleteMetrics = await window.webContents.executeJavaScript(`
+    (async()=>{
+      const original={
+        records:state.records,
+        clipType:state.clipType,
+        renderLimit:state.clipboardRenderLimit,
+        saveRecords:api.saveRecords,
+        showItemContextMenu:api.showItemContextMenu,
+      };
+      const savePayloads=[];
+      const now=Date.now();
+      state.records=[
+        {id:'batch-a',type:'text',content:'batch alpha',createdAt:now},
+        {id:'batch-b',type:'text',content:'batch beta',createdAt:now-1},
+        {id:'batch-c',type:'text',content:'batch gamma',createdAt:now-2},
+      ];
+      state.clipType='all';
+      state.clipboardRenderLimit=60;
+      state.clipboardFilterCache=null;
+      state.clipboardRenderSnapshot=null;
+      document.querySelector('#clipboardSearch').value='';
+      api.saveRecords=async records=>{
+        savePayloads.push(records.map(item=>item.id));
+        return records;
+      };
+      api.showItemContextMenu=async kind=>kind==='clipboard'?'batch-delete':'';
+      if(state.clipboardBatchDelete.active) cancelClipboardBatchDelete();
+      await switchView('clipboard',{skipCoach:true});
+      renderClipboard();
+      document.querySelector('[data-record-card="batch-a"]').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true}));
+      await new Promise(resolve=>setTimeout(resolve,10));
+      const contextEntry={
+        active:state.clipboardBatchDelete.active,
+        selected:[...state.clipboardBatchDelete.selectedIds],
+      };
+      document.querySelector('#cancelClipboardBatchDelete').click();
+      const cancelled={
+        active:state.clipboardBatchDelete.active,
+        selected:state.clipboardBatchDelete.selectedIds.size,
+      };
+      document.querySelector('#startClipboardBatchDelete').click();
+      document.querySelector('[data-record-card="batch-a"]').click();
+      document.querySelector('[data-record-card="batch-b"]').click();
+      const beforeSwitch={
+        active:state.clipboardBatchDelete.active,
+        selected:[...state.clipboardBatchDelete.selectedIds].sort(),
+        confirmText:document.querySelector('#confirmClipboardBatchDelete').textContent,
+      };
+      await switchView('notes',{skipCoach:true});
+      const activeAway=state.clipboardBatchDelete.active;
+      await switchView('clipboard',{skipCoach:true});
+      const afterReturn={
+        active:state.clipboardBatchDelete.active,
+        selected:[...state.clipboardBatchDelete.selectedIds].sort(),
+        selectedCards:document.querySelectorAll('#clipboardList .batch-selected').length,
+      };
+      document.querySelector('#confirmClipboardBatchDelete').click();
+      await new Promise(resolve=>setTimeout(resolve,0));
+      const confirmTitle=document.querySelector('#modalBox h3')?.textContent||'';
+      const confirmMessage=document.querySelector('#modalBox .modal-message')?.textContent||'';
+      document.querySelector('#confirmModal').click();
+      await new Promise(resolve=>setTimeout(resolve,20));
+      const result={
+        contextEntry,
+        cancelled,
+        beforeSwitch,
+        activeAway,
+        afterReturn,
+        confirmTitle,
+        confirmMessage,
+        remaining:state.records.map(item=>item.id),
+        savePayloads,
+        activeAfterConfirm:state.clipboardBatchDelete.active,
+        normalEntryVisible:!document.querySelector('#startClipboardBatchDelete').hidden,
+      };
+      if(state.clipboardBatchDelete.active) cancelClipboardBatchDelete();
+      state.records=original.records;
+      state.clipType=original.clipType;
+      state.clipboardRenderLimit=original.renderLimit;
+      state.clipboardFilterCache=null;
+      state.clipboardRenderSnapshot=null;
+      api.saveRecords=original.saveRecords;
+      api.showItemContextMenu=original.showItemContextMenu;
+      renderClipboardFilters();
+      renderClipboard();
+      return result;
+    })()
+  `, true);
+  console.log(`clipboard batch-delete metrics ${JSON.stringify(clipboardBatchDeleteMetrics)}`);
+  assert.deepStrictEqual(clipboardBatchDeleteMetrics.contextEntry, {active:true,selected:['batch-a']}, 'right-click batch delete must preselect the clicked record');
+  assert.deepStrictEqual(clipboardBatchDeleteMetrics.cancelled, {active:false,selected:0}, 'cancel must be the only non-destructive exit from batch mode');
+  assert.deepStrictEqual(clipboardBatchDeleteMetrics.beforeSwitch, {active:true,selected:['batch-a','batch-b'],confirmText:'确认删除 (2)'});
+  assert.strictEqual(clipboardBatchDeleteMetrics.activeAway, true, 'batch mode must remain active outside the clipboard view');
+  assert.deepStrictEqual(clipboardBatchDeleteMetrics.afterReturn, {active:true,selected:['batch-a','batch-b'],selectedCards:2}, 'batch selection must survive switching away and back');
+  assert.strictEqual(clipboardBatchDeleteMetrics.confirmTitle, '批量删除剪切板记录');
+  assert(clipboardBatchDeleteMetrics.confirmMessage.includes('2 条'));
+  assert.deepStrictEqual(clipboardBatchDeleteMetrics.remaining, ['batch-c']);
+  assert.deepStrictEqual(clipboardBatchDeleteMetrics.savePayloads, [['batch-c']], 'batch deletion must save exactly once');
+  assert.strictEqual(clipboardBatchDeleteMetrics.activeAfterConfirm, false);
+  assert.strictEqual(clipboardBatchDeleteMetrics.normalEntryVisible, true);
   const nativeIconMetrics = await window.webContents.executeJavaScript(`
     (async()=>{
       let active=0;
@@ -720,9 +820,11 @@ async function run() {
       const opened=[];
       const copied=[];
       const contextMenus=[];
+      const dragged=[];
       api.openPath=async filePath=>{ opened.push(filePath); return true; };
       api.copyFileToClipboard=async filePath=>{ copied.push(filePath); return true; };
       api.showFileContextMenu=async filePath=>{ contextMenus.push(filePath); return true; };
+      api.startFileDrag=filePath=>{ dragged.push(filePath); return true; };
       state.fileSearch.engineStatus='ready';
       state.fileSearch.query='double-click';
       state.fileSearch.results=[
@@ -740,11 +842,12 @@ async function run() {
       row.dispatchEvent(new MouseEvent('dblclick',{bubbles:true,detail:2}));
       const selectedAfterDouble=state.fileSearch.selectedIndex;
       const second=document.querySelector('#fileResultList [data-file-index="1"]');
+      second.dispatchEvent(new Event('dragstart',{bubbles:true,cancelable:true}));
       second.dispatchEvent(new MouseEvent('click',{bubbles:true,detail:1}));
       second.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true}));
       second.dispatchEvent(new MouseEvent('click',{bubbles:true,detail:1}));
       await new Promise(resolve=>setTimeout(resolve,250));
-      return {rowPreserved,selectedAfterDouble,selectedIndex:state.fileSearch.selectedIndex,opened,copied,contextMenus};
+      return {rowPreserved,selectedAfterDouble,selectedIndex:state.fileSearch.selectedIndex,opened,copied,contextMenus,dragged,draggable:[row.draggable,second.draggable]};
     })()
   `, true);
   console.log(`file result double-click metrics ${JSON.stringify(fileDoubleClickMetrics)}`);
@@ -753,6 +856,8 @@ async function run() {
   assert.deepStrictEqual(fileDoubleClickMetrics.opened, ['C:/Synthetic/double-click-one.txt'], 'double-clicking a result row should open that file exactly once');
   assert.deepStrictEqual(fileDoubleClickMetrics.copied, ['C:/Synthetic/double-click-two.txt'], 'single-clicking a result row should copy that file exactly once');
   assert.deepStrictEqual(fileDoubleClickMetrics.contextMenus, ['C:/Synthetic/double-click-two.txt'], 'right-clicking a result row should open its file context menu');
+  assert.deepStrictEqual(fileDoubleClickMetrics.dragged, ['C:/Synthetic/double-click-two.txt'], 'dragging a full-disk result should start a native file drag');
+  assert.deepStrictEqual(fileDoubleClickMetrics.draggable, [true,true], 'full-disk result rows must expose draggable semantics');
   const noteCategoryMetrics = await window.webContents.executeJavaScript(`
     (async()=>{
       const original={
@@ -851,6 +956,7 @@ async function run() {
       const portalTargets=[];
       const copiedText=[];
       const copiedFiles=[];
+      const draggedFiles=[];
       const contextMenus=[];
       const portalInputs=[];
       const favoriteCollections=[];
@@ -861,6 +967,7 @@ async function run() {
       api.openMediaPortal=async(url,target,sourceText,autoSubmit,collection)=>{ openedPortals.push(url); portalTargets.push(target); portalInputs.push({sourceText,autoSubmit,collection}); return true; };
       api.copyText=async value=>{ copiedText.push(value); return true; };
       api.copyFileToClipboard=async value=>{ copiedFiles.push(value); return true; };
+      api.startFileDrag=value=>{ draggedFiles.push(value); return true; };
       api.showItemContextMenu=async(kind,options)=>{ contextMenus.push({kind,options}); return ''; };
       api.favoriteLocalMedia=async(filePath,collection)=>{ favoriteCollections.push({filePath,collection}); return {ok:true}; };
       api.moveLocalMedia=async(filePath,location,collection)=>{ movedFavorites.push({filePath,location,collection}); return {ok:true}; };
@@ -898,6 +1005,7 @@ async function run() {
       const allDownloadedCount=filteredMediaItems('downloads').length;
       const initialVirtualRows=document.querySelectorAll('#mediaDownloadsList [data-media-row]').length;
       const first=document.querySelector('#mediaDownloadsList [data-media-row="0"]');
+      first.dispatchEvent(new Event('dragstart',{bubbles:true,cancelable:true}));
       first.dispatchEvent(new MouseEvent('click',{bubbles:true,detail:1}));
       await new Promise(resolve=>setTimeout(resolve,240));
       first.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true}));
@@ -924,7 +1032,8 @@ async function run() {
       setMediaTab('favorites');
       const noKindSelectedOnFavorites=!document.querySelector('#mediaKindTabs [data-media-kind].active');
       await new Promise(resolve=>setTimeout(resolve,30));
-      state.media.draggedFavoritePath='C:/Favorites/favorite.mp4';
+      const favoriteRow=document.querySelector('#mediaFavoritesList [data-media-row="0"]');
+      favoriteRow.dispatchEvent(new Event('dragstart',{bubbles:true,cancelable:true}));
       const favoriteFolder=document.querySelector('#mediaFavoriteCollections [data-media-collection="项目收藏"]');
       await handleMediaFavoriteDrop({target:favoriteFolder,preventDefault(){},dataTransfer:{getData(){return 'C:/Favorites/favorite.mp4';}}});
       const removeFavoritePromise=performMediaAction('favorite','favorites',0);
@@ -978,13 +1087,14 @@ async function run() {
       state.media.downloadsExpanded=false;
       renderMediaDownloadBubble();
       return {
-        openedPortals,portalTargets,portalInputs,copiedText,copiedFiles,contextMenus,favoriteCollections,movedFavorites,deletedFavorites,
+        openedPortals,portalTargets,portalInputs,copiedText,copiedFiles,draggedFiles,contextMenus,favoriteCollections,movedFavorites,deletedFavorites,
         activeView:document.querySelector('.view.active')?.id||'',
         activeNav:document.querySelector('.nav-btn.active')?.dataset.view||'',
         rows:document.querySelectorAll('#mediaDownloadsList [data-media-row]').length,
         typeOptions:[...document.querySelectorAll('#mediaKindTabs [data-media-kind]')].map(button=>button.textContent.trim()),
         audioPortalSelected,videoPortalSelected,noKindSelectedOnDownloads,noKindSelectedOnFavorites,videoProviderHiddenOnAudio,matchingSearchRows,missingSearchRows,
         allDownloadedCount,initialVirtualRows,maxVirtualRows,reachedLastDownload,
+        mediaRowsDraggable:[first.draggable,favoriteRow.draggable],
         hasDownloadTab:!!document.querySelector('#mediaTabs [data-media-tab="portal"]'),
         hasDownloadCollections:!!document.querySelector('#mediaDownloadCollections'),
         hasMediaCacheClear:!!document.querySelector('#clearMediaCache'),
@@ -1005,6 +1115,8 @@ async function run() {
   assert.deepStrictEqual(mediaLibraryMetrics.portalInputs.map((item) => item.collection), ['', '项目收藏']);
   assert.deepStrictEqual(mediaLibraryMetrics.copiedText, ['https://www.bilibili.com/video/BV1runtime','https://www.bilibili.com/video/BV1runtime']);
   assert.deepStrictEqual(mediaLibraryMetrics.copiedFiles, ['C:/Downloads/demo.mp4']);
+  assert.deepStrictEqual(mediaLibraryMetrics.draggedFiles, ['C:/Downloads/demo.mp4','C:/Favorites/favorite.mp4']);
+  assert.deepStrictEqual(mediaLibraryMetrics.mediaRowsDraggable, [true,true]);
   assert.deepStrictEqual(mediaLibraryMetrics.contextMenus.map(item=>item.kind), ['media']);
   assert.deepStrictEqual(mediaLibraryMetrics.contextMenus[0].options.collections, []);
   assert.deepStrictEqual(mediaLibraryMetrics.favoriteCollections, [{filePath:'C:/Downloads/demo.mp4',collection:'项目收藏'}]);

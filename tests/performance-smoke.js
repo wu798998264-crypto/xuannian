@@ -115,6 +115,7 @@ async function run() {
   assert(/function ensureMediaPortalView\([\s\S]*?new WebContentsView[\s\S]*?partition:\s*'persist:xuannian-media-portals'[\s\S]*?nodeIntegration:\s*false[\s\S]*?sandbox:\s*true/.test(mainSource), 'third-party media sites must run in an isolated sandboxed view');
   assert(/setWindowOpenHandler\([\s\S]*?loadURL\(url\)[\s\S]*?action:\s*'deny'/.test(mainSource), 'third-party links must stay in the embedded media view');
   assert(mainSource.includes("ipcMain.handle('file:showContextMenu'"), 'local file rows need a native open/reveal context menu');
+  assert(mainSource.includes("ipcMain.handle('file:startDrag'") && mainSource.includes('event.sender.startDrag({ file: value'), 'local search and media rows need a native OS file drag bridge');
   assert(!mainSource.includes("ipcMain.handle('media:clearCache'"), 'media temporary files must not expose a destructive bulk cleanup action');
   assert(mainSource.includes('MEDIA_PORTAL_IDLE_DESTROY_MS = 3 * 60 * 1000'), 'idle media websites must release their renderer process');
   assert(mainSource.includes('MEDIA_PORTAL_HISTORY_LIMIT = 20'), 'embedded media navigation history must remain bounded');
@@ -128,6 +129,7 @@ async function run() {
   assert(mainSource.includes("kind === 'note-category-empty'") && mainSource.includes("action('create', '新建分类')"), 'favorite category blank space needs a native create menu');
   assert(mainSource.includes('history.removeEntryAtIndex(removeIndex)'), 'embedded media history must prune old entries');
   assert(mainSource.includes('await portalSession.clearCache()'), 'oversized embedded website cache must be cleared');
+  assert(mainSource.includes("action('batch-delete'"), 'clipboard native context menus need a batch-delete entry');
   assert(mediaLibrarySource.includes('async function scanMediaDirectory'), 'local media files must be derived from the selected folders');
   assert(mediaLibrarySource.includes('async function listManagedMediaFiles'), 'media scanning must enumerate only supported media files');
   assert(mediaLibrarySource.includes('async function deleteMediaCollection'), 'media collections need a file-preserving delete path');
@@ -165,6 +167,13 @@ async function run() {
   assert(indexSource.includes('id="mediaView"'), 'main window must expose the media library view');
   assert(indexSource.includes("state.fileSearch.clickTimer=setTimeout(()=>performFileSearchAction('copy',index),220)"), 'single-clicking a full-disk result must copy the local file');
   assert(indexSource.includes("api.showFileContextMenu(item.path)"), 'full-disk results must expose the local file context menu');
+  assert(indexSource.includes('data-file-index="${index}" draggable="true"'), 'full-disk result rows must be draggable');
+  assert(indexSource.includes("handleMediaFileDragStart(event,'downloads')") && indexSource.includes("handleMediaFileDragStart(event,'favorites')"), 'downloaded and favorite media rows must both start native file drags');
+  assert(indexSource.includes('function beginNativeFileDrag(') && indexSource.includes('api.startFileDrag?.(filePath)'), 'renderer file drags must cross the preload bridge');
+  assert(indexSource.includes('id="startClipboardBatchDelete"') && indexSource.includes('id="confirmClipboardBatchDelete"') && indexSource.includes('id="cancelClipboardBatchDelete"'), 'clipboard toolbar must expose enter, confirm, and cancel batch-delete controls');
+  assert(indexSource.includes('clipboardBatchDelete: {active:false,selectedIds:new Set(),revision:0,busy:false}'), 'clipboard batch selection must use persistent in-memory state');
+  assert(indexSource.includes("else if(action==='batch-delete') startClipboardBatchDelete(record?.id)"), 'right-click batch delete must enter selection mode with the clicked record selected');
+  assert(indexSource.includes('state.records=await api.saveRecords(state.records.filter(item=>!selectedSet.has(item.id)))'), 'batch deletion must persist all removals in one write');
   assert(indexSource.includes("state.media.refreshTimer=setInterval"), 'local media deletion checks must run only while the local media view is active');
   assert(mediaStyleSource.includes('.media-row{height:64px'), 'media rows need stable dimensions');
   assert(indexSource.includes('const FILE_THUMBNAIL_PREFETCH_ROWS = 10'), 'file thumbnails must prefetch exactly ten rows below the viewport');

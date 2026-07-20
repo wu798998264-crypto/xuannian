@@ -242,6 +242,8 @@
     .file-result-list{position:relative;flex:1;min-height:0;overflow:auto;outline:none;scrollbar-gutter:stable}
     .file-result-list:focus-visible{outline:2px solid var(--text);outline-offset:-2px}
     .file-row{height:58px;padding:0 12px;border-bottom:1px solid var(--line);cursor:default;color:var(--text)}
+    .file-row[draggable="true"]{cursor:grab}
+    .file-row.dragging{opacity:.5}
     .file-row:hover{background:var(--panel-soft)}
     .file-row.selected{background:#e9eef7}
     body.dark .file-row.selected{background:#363d49}
@@ -802,6 +804,22 @@
     @media (max-width:620px){.tour-stage{grid-template-columns:1fr}.tour-demo{min-height:170px}}
 
     .shot-actions{display:inline-flex;gap:0;align-items:center;margin-left:auto;position:relative;height:36px;border-radius:11px;border:1px solid var(--line);background:var(--panel-soft);overflow:visible}
+    .clipboard-batch-actions{display:inline-flex;align-items:center;gap:7px;margin-left:auto;height:36px;flex:none}
+    .clipboard-batch-actions + .shot-actions{margin-left:0}
+    .clipboard-batch-btn{height:36px;padding:0 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel-soft);color:var(--text);font-weight:800;white-space:nowrap}
+    .clipboard-batch-btn:hover:not(:disabled){background:var(--panel);box-shadow:0 8px 20px rgba(0,0,0,.08)}
+    .clipboard-batch-btn.icon-only{width:40px;padding:0;display:grid;place-items:center;color:var(--muted)}
+    .clipboard-batch-btn.icon-only svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+    .clipboard-batch-btn.confirm{min-width:88px;border-color:rgba(225,65,79,.45);background:rgba(225,65,79,.1);color:var(--danger)}
+    .clipboard-batch-btn[hidden]{display:none}
+    .clipboard-batch-btn:disabled{opacity:.46;cursor:not-allowed}
+    #clipboardList .record.batch-selectable{cursor:pointer}
+    #clipboardList .record.batch-selected{border-color:rgba(66,133,244,.72);background:rgba(66,133,244,.08);box-shadow:0 0 0 1px rgba(66,133,244,.16)}
+    body.dark #clipboardList .record.batch-selected{border-color:rgba(121,164,255,.72);background:rgba(92,135,222,.14);box-shadow:0 0 0 1px rgba(121,164,255,.14)}
+    .clipboard-batch-check{width:30px;height:30px;border:1px solid var(--line);border-radius:9px;display:grid;place-items:center;background:var(--panel-soft);color:transparent;transition:background .12s ease,border-color .12s ease,color .12s ease}
+    .clipboard-batch-check svg{width:17px;height:17px;stroke:currentColor;fill:none;stroke-width:2.4;stroke-linecap:round;stroke-linejoin:round}
+    .clipboard-batch-check.selected{border-color:#4285f4;background:#4285f4;color:#fff}
+    body.dark .clipboard-batch-check.selected{border-color:#79a4ff;background:#527fd6;color:#fff}
     .shot-btn,.shot-menu-btn{height:32px;border:0;background:transparent;color:var(--text);font-weight:800;display:grid;place-items:center}
     .shot-btn{grid-template-columns:1fr;width:38px;padding:0;border-radius:10px 0 0 10px}
     .shot-menu-btn{width:32px;padding:0;border-left:1px solid var(--line);border-radius:0 10px 10px 0;margin-left:0;align-self:stretch;height:auto}
@@ -968,6 +986,11 @@
         <button class="chip" data-type="image">图片</button>
         <button class="chip" data-type="link">链接</button>
         <button class="chip" data-type="file">文件</button>
+        <div class="clipboard-batch-actions" id="clipboardBatchActions">
+          <button class="clipboard-batch-btn" id="cancelClipboardBatchDelete" hidden>取消</button>
+          <button class="clipboard-batch-btn icon-only" id="startClipboardBatchDelete" title="批量删除" aria-label="批量删除"><svg viewBox="0 0 24 24"><path d="M4 7h16"></path><path d="M9 7V4h6v3"></path><path d="M7 7l1 13h8l1-13"></path><path d="M10 11v5M14 11v5"></path></svg></button>
+          <button class="clipboard-batch-btn confirm" id="confirmClipboardBatchDelete" hidden>确认删除</button>
+        </div>
         <div class="shot-actions" id="clipboardShotActions">
           <button class="shot-btn icon-only" id="clipboardScreenshotBtn" title="截图"><span class="shot-icon"></span></button>
           <button class="shot-menu-btn" data-shot-menu="clipboard" title="截图选项"><svg viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"></path></svg></button>
@@ -1326,6 +1349,7 @@ const state = {
   clipboardRenderLimit: 60,
   clipboardFilterCache: null,
   clipboardRenderSnapshot: null,
+  clipboardBatchDelete: {active:false,selectedIds:new Set(),revision:0,busy:false},
   noteVirtualStart: -1,
   pendingNoteScrollId: '',
   noteFilterCache: null,
@@ -1380,6 +1404,7 @@ const state = {
     renderVersion:0,
     virtualRanges:{downloads:{key:'',start:-1,end:-1},favorites:{key:'',start:-1,end:-1}},
     draggedFavoritePath:'',
+    dragCleanupTimer:null,
   },
   update: {status:'idle',currentVersion:'',version:'',percent:0,message:'',releaseNotes:'',portable:false,manualInstall:false,supported:true},
   clipboardWatcherTimer: null,
@@ -1611,6 +1636,7 @@ function createBrowserFallbackAPI(){
     async showItemInFolder(){ return false; },
     async showFileContextMenu(){ return false; },
     async showItemContextMenu(){ return ''; },
+    async startFileDrag(){ return false; },
     setNativeTheme(){ return true; },
     async getFileThumbnail(){ return ''; },
     async getFileSearchStatus(){ return {platform:'browser',engine:'preview',status:'ready',ready:true,message:'预览数据已就绪'}; },
@@ -1743,6 +1769,7 @@ function createUnifiedAPI(nativeApi, fallback){
     showItemInFolder: (filePath)=> nativeApi.showItemInFolder ? nativeApi.showItemInFolder(filePath) : fallback.showItemInFolder(filePath),
     showFileContextMenu: (filePath)=> nativeApi.showFileContextMenu ? nativeApi.showFileContextMenu(filePath) : fallback.showFileContextMenu(filePath),
     showItemContextMenu: (kind,options)=> nativeApi.showItemContextMenu ? nativeApi.showItemContextMenu(kind,options) : fallback.showItemContextMenu(kind,options),
+    startFileDrag: (filePath)=> nativeApi.startFileDrag ? nativeApi.startFileDrag(filePath) : fallback.startFileDrag(filePath),
     setNativeTheme: (theme)=> nativeApi.setNativeTheme ? nativeApi.setNativeTheme(theme) : fallback.setNativeTheme(theme),
     getFileThumbnail: (filePath,size)=> nativeApi.getFileThumbnail ? nativeApi.getFileThumbnail(filePath,size) : fallback.getFileThumbnail(filePath,size),
     getFileSearchStatus: ()=> nativeApi.getFileSearchStatus ? nativeApi.getFileSearchStatus() : fallback.getFileSearchStatus(),
@@ -2181,9 +2208,11 @@ function bindEvents(){
   $('#mediaFavoritesList')?.addEventListener('dblclick',event=>handleMediaListDoubleClick(event,'favorites'));
   $('#mediaDownloadsList')?.addEventListener('contextmenu',event=>handleMediaListContextMenu(event,'downloads'));
   $('#mediaFavoritesList')?.addEventListener('contextmenu',event=>handleMediaListContextMenu(event,'favorites'));
+  $('#mediaDownloadsList')?.addEventListener('dragstart',event=>handleMediaFileDragStart(event,'downloads'));
   $('#mediaDownloadsList')?.addEventListener('scroll',()=>scheduleMediaListRender('downloads'),{passive:true});
   $('#mediaFavoritesList')?.addEventListener('scroll',()=>scheduleMediaListRender('favorites'),{passive:true});
-  $('#mediaFavoritesList')?.addEventListener('dragstart',handleMediaFavoriteDragStart);
+  $('#mediaFavoritesList')?.addEventListener('dragstart',event=>handleMediaFileDragStart(event,'favorites'));
+  $('#mediaDownloadsList')?.addEventListener('dragend',clearMediaFavoriteDragState);
   $('#mediaFavoritesList')?.addEventListener('dragend',clearMediaFavoriteDragState);
   $('#mediaFavoriteCollections')?.addEventListener('dragover',handleMediaFavoriteDragOver);
   $('#mediaFavoriteCollections')?.addEventListener('dragleave',handleMediaFavoriteDragLeave);
@@ -2200,23 +2229,35 @@ function bindEvents(){
     const btn=e.target.closest('[data-type]'); if(!btn) return;
     state.clipType=btn.dataset.type; state.clipboardRenderLimit=60; renderClipboardFilters(); renderClipboard();
   });
+  $('#startClipboardBatchDelete')?.addEventListener('click',()=>startClipboardBatchDelete());
+  $('#cancelClipboardBatchDelete')?.addEventListener('click',()=>cancelClipboardBatchDelete());
+  $('#confirmClipboardBatchDelete')?.addEventListener('click',()=>confirmClipboardBatchDelete());
   $('#clipboardList').addEventListener('click',async event=>{
+    const card=event.target.closest('[data-record-card]');
+    if(state.clipboardBatchDelete.active&&card){
+      event.preventDefault();
+      toggleClipboardBatchSelection(card.dataset.recordCard);
+      return;
+    }
     const save=event.target.closest('[data-save-record]');
     if(save){ showSaveToNoteModal(save.dataset.saveRecord); return; }
     const pin=event.target.closest('[data-pin-record]');
     if(pin){ await toggleRecordPin(pin.dataset.pinRecord); return; }
     const remove=event.target.closest('[data-delete-record]');
     if(remove){ await deleteClipboardRecord(remove.dataset.deleteRecord); return; }
-    const card=event.target.closest('[data-record-card]');
     if(card&&!event.target.closest('.record-actions')) await copyRecordById(card.dataset.recordCard);
   });
   $('#clipboardList').addEventListener('contextmenu',async event=>{
     const card=event.target.closest('[data-record-card]');
     if(!card) return;
+    event.preventDefault();
+    if(state.clipboardBatchDelete.active){
+      toggleClipboardBatchSelection(card.dataset.recordCard);
+      return;
+    }
     const record=state.records.find(item=>item.id===card.dataset.recordCard);
     const targetPath=event.target.closest('[data-attachment-path]')?.dataset.attachmentPath
       || (Array.isArray(record?.files)?record.files.find(Boolean):'');
-    event.preventDefault();
     const action=await api.showItemContextMenu('clipboard',{
       pinned:isRecordPinned(record?.id),
       saved:isRecordSaved(record?.id),
@@ -2224,6 +2265,7 @@ function bindEvents(){
     });
     if(action==='pin') await toggleRecordPin(record?.id);
     else if(action==='favorite') showSaveToNoteModal(record?.id);
+    else if(action==='batch-delete') startClipboardBatchDelete(record?.id);
     else if(action==='delete') await deleteClipboardRecord(record?.id);
     else if(action==='open'&&targetPath) await api.openPath(targetPath);
     else if(action==='reveal'&&targetPath) await api.showItemInFolder(targetPath);
@@ -2300,6 +2342,17 @@ function bindEvents(){
     selectFileSearchResult(index);
     api.showFileContextMenu(item.path);
   });
+  $('#fileResultList')?.addEventListener('dragstart',event=>{
+    if(event.target.closest('[data-file-action]')){ event.preventDefault(); return; }
+    const row=event.target.closest('[data-file-index]');
+    const index=Number(row?.dataset.fileIndex);
+    const item=state.fileSearch.results[index];
+    if(!row||!item?.path){ event.preventDefault(); return; }
+    clearTimeout(state.fileSearch.clickTimer);
+    selectFileSearchResult(index);
+    beginNativeFileDrag(event,item.path,row);
+  });
+  $('#fileResultList')?.addEventListener('dragend',event=>event.target.closest('[data-file-index]')?.classList.remove('dragging'));
   $('#fileResultList')?.addEventListener('keydown',event=>{
     const current=Math.max(0,state.fileSearch.selectedIndex);
     if(event.key==='ArrowDown'){
@@ -2975,7 +3028,7 @@ function renderFileSearchResults(){
     const thumbnailAttributes=previewable?` data-file-thumbnail-key="${escapeHtml(thumbnailKey)}" data-file-thumbnail-path="${escapeHtml(item.path||'')}"`:'';
     const unavailableMarkup=previewable&&fileThumbnailUnavailableKeys.has(thumbnailKey)?'<span class="file-preview-unavailable">不可预览</span>':'';
     const extension=item.kind==='folder'?'文件夹':((String(item.name||'').split('.').pop()||'文件').toUpperCase());
-    rows.push(`<div class="file-row file-grid ${selected?'selected':''}" data-file-index="${index}" title="${escapeHtml(item.path||'')}">
+    rows.push(`<div class="file-row file-grid ${selected?'selected':''}" data-file-index="${index}" draggable="true" title="${escapeHtml(item.path||'')}">
       <div class="file-primary"><span class="file-kind-icon ${item.kind==='folder'?'folder':fileType}"${thumbnailAttributes}>${fileSearchIcon(item.kind,fileType)}</span>${unavailableMarkup}<span class="file-name-wrap"><span class="file-name">${escapeHtml(item.name||item.path||'')}</span><span class="file-extension">${escapeHtml(extension)}</span></span></div>
       <div class="file-path file-col-path">${escapeHtml(item.directory||'')}</div>
       <div class="file-size file-col-size">${escapeHtml(formatFileSize(item.size))}</div>
@@ -3468,7 +3521,7 @@ function scheduleMediaListRender(tab){
 function mediaRowHtml(item,index,tab){
   const favoriteActive=tab==='favorites'||!!item.favorite;
   const favoriteTitle=tab==='favorites'?'取消收藏':(item.favorite?'已收藏':'收藏');
-  return `<div class="media-row" data-media-row="${index}" data-media-list="${tab}" data-media-path="${escapeHtml(item.path||'')}" ${tab==='favorites'?'draggable="true"':''} title="${escapeHtml(item.path||'')}">
+  return `<div class="media-row" data-media-row="${index}" data-media-list="${tab}" data-media-path="${escapeHtml(item.path||'')}" draggable="true" title="${escapeHtml(item.path||'')}">
     <div class="media-primary"><span class="media-kind ${item.kind}">${mediaKindIcon(item.kind)}</span><span class="media-name-wrap"><span class="media-name">${escapeHtml(item.name||'')}</span><span class="media-type-label">${item.kind==='video'?'视频':'音乐'}</span></span></div>
     <div class="media-path">${escapeHtml(item.directory||'')}</div>
     <div class="media-size">${escapeHtml(formatFileSize(item.size))}</div>
@@ -3646,21 +3699,33 @@ async function handleMediaListContextMenu(event,tab){
 }
 
 function clearMediaFavoriteDragState(){
+  clearTimeout(state.media.dragCleanupTimer);
+  state.media.dragCleanupTimer=null;
   state.media.draggedFavoritePath='';
   $$('#mediaFavoriteCollections .media-collection.drop-target').forEach(button=>button.classList.remove('drop-target'));
-  $$('#mediaFavoritesList .media-row.dragging').forEach(row=>row.classList.remove('dragging'));
+  $$('#mediaDownloadsList .media-row.dragging,#mediaFavoritesList .media-row.dragging').forEach(row=>row.classList.remove('dragging'));
 }
 
-function handleMediaFavoriteDragStart(event){
+function beginNativeFileDrag(event,filePath,row){
+  event.preventDefault();
+  event.stopPropagation();
+  row?.classList.add('dragging');
+  const request=api.startFileDrag?.(filePath);
+  Promise.resolve(request).then(started=>{
+    if(started===false) row?.classList.remove('dragging');
+  }).catch(()=>row?.classList.remove('dragging'));
+}
+
+function handleMediaFileDragStart(event,tab){
   if(event.target.closest('[data-media-action]')){ event.preventDefault(); return; }
   const row=event.target.closest('[data-media-row]');
-  const item=mediaItemAt('favorites',row?.dataset.mediaRow);
+  const item=mediaItemAt(tab,row?.dataset.mediaRow);
   if(!row||!item?.path){ event.preventDefault(); return; }
   clearTimeout(state.media.clickTimer);
-  state.media.draggedFavoritePath=item.path;
-  row.classList.add('dragging');
-  event.dataTransfer.effectAllowed='move';
-  event.dataTransfer.setData('text/x-xuannian-media-path',item.path);
+  if(tab==='favorites') state.media.draggedFavoritePath=item.path;
+  beginNativeFileDrag(event,item.path,row);
+  clearTimeout(state.media.dragCleanupTimer);
+  state.media.dragCleanupTimer=setTimeout(clearMediaFavoriteDragState,10000);
 }
 
 function handleMediaFavoriteDragOver(event){
@@ -3678,7 +3743,7 @@ function handleMediaFavoriteDragLeave(event){
 
 async function handleMediaFavoriteDrop(event){
   const target=event.target.closest('[data-media-collection]');
-  const filePath=state.media.draggedFavoritePath||event.dataTransfer.getData('text/x-xuannian-media-path');
+  const filePath=state.media.draggedFavoritePath||event.dataTransfer?.getData?.('text/x-xuannian-media-path')||'';
   if(!target||!filePath){ clearMediaFavoriteDragState(); return; }
   event.preventDefault();
   const collection=target.dataset.mediaCollection||'';
@@ -3812,6 +3877,104 @@ function renderAll(){
 
 function renderClipboardFilters(){
   $$('#clipboardFilters .chip').forEach(btn=>btn.classList.toggle('active', btn.dataset.type===state.clipType));
+}
+
+function selectedClipboardBatchIds(){
+  const existingIds=new Set(state.records.map(item=>item.id));
+  return [...state.clipboardBatchDelete.selectedIds].filter(id=>existingIds.has(id));
+}
+
+function renderClipboardBatchActions(){
+  const batch=state.clipboardBatchDelete;
+  const selectedCount=batch.active?selectedClipboardBatchIds().length:0;
+  const start=$('#startClipboardBatchDelete');
+  const cancel=$('#cancelClipboardBatchDelete');
+  const confirm=$('#confirmClipboardBatchDelete');
+  $('#clipboardView')?.classList.toggle('clipboard-batch-mode',batch.active);
+  if(start){
+    start.hidden=batch.active;
+    start.disabled=!state.records.length;
+  }
+  if(cancel){
+    cancel.hidden=!batch.active;
+    cancel.disabled=batch.busy;
+  }
+  if(confirm){
+    confirm.hidden=!batch.active;
+    confirm.disabled=batch.busy||selectedCount===0;
+    confirm.textContent=selectedCount?`确认删除 (${selectedCount})`:'确认删除';
+    confirm.title=selectedCount?`删除已选择的 ${selectedCount} 条剪切板记录`:'请先选择要删除的剪切板记录';
+  }
+}
+
+function startClipboardBatchDelete(initialRecordId=''){
+  const batch=state.clipboardBatchDelete;
+  batch.active=true;
+  batch.busy=false;
+  if(initialRecordId&&state.records.some(item=>item.id===initialRecordId)) batch.selectedIds.add(initialRecordId);
+  batch.revision+=1;
+  state.clipboardRenderSnapshot=null;
+  renderClipboardBatchActions();
+  if(state.view==='clipboard') renderClipboard();
+}
+
+function cancelClipboardBatchDelete(){
+  const batch=state.clipboardBatchDelete;
+  if(batch.busy) return;
+  batch.active=false;
+  batch.selectedIds.clear();
+  batch.revision+=1;
+  state.clipboardRenderSnapshot=null;
+  renderClipboardBatchActions();
+  if(state.view==='clipboard') renderClipboard();
+}
+
+function toggleClipboardBatchSelection(recordId){
+  const batch=state.clipboardBatchDelete;
+  if(!batch.active||batch.busy||!state.records.some(item=>item.id===recordId)) return;
+  if(batch.selectedIds.has(recordId)) batch.selectedIds.delete(recordId);
+  else batch.selectedIds.add(recordId);
+  batch.revision+=1;
+  state.clipboardRenderSnapshot=null;
+  const card=[...document.querySelectorAll('[data-record-card]')].find(item=>item.dataset.recordCard===recordId);
+  const selected=batch.selectedIds.has(recordId);
+  card?.classList.toggle('batch-selected',selected);
+  if(card) card.title=selected?'点击取消选择':'点击选择';
+  card?.querySelector('.clipboard-batch-check')?.classList.toggle('selected',selected);
+  card?.querySelector('.clipboard-batch-check')?.setAttribute('aria-checked',String(selected));
+  renderClipboardBatchActions();
+}
+
+async function confirmClipboardBatchDelete(){
+  const batch=state.clipboardBatchDelete;
+  const selectedIds=selectedClipboardBatchIds();
+  if(batch.busy||!selectedIds.length) return;
+  const ok=await showConfirmModal({
+    title:'批量删除剪切板记录',
+    message:`确定删除已选择的 ${selectedIds.length} 条剪切板记录吗？删除后无法恢复。`,
+    confirmText:'确认删除',
+    danger:true,
+  });
+  if(!ok) return;
+  batch.busy=true;
+  renderClipboardBatchActions();
+  try{
+    const selectedSet=new Set(selectedIds);
+    state.records=await api.saveRecords(state.records.filter(item=>!selectedSet.has(item.id)));
+    batch.active=false;
+    batch.selectedIds.clear();
+    batch.revision+=1;
+    state.clipboardFilterCache=null;
+    state.clipboardRenderSnapshot=null;
+    renderClipboardFilters();
+    renderClipboard();
+    toast(`已删除 ${selectedIds.length} 条剪切板记录`);
+  }catch(error){
+    toast('批量删除失败，请稍后重试');
+  }finally{
+    batch.busy=false;
+    renderClipboardBatchActions();
+  }
 }
 
 function filteredRecords(){
@@ -4063,6 +4226,7 @@ function renderClipboardFileThumbs(item){
 
 function renderClipboard(){
   const list=$('#clipboardList');
+  renderClipboardBatchActions();
   const allItems=filteredRecords();
   const items=allItems.slice(0,state.clipboardRenderLimit);
   const pinnedKey=[...state.pinnedStickyIds].sort().join('|');
@@ -4075,6 +4239,7 @@ function renderClipboard(){
     &&previousSnapshot.filtered===allItems
     &&previousSnapshot.limit===state.clipboardRenderLimit
     &&previousSnapshot.pinnedKey===pinnedKey
+    &&previousSnapshot.batchRevision===state.clipboardBatchDelete.revision
     &&previousSnapshot.minuteBucket===minuteBucket
     &&list.childElementCount){
     return;
@@ -4089,9 +4254,10 @@ function renderClipboard(){
   list.innerHTML=items.length ? items.map(item=>{
     const saved=savedRecordIds.has(item.id);
     const pinned=pinnedRecordIds.has(item.id);
+    const batchSelected=state.clipboardBatchDelete.selectedIds.has(item.id);
     const hasMultipleImages=item.type==='image' && Array.isArray(item.files) && item.files.length>1;
     const imageText=item.type==='image' && item.content && item.content!=='图片内容' ? item.content : '';
-    return `<article class="record copyable ${saved?'saved':''}" data-record-card="${item.id}" title="点击整条内容即可复制">
+    return `<article class="record ${state.clipboardBatchDelete.active?'batch-selectable':'copyable'} ${batchSelected?'batch-selected':''} ${saved?'saved':''}" data-record-card="${item.id}" title="${state.clipboardBatchDelete.active?(batchSelected?'点击取消选择':'点击选择'):'点击整条内容即可复制'}">
       <div class="type-bar ${item.type}"></div>
       <div>
         <div class="record-head"><span class="record-type ${item.type}">${typeLabels[item.type]||item.type}</span><span class="record-time">${nowText(item.createdAt)}</span></div>
@@ -4100,11 +4266,13 @@ function renderClipboard(){
         ${item.type==='image' ? (imageText ? renderColorAwareText(imageText) : '') : renderColorAwareText(item.content || '')}
         ${item.type!=='image' && item.sizeText ? `<div class="record-sub">${escapeHtml(item.sizeText)}</div>` : ''}
       </div>
-      <div class="record-actions">
-        <button class="icon-btn ${pinned?'active':''}" data-pin-record="${item.id}" title="${pinned?'取消置顶':'置顶为便签'}">${iconSvg(pinned?'pinOff':'pin')}</button>
-        <button class="icon-btn favorite" data-save-record="${item.id}" title="收藏">${iconSvg('bookmark')}</button>
-        <button class="icon-btn" data-delete-record="${item.id}" title="删除">${iconSvg('delete')}</button>
-      </div>
+      ${state.clipboardBatchDelete.active
+        ? `<div class="clipboard-batch-check ${batchSelected?'selected':''}" role="checkbox" aria-checked="${batchSelected}" title="${batchSelected?'取消选择':'选择'}"><svg viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"></path></svg></div>`
+        : `<div class="record-actions">
+          <button class="icon-btn ${pinned?'active':''}" data-pin-record="${item.id}" title="${pinned?'取消置顶':'置顶为便签'}">${iconSvg(pinned?'pinOff':'pin')}</button>
+          <button class="icon-btn favorite" data-save-record="${item.id}" title="收藏">${iconSvg('bookmark')}</button>
+          <button class="icon-btn" data-delete-record="${item.id}" title="删除">${iconSvg('delete')}</button>
+        </div>`}
     </article>`;
   }).join('') : `<div class="empty">暂无符合条件的剪切板内容。</div>`;
   state.clipboardRenderSnapshot={
@@ -4114,6 +4282,7 @@ function renderClipboard(){
     filtered:allItems,
     limit:state.clipboardRenderLimit,
     pinnedKey,
+    batchRevision:state.clipboardBatchDelete.revision,
     minuteBucket,
   };
   list.scrollTop=previousScrollTop;
