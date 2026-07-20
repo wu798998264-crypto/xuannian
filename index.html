@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>玄念8.0.2</title>
+  <title>玄念8.0.3</title>
   <link rel="icon" href="src/xuannian-logo-256.png" />
   <link rel="stylesheet" href="src/media-library.css" />
   <style>
@@ -147,7 +147,7 @@
     body.dark .window-btn.active{background:#efefef;color:#1f1f1f}
     body.dark .window-btn:hover{background:#3a3a3a}
     .window-btn svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
-    .media-download-bubble{position:absolute;right:10px;top:40px;z-index:880;-webkit-app-region:no-drag}
+    .media-download-bubble{position:relative;flex:none;z-index:40;-webkit-app-region:no-drag}
     .media-download-toggle{position:relative;width:40px;height:40px;display:grid;place-items:center;border:1px solid var(--line);border-radius:50%;background:var(--panel);color:var(--muted);box-shadow:0 4px 14px rgba(0,0,0,.1)}
     .media-download-toggle:hover,.media-download-bubble.open .media-download-toggle{color:var(--text);background:var(--panel-soft)}
     .media-download-toggle>svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
@@ -157,7 +157,7 @@
     .media-download-count{position:absolute;right:-3px;top:-3px;min-width:16px;height:16px;display:none;align-items:center;justify-content:center;padding:0 4px;border-radius:8px;background:#242424;color:#fff;font-size:9px;font-weight:800}
     .media-download-bubble.active .media-download-count{display:flex}
     body.dark .media-download-count{background:#f1f1f1;color:#222}
-    .media-download-popover{position:absolute;right:0;top:46px;width:340px;max-width:calc(100vw - 90px);max-height:320px;display:none;flex-direction:column;border:1px solid var(--line);border-radius:8px;background:var(--panel);box-shadow:var(--shadow);overflow:hidden}
+    .media-download-popover{position:absolute;right:0;top:46px;width:340px;max-width:calc(100vw - 110px);max-height:320px;display:none;flex-direction:column;border:1px solid var(--line);border-radius:8px;background:var(--panel);box-shadow:var(--shadow);overflow:hidden}
     .media-download-bubble.open .media-download-popover{display:flex}
     .media-download-head{height:42px;flex:none;display:flex;align-items:center;justify-content:space-between;padding:0 12px;border-bottom:1px solid var(--line);font-size:12px;font-weight:800}
     .media-download-head span{color:var(--muted);font-size:10px}
@@ -512,7 +512,6 @@
     select,.field-input{height:46px;padding:0 14px}
     .path-picker{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px}
     .settings-path-picker{grid-template-columns:minmax(0,1fr) auto auto;gap:8px}
-    .settings-path-picker.media-cache-path-picker{grid-template-columns:minmax(0,1fr) auto auto auto}
     #settingsView .settings-path-picker .media-icon-button{width:46px;height:46px;border-radius:8px;background:var(--panel);color:var(--muted)}
     #settingsView .settings-path-picker .media-icon-button:hover{background:var(--work);color:var(--text)}
 
@@ -877,8 +876,6 @@
       .file-col-modified{display:none}
       .file-row,.file-result-head{padding-left:8px;padding-right:8px;column-gap:6px}
       .file-actions{opacity:1}
-      .settings-path-picker.media-cache-path-picker{grid-template-columns:minmax(0,1fr) auto auto}
-      .settings-path-picker.media-cache-path-picker .cache-clear-btn{grid-column:1/-1;justify-self:end}
     }
   </style>
 </head>
@@ -952,17 +949,6 @@
       <button class="window-btn" id="windowMinBtn" title="最小化"><svg viewBox="0 0 24 24"><path d="M5 12h14"></path></svg></button>
       <button class="window-btn" id="windowMaxBtn" title="最大化"><svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="1"></rect></svg></button>
       <button class="window-btn" id="windowCloseBtn" title="关闭"><svg viewBox="0 0 24 24"><path d="M6 6l12 12"></path><path d="M18 6 6 18"></path></svg></button>
-    </div>
-    <div class="media-download-bubble" id="mediaDownloadBubble">
-      <button class="media-download-toggle" id="mediaDownloadToggle" type="button" title="下载进度" aria-expanded="false">
-        <svg viewBox="0 0 24 24"><path d="M12 4v11"></path><path d="m8 11 4 4 4-4"></path><path d="M5 19h14"></path></svg>
-        <svg class="media-download-ring" viewBox="0 0 36 36"><circle id="mediaDownloadRing" cx="18" cy="18" r="16" pathLength="100" stroke-dasharray="0 100"></circle></svg>
-        <span class="media-download-count" id="mediaDownloadCount">0</span>
-      </button>
-      <div class="media-download-popover" id="mediaDownloadPopover">
-        <div class="media-download-head"><strong>下载任务</strong><span id="mediaDownloadSummary">暂无任务</span></div>
-        <div class="media-download-list" id="mediaDownloadTaskList"></div>
-      </div>
     </div>
     <section class="view active" id="clipboardView">
       <div class="header">
@@ -1085,7 +1071,7 @@
               <button class="black-btn" id="mediaOpenVideoPortal" type="button">打开下载站</button>
             </div>
           </div>
-          <div class="media-provider-line"><span id="mediaVideoProvider">等待识别平台</span></div>
+          <div class="media-provider-line" data-media-launcher="video"><span id="mediaVideoProvider">等待识别平台</span></div>
           <div class="media-launch-band" data-media-launcher="audio" hidden>
             <input class="media-launch-input" id="mediaMusicInput" placeholder="输入歌曲名、歌手或专辑" autocomplete="off" />
             <div class="media-launch-actions"><button class="media-icon-button" id="mediaFavoriteMusicPortal" type="button" title="收藏下载"><svg viewBox="0 0 24 24"><path d="M7 4h10a1 1 0 0 1 1 1v15l-6-3.5L6 20V5a1 1 0 0 1 1-1Z"></path></svg></button><button class="black-btn" id="mediaOpenMusicPortal" type="button">搜索歌曲宝</button></div>
@@ -1108,11 +1094,23 @@
             <input class="media-search-input" id="mediaDownloadsSearch" placeholder="搜索已下载内容" autocomplete="off" spellcheck="false" />
             <button class="media-search-clear" id="clearMediaDownloadsSearch" type="button" title="清空搜索">×</button>
           </div>
-          <div class="media-list-toolbar">
-            <span class="media-list-summary" id="mediaDownloadsSummary"></span>
-            <button class="media-icon-button" data-media-refresh type="button" title="刷新"><svg viewBox="0 0 24 24"><path d="M20 7v5h-5"></path><path d="M4 17v-5h5"></path><path d="M6.1 9a7 7 0 0 1 11.7-2.6L20 8"></path><path d="m4 16 2.2 1.6A7 7 0 0 0 18 15"></path></svg></button>
+          <div class="media-list-meta-row media-downloads-meta-row">
+            <div class="media-list-toolbar">
+              <span class="media-list-summary" id="mediaDownloadsSummary"></span>
+              <div class="media-download-bubble" id="mediaDownloadBubble">
+                <button class="media-download-toggle" id="mediaDownloadToggle" type="button" title="下载进度" aria-expanded="false">
+                  <svg viewBox="0 0 24 24"><path d="M12 4v11"></path><path d="m8 11 4 4 4-4"></path><path d="M5 19h14"></path></svg>
+                  <svg class="media-download-ring" viewBox="0 0 36 36"><circle id="mediaDownloadRing" cx="18" cy="18" r="16" pathLength="100" stroke-dasharray="0 100"></circle></svg>
+                  <span class="media-download-count" id="mediaDownloadCount">0</span>
+                </button>
+                <div class="media-download-popover" id="mediaDownloadPopover">
+                  <div class="media-download-head"><strong>下载任务</strong><span id="mediaDownloadSummary">暂无任务</span></div>
+                  <div class="media-download-list" id="mediaDownloadTaskList"></div>
+                </div>
+              </div>
+              <button class="media-icon-button" data-media-refresh type="button" title="刷新"><svg viewBox="0 0 24 24"><path d="M20 7v5h-5"></path><path d="M4 17v-5h5"></path><path d="M6.1 9a7 7 0 0 1 11.7-2.6L20 8"></path><path d="m4 16 2.2 1.6A7 7 0 0 0 18 15"></path></svg></button>
+            </div>
           </div>
-          <div class="media-collections-toolbar" data-media-collection-bar="downloads"><span>收藏夹</span><div class="media-collection-list" id="mediaDownloadCollections"></div><button class="media-collection-add" data-media-add-collection="downloads" type="button" title="新建收藏夹">+</button></div>
           <div class="media-list-shell"><div class="media-list" id="mediaDownloadsList"></div></div>
         </section>
         <section class="media-panel" data-media-panel="favorites">
@@ -1121,11 +1119,13 @@
             <input class="media-search-input" id="mediaFavoritesSearch" placeholder="搜索收藏内容" autocomplete="off" spellcheck="false" />
             <button class="media-search-clear" id="clearMediaFavoritesSearch" type="button" title="清空搜索">×</button>
           </div>
-          <div class="media-list-toolbar">
-            <span class="media-list-summary" id="mediaFavoritesSummary"></span>
-            <button class="media-icon-button" data-media-refresh type="button" title="刷新"><svg viewBox="0 0 24 24"><path d="M20 7v5h-5"></path><path d="M4 17v-5h5"></path><path d="M6.1 9a7 7 0 0 1 11.7-2.6L20 8"></path><path d="m4 16 2.2 1.6A7 7 0 0 0 18 15"></path></svg></button>
+          <div class="media-list-meta-row">
+            <div class="media-collections-toolbar" data-media-collection-bar="favorites"><span>收藏夹</span><div class="media-collection-list" id="mediaFavoriteCollections"></div><button class="media-collection-add" data-media-add-collection="favorites" type="button" title="新建收藏夹">+</button></div>
+            <div class="media-list-toolbar">
+              <span class="media-list-summary" id="mediaFavoritesSummary"></span>
+              <button class="media-icon-button" data-media-refresh type="button" title="刷新"><svg viewBox="0 0 24 24"><path d="M20 7v5h-5"></path><path d="M4 17v-5h5"></path><path d="M6.1 9a7 7 0 0 1 11.7-2.6L20 8"></path><path d="m4 16 2.2 1.6A7 7 0 0 0 18 15"></path></svg></button>
+            </div>
           </div>
-          <div class="media-collections-toolbar" data-media-collection-bar="favorites"><span>收藏夹</span><div class="media-collection-list" id="mediaFavoriteCollections"></div><button class="media-collection-add" data-media-add-collection="favorites" type="button" title="新建收藏夹">+</button></div>
           <div class="media-list-shell"><div class="media-list" id="mediaFavoritesList"></div></div>
         </section>
       </div>
@@ -1182,13 +1182,12 @@
         </div>
         <div class="setting-card">
           <span>媒体库临时储存路径</span>
-          <div class="path-picker settings-path-picker media-cache-path-picker">
+          <div class="path-picker settings-path-picker">
             <input class="field-input" id="settingMediaDownloadPath" placeholder="媒体下载临时路径" />
             <button class="media-icon-button" id="browseMediaDownloadSetting" type="button" title="选择媒体库临时储存路径" aria-label="选择媒体库临时储存路径"><svg viewBox="0 0 24 24"><path d="M3.5 7.5h6l2-2h9v13h-17Z"></path><path d="M3.5 9h17"></path></svg></button>
             <button class="media-icon-button" id="revealMediaDownloadSetting" type="button" title="打开媒体库临时储存路径" aria-label="打开媒体库临时储存路径"><svg viewBox="0 0 24 24"><path d="M8 5H5v14h14v-3"></path><path d="M12 5h7v7"></path><path d="m19 5-9 9"></path></svg></button>
-            <button class="ghost-btn cache-clear-btn" id="clearMediaCache" type="button">清理缓存</button>
           </div>
-          <small class="setting-hint">清理时只移除玄念管理的视频和音乐临时文件，不影响媒体收藏或路径根目录中的其他文件。</small>
+          <small class="setting-hint">视频和音乐下载会保存在这里；更换路径不会移动或删除原目录中的文件。</small>
         </div>
         <div class="setting-card">
           <span>媒体库收藏储存路径</span>
@@ -1197,7 +1196,7 @@
             <button class="media-icon-button" id="browseMediaFavoriteSetting" type="button" title="选择媒体库收藏储存路径" aria-label="选择媒体库收藏储存路径"><svg viewBox="0 0 24 24"><path d="M3.5 7.5h6l2-2h9v13h-17Z"></path><path d="M3.5 9h17"></path></svg></button>
             <button class="media-icon-button" id="revealMediaFavoriteSetting" type="button" title="打开媒体库收藏储存路径" aria-label="打开媒体库收藏储存路径"><svg viewBox="0 0 24 24"><path d="M8 5H5v14h14v-3"></path><path d="M12 5h7v7"></path><path d="m19 5-9 9"></path></svg></button>
           </div>
-          <small class="setting-hint">收藏的音乐和视频会长期保存在这里，清理临时媒体缓存不会删除此目录内容。</small>
+          <small class="setting-hint">收藏的音乐和视频会长期保存在这里；更新软件或更换临时储存路径不会删除此目录内容。</small>
         </div>
         <div class="setting-card">
           <span>剪切板保存时间（天）</span>
@@ -1367,6 +1366,7 @@ const state = {
     collections:{downloads:{video:[],audio:[]},favorites:{video:[],audio:[]}},
     activeCollections:{downloads:{video:'',audio:''},favorites:{video:'',audio:''}},
     loading:false,
+    loaded:false,
     requestId:0,
     refreshTimer:null,
     videoProvider:null,
@@ -1375,6 +1375,9 @@ const state = {
     browserBoundsFrame:null,
     downloadTasks:[],
     downloadsExpanded:false,
+    renderVersion:0,
+    virtualRanges:{downloads:{key:'',start:-1,end:-1},favorites:{key:'',start:-1,end:-1}},
+    draggedFavoritePath:'',
   },
   update: {status:'idle',currentVersion:'',version:'',percent:0,message:'',releaseNotes:'',portable:false,manualInstall:false,supported:true},
   clipboardWatcherTimer: null,
@@ -1627,7 +1630,6 @@ function createBrowserFallbackAPI(){
     async getMediaMusicSearchUrl(keyword){ return mediaMusicSearchUrlFallback(keyword); },
     async getMediaConfig(){ return {downloadPath:'浏览器下载目录',favoritePath:'浏览器收藏目录'}; },
     async listLocalMedia(){ return {ok:true,downloadPath:'浏览器下载目录',favoritePath:'浏览器收藏目录',items:[],collections:{downloads:{video:[],audio:[]},favorites:{video:[],audio:[]}}}; },
-    async clearMediaCache(){ return {ok:true,cleared:0,bytes:0}; },
     async favoriteLocalMedia(){ return {ok:false,reason:'预览环境不支持本地文件收藏'}; },
     async createMediaCollection(){ return {ok:false,reason:'预览环境不支持收藏夹操作'}; },
     async renameMediaCollection(){ return {ok:false,reason:'预览环境不支持收藏夹操作'}; },
@@ -1678,7 +1680,7 @@ function createBrowserFallbackAPI(){
     async deleteInspiration(id){ const data=read(); data.inspirations=data.inspirations.filter(x=>x.id!==id); write(data); return data.inspirations; },
     async getSettings(){ return read().settings; },
     async saveSettings(settings){ const data=read(); data.settings={...data.settings,...settings}; write(data); return data.settings; },
-    async getUpdateState(){ return {status:'current',currentVersion:'8.0.2',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false}; },
+    async getUpdateState(){ return {status:'current',currentVersion:'8.0.3',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false}; },
     async checkForUpdates(){ return this.getUpdateState(); },
     async downloadUpdate(){ return this.getUpdateState(); },
     async installUpdate(){ return false; },
@@ -1747,7 +1749,6 @@ function createUnifiedAPI(nativeApi, fallback){
     getMediaMusicSearchUrl: (keyword)=> nativeApi.getMediaMusicSearchUrl ? nativeApi.getMediaMusicSearchUrl(keyword) : fallback.getMediaMusicSearchUrl(keyword),
     getMediaConfig: ()=> nativeApi.getMediaConfig ? nativeApi.getMediaConfig() : fallback.getMediaConfig(),
     listLocalMedia: ()=> nativeApi.listLocalMedia ? nativeApi.listLocalMedia() : fallback.listLocalMedia(),
-    clearMediaCache: ()=> nativeApi.clearMediaCache ? nativeApi.clearMediaCache() : fallback.clearMediaCache(),
     favoriteLocalMedia: (filePath,collection)=> nativeApi.favoriteLocalMedia ? nativeApi.favoriteLocalMedia(filePath,collection) : fallback.favoriteLocalMedia(filePath,collection),
     createMediaCollection: (location,kind,name)=> nativeApi.createMediaCollection ? nativeApi.createMediaCollection(location,kind,name) : fallback.createMediaCollection(location,kind,name),
     renameMediaCollection: (location,kind,currentName,nextName)=> nativeApi.renameMediaCollection ? nativeApi.renameMediaCollection(location,kind,currentName,nextName) : fallback.renameMediaCollection(location,kind,currentName,nextName),
@@ -2139,16 +2140,18 @@ function bindEvents(){
   });
   $('#mediaOpenMusicPortal')?.addEventListener('click',()=>openMediaMusicPortal(false));
   $('#mediaFavoriteMusicPortal')?.addEventListener('click',()=>openMediaMusicPortal(true));
-  $('#mediaDownloadsSearch')?.addEventListener('input',()=>renderMediaList('downloads'));
-  $('#mediaFavoritesSearch')?.addEventListener('input',()=>renderMediaList('favorites'));
+  $('#mediaDownloadsSearch')?.addEventListener('input',()=>{ resetMediaListViewport('downloads'); renderMediaList('downloads',{force:true}); });
+  $('#mediaFavoritesSearch')?.addEventListener('input',()=>{ resetMediaListViewport('favorites'); renderMediaList('favorites',{force:true}); });
   $('#clearMediaDownloadsSearch')?.addEventListener('click',()=>{
     $('#mediaDownloadsSearch').value='';
-    renderMediaList('downloads');
+    resetMediaListViewport('downloads');
+    renderMediaList('downloads',{force:true});
     $('#mediaDownloadsSearch').focus();
   });
   $('#clearMediaFavoritesSearch')?.addEventListener('click',()=>{
     $('#mediaFavoritesSearch').value='';
-    renderMediaList('favorites');
+    resetMediaListViewport('favorites');
+    renderMediaList('favorites',{force:true});
     $('#mediaFavoritesSearch').focus();
   });
   $('#mediaBrowserBack')?.addEventListener('click',()=>api.mediaBrowserAction('back'));
@@ -2173,6 +2176,13 @@ function bindEvents(){
   $('#mediaFavoritesList')?.addEventListener('dblclick',event=>handleMediaListDoubleClick(event,'favorites'));
   $('#mediaDownloadsList')?.addEventListener('contextmenu',event=>handleMediaListContextMenu(event,'downloads'));
   $('#mediaFavoritesList')?.addEventListener('contextmenu',event=>handleMediaListContextMenu(event,'favorites'));
+  $('#mediaDownloadsList')?.addEventListener('scroll',()=>scheduleMediaListRender('downloads'),{passive:true});
+  $('#mediaFavoritesList')?.addEventListener('scroll',()=>scheduleMediaListRender('favorites'),{passive:true});
+  $('#mediaFavoritesList')?.addEventListener('dragstart',handleMediaFavoriteDragStart);
+  $('#mediaFavoritesList')?.addEventListener('dragend',clearMediaFavoriteDragState);
+  $('#mediaFavoriteCollections')?.addEventListener('dragover',handleMediaFavoriteDragOver);
+  $('#mediaFavoriteCollections')?.addEventListener('dragleave',handleMediaFavoriteDragLeave);
+  $('#mediaFavoriteCollections')?.addEventListener('drop',handleMediaFavoriteDrop);
   $('#closeAllStickyBtn').addEventListener('click', async()=>{
     const result=await api.closeAllStickyNotes();
     state.pinnedStickyIds.clear();
@@ -2333,7 +2343,6 @@ function bindEvents(){
   $('#browseMediaFavoriteSetting')?.addEventListener('click',()=>browseMediaSettingPath('favorite'));
   $('#revealMediaDownloadSetting')?.addEventListener('click',()=>openMediaSettingPath('download'));
   $('#revealMediaFavoriteSetting')?.addEventListener('click',()=>openMediaSettingPath('favorite'));
-  $('#clearMediaCache')?.addEventListener('click',clearMediaCache);
   $('#exportUserData')?.addEventListener('click', exportUserDataPackage);
   $('#importUserData')?.addEventListener('click', importUserDataPackage);
   $('#revealUserData')?.addEventListener('click', revealUserDataFolder);
@@ -3231,9 +3240,9 @@ async function openMediaVideoPortal(useFallback=false,favorite=false){
   state.media.videoProvider=provider;
   updateMediaVideoProvider();
   const url=useFallback&&provider.fallbackUrl?provider.fallbackUrl:provider.portalUrl;
+  const collection=favorite?await showMediaCollectionPicker('video'):'';
+  if(collection===null) return;
   const copied=await api.copyText(provider.sourceUrl);
-  const location=favorite?'favorites':'downloads';
-  const collection=activeMediaCollection(location,'video');
   const opened=await api.openMediaPortal(url,favorite?'favorite':'download',provider.sourceUrl,true,collection);
   if(!opened){
     toast('下载网站暂时无法打开');
@@ -3251,9 +3260,9 @@ async function openMediaMusicPortal(favorite=false){
     return;
   }
   const url=await api.getMediaMusicSearchUrl(keyword);
+  const collection=favorite?await showMediaCollectionPicker('audio'):'';
+  if(collection===null) return;
   const copied=await api.copyText(keyword);
-  const location=favorite?'favorites':'downloads';
-  const collection=activeMediaCollection(location,'audio');
   const opened=await api.openMediaPortal(url,favorite?'favorite':'download',keyword,false,collection);
   if(!opened){
     toast('音乐网站暂时无法打开');
@@ -3323,14 +3332,19 @@ function startMediaRefreshTimer(){
 
 function setMediaKind(kind,{showPortal=false}={}){
   if(!['video','audio'].includes(kind)) kind='video';
+  const changed=state.media.kind!==kind;
   state.media.kind=kind;
   $$('#mediaKindTabs [data-media-kind]').forEach(button=>button.classList.toggle('active',button.dataset.mediaKind===kind));
   $$('[data-media-launcher]').forEach(element=>{ element.hidden=element.dataset.mediaLauncher!==kind; });
+  if(changed){
+    resetMediaListViewport('downloads');
+    resetMediaListViewport('favorites');
+  }
   if(showPortal){
     setMediaTab('portal');
     return;
   }
-  renderMediaLists();
+  renderMediaLists({force:changed});
   if(state.media.tab==='portal') setTimeout(()=>$(kind==='video'?'#mediaVideoInput':'#mediaMusicInput')?.focus(),50);
   syncMediaBrowserBounds();
 }
@@ -3343,7 +3357,7 @@ function setMediaTab(tab){
   startMediaRefreshTimer();
   if(['downloads','favorites'].includes(tab)) refreshMediaLibrary({quiet:!!state.media.items.length});
   else setTimeout(()=>$(state.media.kind==='video'?'#mediaVideoInput':'#mediaMusicInput')?.focus(),50);
-  renderMediaLists();
+  renderMediaLists({force:true});
   syncMediaBrowserBounds();
 }
 
@@ -3359,16 +3373,38 @@ function activeMediaCollection(location,kind=state.media.kind){
 function setActiveMediaCollection(location,collection){
   if(!state.media.activeCollections[location]) state.media.activeCollections[location]={video:'',audio:''};
   state.media.activeCollections[location][state.media.kind]=String(collection||'');
-  renderMediaLists();
+  resetMediaListViewport(location);
+  renderMediaLists({force:true});
+}
+
+async function showMediaCollectionPicker(kind=state.media.kind){
+  if(!state.media.loaded) await refreshMediaLibrary({quiet:true});
+  const collections=mediaCollectionsFor('favorites',kind);
+  return new Promise(resolve=>{
+    showModal(`
+      <div class="modal-header"><h3>选择收藏夹</h3><button class="modal-close" id="closeModal">×</button></div>
+      <label class="modal-message" for="mediaCollectionPicker">收藏到</label>
+      <select id="mediaCollectionPicker">
+        <option value="">未分类</option>
+        ${collections.map(name=>`<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('')}
+      </select>
+      <div class="modal-actions"><button class="ghost-btn" id="cancelModal">取消</button><button class="black-btn" id="confirmModal">确定收藏</button></div>`);
+    const finish=value=>{ closeModal(); resolve(value); };
+    $('#closeModal').onclick=()=>finish(null);
+    $('#cancelModal').onclick=()=>finish(null);
+    $('#confirmModal').onclick=()=>finish(String($('#mediaCollectionPicker')?.value||''));
+    setTimeout(()=>$('#mediaCollectionPicker')?.focus(),30);
+  });
 }
 
 function filteredMediaItems(tab){
   const location=tab==='favorites'?'favorites':'downloads';
-  const collection=activeMediaCollection(location);
+  const collection=location==='favorites'?activeMediaCollection(location):'';
   const searchInput=$(tab==='favorites'?'#mediaFavoritesSearch':'#mediaDownloadsSearch');
   const query=String(searchInput?.value||'').trim().toLocaleLowerCase();
   return state.media.items.filter(item=>{
-    if(item.location!==location||item.kind!==state.media.kind||String(item.collection||'')!==collection) return false;
+    if(item.location!==location||item.kind!==state.media.kind) return false;
+    if(location==='favorites'&&String(item.collection||'')!==collection) return false;
     if(!query) return true;
     return [item.name,item.path,item.directory,item.collection]
       .some(value=>String(value||'').toLocaleLowerCase().includes(query));
@@ -3380,7 +3416,37 @@ function mediaKindIcon(kind){
   return '<svg viewBox="0 0 24 24"><path d="M9 18V5l10-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="16" cy="16" r="3"></circle></svg>';
 }
 
-function renderMediaList(tab){
+const MEDIA_LIBRARY_ROW_HEIGHT=64;
+const MEDIA_LIBRARY_OVERSCAN=10;
+
+function resetMediaListViewport(tab){
+  const list=$(tab==='favorites'?'#mediaFavoritesList':'#mediaDownloadsList');
+  if(list) list.scrollTop=0;
+  if(state.media.virtualRanges?.[tab]) state.media.virtualRanges[tab]={key:'',start:-1,end:-1};
+}
+
+function scheduleMediaListRender(tab){
+  scheduleRenderFrame(`media-${tab}-scroll`,()=>renderMediaList(tab));
+}
+
+function mediaRowHtml(item,index,tab){
+  const favoriteActive=tab==='favorites'||!!item.favorite;
+  const favoriteTitle=tab==='favorites'?'取消收藏':(item.favorite?'已收藏':'收藏');
+  return `<div class="media-row" data-media-row="${index}" data-media-list="${tab}" data-media-path="${escapeHtml(item.path||'')}" ${tab==='favorites'?'draggable="true"':''} title="${escapeHtml(item.path||'')}">
+    <div class="media-primary"><span class="media-kind ${item.kind}">${mediaKindIcon(item.kind)}</span><span class="media-name-wrap"><span class="media-name">${escapeHtml(item.name||'')}</span><span class="media-type-label">${item.kind==='video'?'视频':'音乐'}</span></span></div>
+    <div class="media-path">${escapeHtml(item.directory||'')}</div>
+    <div class="media-size">${escapeHtml(formatFileSize(item.size))}</div>
+    <div class="media-date">${escapeHtml(formatFileModified(item.modifiedAt))}</div>
+    <div class="media-row-actions">
+      <button class="media-row-action ${favoriteActive?'active':''}" data-media-action="favorite" data-media-index="${index}" data-media-list="${tab}" title="${favoriteTitle}">${iconSvg('bookmark')}</button>
+      <button class="media-row-action" data-media-action="open" data-media-index="${index}" data-media-list="${tab}" title="打开">${fileActionIcon('open')}</button>
+      <button class="media-row-action" data-media-action="reveal" data-media-index="${index}" data-media-list="${tab}" title="打开所在文件夹">${fileActionIcon('reveal')}</button>
+      <button class="media-row-action danger" data-media-action="delete" data-media-index="${index}" data-media-list="${tab}" title="删除">${iconSvg('delete')}</button>
+    </div>
+  </div>`;
+}
+
+function renderMediaList(tab,{force=false}={}){
   const list=$(tab==='favorites'?'#mediaFavoritesList':'#mediaDownloadsList');
   const summary=$(tab==='favorites'?'#mediaFavoritesSummary':'#mediaDownloadsSummary');
   if(!list||!summary) return;
@@ -3389,24 +3455,23 @@ function renderMediaList(tab){
   summary.textContent=state.media.loading?'正在刷新':`${state.media.kind==='video'?'视频':'音乐'} · ${items.length} 个${query?'匹配':'文件'}`;
   if(!items.length){
     list.innerHTML=`<div class="media-empty">${state.media.loading?'正在读取目录':(query?'没有匹配的媒体文件':(tab==='favorites'?'暂无媒体收藏':'临时储存路径中暂无音视频文件'))}</div>`;
+    state.media.virtualRanges[tab]={key:'',start:-1,end:-1};
     return;
   }
-  list.innerHTML=items.map((item,index)=>`<div class="media-row" data-media-row="${index}" data-media-list="${tab}" title="${escapeHtml(item.path||'')}">
-    <div class="media-primary"><span class="media-kind ${item.kind}">${mediaKindIcon(item.kind)}</span><span class="media-name-wrap"><span class="media-name">${escapeHtml(item.name||'')}</span><span class="media-type-label">${item.kind==='video'?'视频':'音乐'}</span></span></div>
-    <div class="media-path">${escapeHtml(item.directory||'')}</div>
-    <div class="media-size">${escapeHtml(formatFileSize(item.size))}</div>
-    <div class="media-date">${escapeHtml(formatFileModified(item.modifiedAt))}</div>
-    <div class="media-row-actions">
-      <button class="media-row-action ${item.favorite?'active':''}" data-media-action="favorite" data-media-index="${index}" data-media-list="${tab}" title="${item.favorite?'已收藏':'收藏'}">${iconSvg('bookmark')}</button>
-      <button class="media-row-action" data-media-action="open" data-media-index="${index}" data-media-list="${tab}" title="打开">${fileActionIcon('open')}</button>
-      <button class="media-row-action" data-media-action="reveal" data-media-index="${index}" data-media-list="${tab}" title="打开所在文件夹">${fileActionIcon('reveal')}</button>
-      <button class="media-row-action danger" data-media-action="delete" data-media-index="${index}" data-media-list="${tab}" title="删除">${iconSvg('delete')}</button>
-    </div>
-  </div>`).join('');
+  const viewportHeight=Math.max(320,list.clientHeight||640);
+  const maxScroll=Math.max(0,items.length*MEDIA_LIBRARY_ROW_HEIGHT-viewportHeight);
+  if(list.scrollTop>maxScroll) list.scrollTop=maxScroll;
+  const start=Math.max(0,Math.floor(list.scrollTop/MEDIA_LIBRARY_ROW_HEIGHT)-MEDIA_LIBRARY_OVERSCAN);
+  const end=Math.min(items.length,Math.ceil((list.scrollTop+viewportHeight)/MEDIA_LIBRARY_ROW_HEIGHT)+MEDIA_LIBRARY_OVERSCAN);
+  const key=[state.media.renderVersion,state.media.kind,tab,query,tab==='favorites'?activeMediaCollection('favorites'):'',items.length,viewportHeight].join('|');
+  const previous=state.media.virtualRanges[tab];
+  if(!force&&previous?.key===key&&previous.start===start&&previous.end===end) return;
+  state.media.virtualRanges[tab]={key,start,end};
+  list.innerHTML=`<div class="media-virtual-spacer" style="height:${start*MEDIA_LIBRARY_ROW_HEIGHT}px"></div>${items.slice(start,end).map((item,offset)=>mediaRowHtml(item,start+offset,tab)).join('')}<div class="media-virtual-spacer" style="height:${(items.length-end)*MEDIA_LIBRARY_ROW_HEIGHT}px"></div>`;
 }
 
-function renderMediaCollections(location){
-  const list=$(location==='favorites'?'#mediaFavoriteCollections':'#mediaDownloadCollections');
+function renderMediaCollections(location='favorites'){
+  const list=$('#mediaFavoriteCollections');
   if(!list) return;
   const active=activeMediaCollection(location);
   const collections=mediaCollectionsFor(location);
@@ -3416,11 +3481,10 @@ function renderMediaCollections(location){
   ].join('');
 }
 
-function renderMediaLists(){
-  renderMediaCollections('downloads');
+function renderMediaLists({force=false}={}){
   renderMediaCollections('favorites');
-  renderMediaList('downloads');
-  renderMediaList('favorites');
+  renderMediaList('downloads',{force});
+  renderMediaList('favorites',{force});
 }
 
 async function refreshMediaLibrary({quiet=false}={}){
@@ -3432,6 +3496,8 @@ async function refreshMediaLibrary({quiet=false}={}){
     const result=await api.listLocalMedia();
     if(requestId!==state.media.requestId) return;
     state.media.items=Array.isArray(result?.items)?result.items:[];
+    state.media.loaded=true;
+    state.media.renderVersion+=1;
     state.media.downloadPath=result?.downloadPath||state.media.downloadPath;
     state.media.favoritePath=result?.favoritePath||state.media.favoritePath;
     state.media.collections=result?.collections||state.media.collections;
@@ -3459,8 +3525,18 @@ async function performMediaAction(action,tab,index){
   const item=mediaItemAt(tab,index);
   if(!item?.path) return;
   if(action==='favorite'){
+    if(tab==='favorites'){
+      const confirmed=await showConfirmModal({title:'取消收藏',message:`确定取消收藏「${item.name||'这个文件'}」吗？文件会移入系统回收站。`,confirmText:'取消收藏',danger:true});
+      if(!confirmed) return;
+      const removed=await api.deleteLocalMedia(item.path,'favorites');
+      toast(removed?.ok?'已取消收藏':(removed?.reason||'取消收藏失败'));
+      if(removed?.ok) await refreshMediaLibrary({quiet:true});
+      return;
+    }
     if(item.favorite){ toast('文件已在收藏目录'); return; }
-    const result=await api.favoriteLocalMedia(item.path,activeMediaCollection('favorites',item.kind));
+    const collection=await showMediaCollectionPicker(item.kind);
+    if(collection===null) return;
+    const result=await api.favoriteLocalMedia(item.path,collection);
     toast(result?.ok?(result.alreadyFavorite?'文件已在收藏目录':'已转存到收藏目录'):(result?.reason||'收藏失败'));
     if(result?.ok) await refreshMediaLibrary({quiet:true});
     return;
@@ -3520,7 +3596,7 @@ async function handleMediaListContextMenu(event,tab){
     location:tab,
     favorite:!!item.favorite,
     collection:item.collection||'',
-    collections:mediaCollectionsFor(tab,item.kind),
+    collections:tab==='favorites'?mediaCollectionsFor('favorites',item.kind):[],
   });
   if(!action) return;
   if(action.startsWith('move:')){
@@ -3531,6 +3607,49 @@ async function handleMediaListContextMenu(event,tab){
     return;
   }
   await performMediaAction(action,tab,row.dataset.mediaRow);
+}
+
+function clearMediaFavoriteDragState(){
+  state.media.draggedFavoritePath='';
+  $$('#mediaFavoriteCollections .media-collection.drop-target').forEach(button=>button.classList.remove('drop-target'));
+  $$('#mediaFavoritesList .media-row.dragging').forEach(row=>row.classList.remove('dragging'));
+}
+
+function handleMediaFavoriteDragStart(event){
+  if(event.target.closest('[data-media-action]')){ event.preventDefault(); return; }
+  const row=event.target.closest('[data-media-row]');
+  const item=mediaItemAt('favorites',row?.dataset.mediaRow);
+  if(!row||!item?.path){ event.preventDefault(); return; }
+  clearTimeout(state.media.clickTimer);
+  state.media.draggedFavoritePath=item.path;
+  row.classList.add('dragging');
+  event.dataTransfer.effectAllowed='move';
+  event.dataTransfer.setData('text/x-xuannian-media-path',item.path);
+}
+
+function handleMediaFavoriteDragOver(event){
+  const target=event.target.closest('[data-media-collection]');
+  if(!target||!state.media.draggedFavoritePath) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect='move';
+  $$('#mediaFavoriteCollections .media-collection.drop-target').forEach(button=>button.classList.toggle('drop-target',button===target));
+}
+
+function handleMediaFavoriteDragLeave(event){
+  if(event.currentTarget.contains(event.relatedTarget)) return;
+  $$('#mediaFavoriteCollections .media-collection.drop-target').forEach(button=>button.classList.remove('drop-target'));
+}
+
+async function handleMediaFavoriteDrop(event){
+  const target=event.target.closest('[data-media-collection]');
+  const filePath=state.media.draggedFavoritePath||event.dataTransfer.getData('text/x-xuannian-media-path');
+  if(!target||!filePath){ clearMediaFavoriteDragState(); return; }
+  event.preventDefault();
+  const collection=target.dataset.mediaCollection||'';
+  const result=await api.moveLocalMedia(filePath,'favorites',collection);
+  clearMediaFavoriteDragState();
+  toast(result?.ok?(result.unchanged?'文件已在当前收藏夹':'文件已移动到目标收藏夹'):(result?.reason||'移动失败'));
+  if(result?.ok) await refreshMediaLibrary({quiet:true});
 }
 
 async function createMediaCollectionFor(location){
@@ -6062,39 +6181,6 @@ async function clearClipboardCache(){
   toast('剪切板缓存已清空');
 }
 
-async function clearMediaCache(){
-  const savedPath=String(state.settings.mediaDownloadPath||state.media.downloadPath||'').trim();
-  const inputPath=String($('#settingMediaDownloadPath')?.value||'').trim();
-  if(inputPath&&savedPath&&inputPath.toLocaleLowerCase()!==savedPath.toLocaleLowerCase()){
-    await showInfoModal({title:'请先保存路径',message:'媒体库临时储存路径尚未保存。请先点击“保存设置”，确认路径生效后再清理缓存。'});
-    return;
-  }
-  const confirmed=await showConfirmModal({
-    title:'清理媒体库临时缓存',
-    message:'将把玄念管理的视频和音乐临时文件移入系统回收站。媒体收藏、剪切板收藏以及临时路径根目录中的其他文件不会被删除。确定继续吗？',
-    confirmText:'清理缓存',
-    danger:true,
-  });
-  if(!confirmed) return;
-  const button=$('#clearMediaCache');
-  if(button) button.disabled=true;
-  try{
-    const result=await api.clearMediaCache();
-    if(!result?.ok){
-      await showInfoModal({title:'无法清理缓存',message:result?.reason||'媒体缓存清理失败，请检查目录权限后重试。'});
-      return;
-    }
-    await refreshMediaLibrary({quiet:true});
-    if(result.failed){
-      await showInfoModal({title:'部分文件未清理',message:`已清理 ${result.cleared||0} 个临时媒体文件，另有 ${result.failed} 个文件可能正被占用，请关闭播放器后重试。`});
-    }else{
-      toast(result.cleared?`已清理 ${result.cleared} 个临时媒体文件`:'没有需要清理的临时媒体文件');
-    }
-  }finally{
-    if(button) button.disabled=false;
-  }
-}
-
 async function saveSettings(){
   const hotkey=normalizeHotkey($('#settingHotkey').value);
   const screenshotHotkey=normalizeHotkey($('#settingScreenshotHotkey').value);
@@ -6240,7 +6326,7 @@ function showUpdateDialog(){
   showModal(`
     <div data-update-dialog>
       <div class="modal-header"><h3>软件更新</h3><button class="modal-close" id="closeModal">×</button></div>
-      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '8.0.2')}</b><span>${update.version?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
+      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '8.0.3')}</b><span>${update.version?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
       <div class="modal-message">${escapeHtml(updateStatusText())}</div>
       <p class="update-network-tip">提示：开启 VPN 后再检测更新，结果会更加准确。</p>
       ${busy||downloaded?`<div class="update-progress"><span style="width:${downloaded?100:progress}%"></span></div>`:''}

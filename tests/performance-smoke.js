@@ -115,10 +115,15 @@ async function run() {
   assert(/function ensureMediaPortalView\([\s\S]*?new WebContentsView[\s\S]*?partition:\s*'persist:xuannian-media-portals'[\s\S]*?nodeIntegration:\s*false[\s\S]*?sandbox:\s*true/.test(mainSource), 'third-party media sites must run in an isolated sandboxed view');
   assert(/setWindowOpenHandler\([\s\S]*?loadURL\(url\)[\s\S]*?action:\s*'deny'/.test(mainSource), 'third-party links must stay in the embedded media view');
   assert(mainSource.includes("ipcMain.handle('file:showContextMenu'"), 'local file rows need a native open/reveal context menu');
-  assert(mainSource.includes("ipcMain.handle('media:clearCache'"), 'media temporary files need an explicit cache cleanup handler');
-  assert(mainSource.includes('isPathInside(directories.downloadPath, directories.favoritePath)'), 'media cache cleanup must reject overlapping temporary and favorite paths');
+  assert(!mainSource.includes("ipcMain.handle('media:clearCache'"), 'media temporary files must not expose a destructive bulk cleanup action');
+  assert(mainSource.includes('MEDIA_PORTAL_IDLE_DESTROY_MS = 3 * 60 * 1000'), 'idle media websites must release their renderer process');
+  assert(mainSource.includes('MEDIA_PORTAL_HISTORY_LIMIT = 20'), 'embedded media navigation history must remain bounded');
+  assert(mainSource.includes('MEDIA_PORTAL_CACHE_LIMIT_BYTES = 128 * 1024 * 1024'), 'embedded website HTTP cache must remain bounded');
+  assert(mainSource.includes('function destroyMediaPortalView('), 'embedded media browser must have an explicit destruction path');
+  assert(mainSource.includes('history.removeEntryAtIndex(removeIndex)'), 'embedded media history must prune old entries');
+  assert(mainSource.includes('await portalSession.clearCache()'), 'oversized embedded website cache must be cleared');
   assert(mediaLibrarySource.includes('async function scanMediaDirectory'), 'local media files must be derived from the selected folders');
-  assert(mediaLibrarySource.includes('async function listManagedMediaFiles'), 'cache cleanup must enumerate only XuanNian-managed media folders');
+  assert(mediaLibrarySource.includes('async function listManagedMediaFiles'), 'media scanning must enumerate only supported media files');
   assert(mediaLibrarySource.includes('async function deleteMediaCollection'), 'media collections need a file-preserving delete path');
   assert(!mediaLibrarySource.includes('fetch('), 'media library must not call third-party private download APIs');
 
@@ -134,7 +139,12 @@ async function run() {
   assert(!indexSource.includes('data-media-tab="portal"'), 'the redundant media download tab must be removed');
   assert(indexSource.includes('id="mediaDownloadsSearch"') && indexSource.includes('id="mediaFavoritesSearch"'), 'downloaded and favorite media lists need search fields');
   assert(indexSource.includes('id="settingMediaDownloadPath"') && indexSource.includes('id="settingMediaFavoritePath"'), 'media paths must live in settings');
-  assert(indexSource.includes('id="clearMediaCache"'), 'settings must expose one-click media cache cleanup');
+  assert(!indexSource.includes('id="clearMediaCache"') && !indexSource.includes('function clearMediaCache('), 'media temporary storage must not expose bulk cache deletion');
+  assert(!indexSource.includes('id="mediaDownloadCollections"'), 'downloaded media must not be split into categories');
+  assert(indexSource.includes('function showMediaCollectionPicker('), 'favoriting media must ask for a target category');
+  assert(indexSource.includes("const MEDIA_LIBRARY_OVERSCAN=10"), 'media lists must render a bounded viewport buffer');
+  assert(indexSource.includes('class="media-virtual-spacer"'), 'media lists must use virtual top and bottom spacers');
+  assert(indexSource.includes("addEventListener('drop',handleMediaFavoriteDrop)"), 'favorite media must support drag-and-drop categorization');
   assert(indexSource.includes('getFileThumbnail: (filePath,size)=> nativeApi.getFileThumbnail'), 'unified renderer API must forward native thumbnail requests');
   assert(indexSource.includes('<svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="5.5"></circle><path d="m15 15 5 5"></path></svg>'), 'full-disk search navigation must use a plain magnifying-glass icon');
   assert(!indexSource.includes('<path d="M4 4h5"></path><path d="M4 4v5"></path>'), 'full-disk search navigation must not include the old corner mark');

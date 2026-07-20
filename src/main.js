@@ -20,7 +20,6 @@ const {
   deleteMediaCollection,
   detectVideoProvider,
   isAllowedPortalUrl,
-  listManagedMediaFiles,
   listMediaCollections,
   listMediaFiles,
   mediaCollectionDirectory,
@@ -126,6 +125,9 @@ let videoThumbnailIdleTimer = null;
 let videoThumbnailActive = 0;
 let mediaPortalView = null;
 let mediaPortalInputTimer = null;
+let mediaPortalIdleTimer = null;
+let mediaPortalCacheCheckAt = 0;
+let mediaPortalCacheCheckPromise = null;
 let mediaPortalRequestId = 0;
 let mediaPortalInputState = null;
 const configuredMediaDownloadSessions = new WeakSet();
@@ -149,6 +151,10 @@ const FILE_THUMBNAIL_CACHE_LIMIT = 192;
 const SYSTEM_THUMBNAIL_TIMEOUT_MS = 1200;
 const VIDEO_THUMBNAIL_TIMEOUT_MS = 2800;
 const VIDEO_THUMBNAIL_IDLE_MS = 15000;
+const MEDIA_PORTAL_IDLE_DESTROY_MS = 3 * 60 * 1000;
+const MEDIA_PORTAL_HISTORY_LIMIT = 20;
+const MEDIA_PORTAL_CACHE_LIMIT_BYTES = 128 * 1024 * 1024;
+const MEDIA_PORTAL_CACHE_CHECK_INTERVAL_MS = 60 * 1000;
 const STARTUP_MIGRATION_STATE_FILE = 'xuannian-migration-state.json';
 const RECORDS_JOURNAL_FILE = 'xuannian-records.json';
 const RESIZE_EDGES = new Set(['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw']);
@@ -2332,11 +2338,7 @@ function createWindow() {
   });
   mainWindow.on('closed', () => {
     mainWindowResizeSession = null;
-    clearMediaPortalInputTimer();
-    if (mediaPortalView && !mediaPortalView.webContents.isDestroyed()) {
-      mediaPortalView.webContents.close();
-    }
-    mediaPortalView = null;
+    destroyMediaPortalView({ notify: false });
   });
   loadAppHtml(mainWindow, 'index.html');
 }
@@ -2463,6 +2465,68 @@ function configureMediaDownloadSession(electronSession) {
   });
 }
 
+function cancelMediaPortalIdleDestroy() {
+  clearTimeout(mediaPortalIdleTimer);
+  mediaPortalIdleTimer = null;
+}
+
+function destroyMediaPortalView({ notify = true } = {}) {
+  cancelMediaPortalIdleDestroy();
+  clearMediaPortalInputTimer();
+  mediaPortalInputState = null;
+  mediaPortalRequestId += 1;
+  const view = mediaPortalView;
+  mediaPortalView = null;
+  if (view) {
+    try { mainWindow?.contentView?.removeChildView(view); } catch {}
+    try {
+      if (!view.webContents.isDestroyed()) view.webContents.close();
+    } catch {}
+  }
+  if (notify) notifyMediaBrowserState({ destroyed: true });
+}
+
+function scheduleMediaPortalIdleDestroy() {
+  if (mediaPortalIdleTimer || !mediaPortalView || mediaPortalView.webContents.isDestroyed()) return;
+  mediaPortalIdleTimer = setTimeout(() => {
+    runtimeLog('destroying idle media portal view');
+    destroyMediaPortalView();
+  }, MEDIA_PORTAL_IDLE_DESTROY_MS);
+}
+
+function trimMediaPortalHistory(webContents) {
+  if (!webContents || webContents.isDestroyed()) return;
+  try {
+    const history = webContents.navigationHistory;
+    while (history.length() > MEDIA_PORTAL_HISTORY_LIMIT) {
+      const activeIndex = history.getActiveIndex();
+      const removeIndex = activeIndex > 0 ? 0 : history.length() - 1;
+      if (removeIndex === activeIndex) break;
+      history.removeEntryAtIndex(removeIndex);
+    }
+  } catch (error) {
+    runtimeLog(`media portal history trim failed: ${error?.message || error}`);
+  }
+}
+
+function enforceMediaPortalCacheLimit(webContents) {
+  if (!webContents || webContents.isDestroyed() || mediaPortalCacheCheckPromise) return;
+  const now = Date.now();
+  if (now - mediaPortalCacheCheckAt < MEDIA_PORTAL_CACHE_CHECK_INTERVAL_MS) return;
+  mediaPortalCacheCheckAt = now;
+  const portalSession = webContents.session;
+  mediaPortalCacheCheckPromise = (async () => {
+    const cacheSize = await portalSession.getCacheSize();
+    if (cacheSize <= MEDIA_PORTAL_CACHE_LIMIT_BYTES) return;
+    await portalSession.clearCache();
+    runtimeLog(`media portal HTTP cache cleared at ${cacheSize} bytes`);
+  })().catch((error) => {
+    runtimeLog(`media portal cache check failed: ${error?.message || error}`);
+  }).finally(() => {
+    mediaPortalCacheCheckPromise = null;
+  });
+}
+
 function mediaBrowserState(extra = {}) {
   const webContents = mediaPortalView?.webContents;
   if (!webContents || webContents.isDestroyed()) {
@@ -2562,6 +2626,7 @@ function scheduleMediaPortalInput() {
 }
 
 function ensureMediaPortalView() {
+  cancelMediaPortalIdleDestroy();
   if (mediaPortalView && !mediaPortalView.webContents.isDestroyed()) return mediaPortalView;
   if (!mainWindow || mainWindow.isDestroyed()) return null;
   const view = new WebContentsView({
@@ -2587,9 +2652,19 @@ function ensureMediaPortalView() {
   view.webContents.on('will-navigate', (event, url) => {
     if (!/^https:\/\//i.test(String(url || ''))) event.preventDefault();
   });
-  for (const eventName of ['did-start-loading', 'did-stop-loading', 'did-navigate', 'did-navigate-in-page', 'page-title-updated']) {
-    view.webContents.on(eventName, () => notifyMediaBrowserState());
+  view.webContents.on('did-start-loading', () => notifyMediaBrowserState());
+  view.webContents.on('did-stop-loading', () => {
+    trimMediaPortalHistory(view.webContents);
+    enforceMediaPortalCacheLimit(view.webContents);
+    notifyMediaBrowserState();
+  });
+  for (const eventName of ['did-navigate', 'did-navigate-in-page']) {
+    view.webContents.on(eventName, () => {
+      trimMediaPortalHistory(view.webContents);
+      notifyMediaBrowserState();
+    });
   }
+  view.webContents.on('page-title-updated', () => notifyMediaBrowserState());
   view.webContents.on('did-finish-load', scheduleMediaPortalInput);
   view.webContents.on('render-process-gone', () => notifyMediaBrowserState({ crashed: true }));
   return view;
@@ -2605,9 +2680,16 @@ function setMediaPortalBounds(bounds = {}, visible = false) {
   const y = Math.max(0, Math.min(maxHeight, Math.round(Number(bounds.y || 0))));
   const width = Math.max(0, Math.min(maxWidth - x, Math.round(Number(bounds.width || 0))));
   const height = Math.max(0, Math.min(maxHeight - y, Math.round(Number(bounds.height || 0))));
+  const shouldShow = !!visible && width >= 120 && height >= 80;
   if (width >= 120 && height >= 80) view.setBounds({ x, y, width, height });
-  view.setVisible(!!visible && width >= 120 && height >= 80);
-  view.webContents.setAudioMuted(!visible);
+  view.setVisible(shouldShow);
+  view.webContents.setAudioMuted(!shouldShow);
+  if (shouldShow) {
+    cancelMediaPortalIdleDestroy();
+    enforceMediaPortalCacheLimit(view.webContents);
+  } else {
+    scheduleMediaPortalIdleDestroy();
+  }
   return true;
 }
 
@@ -5109,36 +5191,6 @@ ipcMain.handle('media:listLocal', async () => {
     collections: { downloads: downloadCollections, favorites: favoriteCollections },
   };
 });
-ipcMain.handle('media:clearCache', async () => {
-  const directories = mediaDirectories();
-  if (isPathInside(directories.downloadPath, directories.favoritePath) || isPathInside(directories.favoritePath, directories.downloadPath)) {
-    return { ok: false, reason: '媒体库临时储存路径与收藏路径存在包含关系，请先在设置中把两个路径分开' };
-  }
-  return runMediaFileOperation('clear media cache', async () => {
-    const items = await listManagedMediaFiles(directories.downloadPath, false, 100000);
-    let cursor = 0;
-    let cleared = 0;
-    let bytes = 0;
-    let failed = 0;
-    const workers = Array.from({ length: Math.min(4, items.length) }, async () => {
-      while (cursor < items.length) {
-        const item = items[cursor];
-        cursor += 1;
-        try {
-          await shell.trashItem(item.path);
-          cleared += 1;
-          bytes += Math.max(0, Number(item.size || 0));
-        } catch (error) {
-          failed += 1;
-          runtimeLog(`trash media cache item failed path=${item.path}: ${error?.message || error}`);
-        }
-      }
-    });
-    await Promise.all(workers);
-    notifyMediaDownloadsChanged({ status: 'cache-cleared', cleared, failed });
-    return { ok: true, cleared, failed, bytes };
-  });
-});
 ipcMain.handle('media:favoriteLocal', async (_event, filePath, collection = '') => {
   const { favoritePath } = mediaDirectories();
   const result = await runMediaFileOperation('favorite media', () => copyMediaToFavorites(filePath, favoritePath, collection));
@@ -5698,16 +5750,18 @@ ipcMain.handle('ui:showItemContextMenu', (event, kind, options = {}) => {
     }
     items.push(action('open', '打开文件'));
     items.push(action('reveal', '打开所在文件夹'));
-    const collections = Array.isArray(options.collections)
-      ? options.collections.map((name) => String(name || '').trim()).filter(Boolean).slice(0, 50)
-      : [];
-    items.push({
-      label: '移动到收藏夹',
-      submenu: [
-        action('move:', '未分类', { type: 'checkbox', checked: !options.collection }),
-        ...collections.map((name) => action(`move:${name}`, name.slice(0, 48), { type: 'checkbox', checked: name === options.collection })),
-      ],
-    });
+    if (options.location === 'favorites') {
+      const collections = Array.isArray(options.collections)
+        ? options.collections.map((name) => String(name || '').trim()).filter(Boolean).slice(0, 50)
+        : [];
+      items.push({
+        label: '移动到收藏夹',
+        submenu: [
+          action('move:', '未分类', { type: 'checkbox', checked: !options.collection }),
+          ...collections.map((name) => action(`move:${name}`, name.slice(0, 48), { type: 'checkbox', checked: name === options.collection })),
+        ],
+      });
+    }
     items.push({ type: 'separator' });
     items.push(action('delete', '删除'));
   } else if (kind === 'media-folder') {
