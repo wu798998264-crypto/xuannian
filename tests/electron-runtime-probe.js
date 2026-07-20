@@ -964,7 +964,7 @@ async function run() {
       const deletedFavorites=[];
       const syntheticDownloads=Array.from({length:5000},(_,index)=>({path:'C:/Downloads/archive/video-'+index+'.mp4',directory:'C:/Downloads/archive',name:'video-'+index+'.mp4',kind:'video',size:4096+index,modifiedAt:index,favorite:false,location:'downloads',collection:'项目视频'}));
       api.resolveMediaVideoProvider=async value=>resolveMediaVideoProviderFallback(value);
-      api.openMediaPortal=async(url,target,sourceText,autoSubmit,collection)=>{ openedPortals.push(url); portalTargets.push(target); portalInputs.push({sourceText,autoSubmit,collection}); return true; };
+      api.openMediaPortal=async(url,target,sourceText,autoSubmit,collection,qualityPreference)=>{ openedPortals.push(url); portalTargets.push(target); portalInputs.push({sourceText,autoSubmit,collection,qualityPreference}); return true; };
       api.copyText=async value=>{ copiedText.push(value); return true; };
       api.copyFileToClipboard=async value=>{ copiedFiles.push(value); return true; };
       api.startFileDrag=value=>{ draggedFiles.push(value); return true; };
@@ -986,6 +986,11 @@ async function run() {
       });
       await switchView('media',{skipCoach:true});
       const videoInput=document.querySelector('#mediaVideoInput');
+      const douyinProvider=resolveMediaVideoProviderFallback('https://v.douyin.com/runtime');
+      const tiktokProvider=resolveMediaVideoProviderFallback('https://www.tiktok.com/@runtime/video/1');
+      videoInput.value='https://v.douyin.com/runtime';
+      videoInput.dispatchEvent(new Event('input',{bubbles:true}));
+      await openMediaVideoPortal(false);
       videoInput.value='https://www.bilibili.com/video/BV1runtime';
       videoInput.dispatchEvent(new Event('input',{bubbles:true}));
       await openMediaVideoPortal(false);
@@ -1088,6 +1093,7 @@ async function run() {
       renderMediaDownloadBubble();
       return {
         openedPortals,portalTargets,portalInputs,copiedText,copiedFiles,draggedFiles,contextMenus,favoriteCollections,movedFavorites,deletedFavorites,
+        providerRouting:{douyinProvider,tiktokProvider},
         activeView:document.querySelector('.view.active')?.id||'',
         activeNav:document.querySelector('.nav-btn.active')?.dataset.view||'',
         rows:document.querySelectorAll('#mediaDownloadsList [data-media-row]').length,
@@ -1109,11 +1115,18 @@ async function run() {
     })()
   `, true);
   console.log(`media library runtime metrics ${JSON.stringify(mediaLibraryMetrics)}`);
-  assert.deepStrictEqual(mediaLibraryMetrics.openedPortals, ['https://www.seekin.ai/zh/bilibili-downloader/','https://www.seekin.ai/zh/bilibili-downloader/']);
-  assert.deepStrictEqual(mediaLibraryMetrics.portalTargets, ['download','favorite']);
-  assert.strictEqual(mediaLibraryMetrics.portalInputs.every((item) => item.sourceText === 'https://www.bilibili.com/video/BV1runtime' && item.autoSubmit === true), true);
-  assert.deepStrictEqual(mediaLibraryMetrics.portalInputs.map((item) => item.collection), ['', '项目收藏']);
-  assert.deepStrictEqual(mediaLibraryMetrics.copiedText, ['https://www.bilibili.com/video/BV1runtime','https://www.bilibili.com/video/BV1runtime']);
+  assert.deepStrictEqual(mediaLibraryMetrics.openedPortals, ['https://www.hellotik.app/zh/douyin','https://www.seekin.ai/zh/bilibili-downloader/','https://www.seekin.ai/zh/bilibili-downloader/']);
+  assert.deepStrictEqual(mediaLibraryMetrics.portalTargets, ['download','download','favorite']);
+  assert.strictEqual(mediaLibraryMetrics.portalInputs.every((item) => item.autoSubmit === true), true);
+  assert.deepStrictEqual(mediaLibraryMetrics.portalInputs.map((item) => item.collection), ['', '', '项目收藏']);
+  assert.deepStrictEqual(mediaLibraryMetrics.portalInputs.map((item) => item.qualityPreference || ''), ['highest','','']);
+  assert.deepStrictEqual(mediaLibraryMetrics.copiedText, ['https://v.douyin.com/runtime','https://www.bilibili.com/video/BV1runtime','https://www.bilibili.com/video/BV1runtime']);
+  assert.strictEqual(mediaLibraryMetrics.providerRouting.douyinProvider.id, 'douyin');
+  assert.strictEqual(mediaLibraryMetrics.providerRouting.douyinProvider.portalUrl, 'https://www.hellotik.app/zh/douyin');
+  assert.strictEqual(mediaLibraryMetrics.providerRouting.douyinProvider.autoDownloadQuality, 'highest');
+  assert.strictEqual(mediaLibraryMetrics.providerRouting.tiktokProvider.id, 'tiktok');
+  assert.strictEqual(mediaLibraryMetrics.providerRouting.tiktokProvider.portalUrl, 'https://dlpanda.com/zh-CN');
+  assert(mediaLibraryMetrics.providerRouting.tiktokProvider.label.includes('VPN'));
   assert.deepStrictEqual(mediaLibraryMetrics.copiedFiles, ['C:/Downloads/demo.mp4']);
   assert.deepStrictEqual(mediaLibraryMetrics.draggedFiles, ['C:/Downloads/demo.mp4','C:/Favorites/favorite.mp4']);
   assert.deepStrictEqual(mediaLibraryMetrics.mediaRowsDraggable, [true,true]);

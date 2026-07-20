@@ -1786,7 +1786,7 @@ function createUnifiedAPI(nativeApi, fallback){
     deleteMediaCollection: (location,kind,name)=> nativeApi.deleteMediaCollection ? nativeApi.deleteMediaCollection(location,kind,name) : fallback.deleteMediaCollection(location,kind,name),
     moveLocalMedia: (filePath,location,collection)=> nativeApi.moveLocalMedia ? nativeApi.moveLocalMedia(filePath,location,collection) : fallback.moveLocalMedia(filePath,location,collection),
     deleteLocalMedia: (filePath,location)=> nativeApi.deleteLocalMedia ? nativeApi.deleteLocalMedia(filePath,location) : fallback.deleteLocalMedia(filePath,location),
-    openMediaPortal: (url,downloadTarget,sourceText,autoSubmit,collection)=> nativeApi.openMediaPortal ? nativeApi.openMediaPortal(url,downloadTarget,sourceText,autoSubmit,collection) : fallback.openMediaPortal(url,downloadTarget,sourceText,autoSubmit,collection),
+    openMediaPortal: (url,downloadTarget,sourceText,autoSubmit,collection,qualityPreference)=> nativeApi.openMediaPortal ? nativeApi.openMediaPortal(url,downloadTarget,sourceText,autoSubmit,collection,qualityPreference) : fallback.openMediaPortal(url,downloadTarget,sourceText,autoSubmit,collection,qualityPreference),
     setMediaBrowserBounds: (bounds,visible)=> nativeApi.setMediaBrowserBounds ? nativeApi.setMediaBrowserBounds(bounds,visible) : fallback.setMediaBrowserBounds(bounds,visible),
     getMediaBrowserState: ()=> nativeApi.getMediaBrowserState ? nativeApi.getMediaBrowserState() : fallback.getMediaBrowserState(),
     mediaBrowserAction: (action)=> nativeApi.mediaBrowserAction ? nativeApi.mediaBrowserAction(action) : fallback.mediaBrowserAction(action),
@@ -3220,7 +3220,8 @@ function resolveMediaVideoProviderFallback(value=''){
   let host='';
   try{ host=new URL(sourceUrl).hostname.toLowerCase().replace(/^www\./,''); }catch{return null;}
   const matches=(domains)=>domains.some(domain=>host===domain||host.endsWith(`.${domain}`));
-  if(matches(['douyin.com','iesdouyin.com','tiktok.com'])) return {id:'douyin-tiktok',label:'抖音 / TikTok',portalUrl:'https://dlpanda.com/zh-CN',fallbackUrl:'',sourceUrl};
+  if(matches(['douyin.com','iesdouyin.com'])) return {id:'douyin',label:'抖音',portalUrl:'https://www.hellotik.app/zh/douyin',fallbackUrl:'',sourceUrl,autoDownloadQuality:'highest'};
+  if(matches(['tiktok.com'])) return {id:'tiktok',label:'TikTok（需开启 VPN）',portalUrl:'https://dlpanda.com/zh-CN',fallbackUrl:'',sourceUrl,autoDownloadQuality:''};
   if(matches(['bilibili.com','b23.tv'])) return {id:'bilibili',label:'哔哩哔哩',portalUrl:'https://www.seekin.ai/zh/bilibili-downloader/',fallbackUrl:'',sourceUrl};
   if(matches(['xiaohongshu.com','xhslink.com'])) return {id:'xiaohongshu',label:'小红书',portalUrl:'https://www.xiaohongshua.com/',fallbackUrl:'https://www.hellotik.app/zh/rednote',sourceUrl};
   if(matches(['kuaishou.com','gifshow.com','kwai.com'])) return {id:'kuaishou',label:'快手',portalUrl:'https://www.hellotik.app/zh/kuaishou',fallbackUrl:'',sourceUrl};
@@ -3328,17 +3329,19 @@ async function openMediaVideoPortal(useFallback=false,favorite=false){
   state.media.videoProvider=provider;
   updateMediaVideoProvider();
   const url=useFallback&&provider.fallbackUrl?provider.fallbackUrl:provider.portalUrl;
+  const qualityPreference=useFallback?'':(provider.autoDownloadQuality||'');
   const collection=favorite?await showMediaCollectionPicker('video'):'';
   if(collection===null) return;
   const copied=await api.copyText(provider.sourceUrl);
-  const opened=await api.openMediaPortal(url,favorite?'favorite':'download',provider.sourceUrl,true,collection);
+  const opened=await api.openMediaPortal(url,favorite?'favorite':'download',provider.sourceUrl,true,collection,qualityPreference);
   if(!opened){
     toast('下载网站暂时无法打开');
     return;
   }
-  state.media.browser={...state.media.browser,ready:true,loading:true,url};
+  state.media.browser={...state.media.browser,ready:true,loading:true,url,autoFilled:false,autoSubmitted:false,autoDownloadStarted:false,qualityLabel:''};
   renderMediaBrowserState();
-  toast(favorite?'正在自动填入链接，下载后将进入收藏目录':(copied===false?'正在打开下载站':'正在自动填入链接并尝试解析'));
+  if(qualityPreference==='highest') toast(favorite?'正在解析最高画质，下载后将进入收藏目录':'正在自动解析并选择最高画质下载');
+  else toast(favorite?'正在自动填入链接，下载后将进入收藏目录':(copied===false?'正在打开下载站':'正在自动填入链接并尝试解析'));
 }
 
 async function openMediaMusicPortal(favorite=false){
@@ -3383,7 +3386,7 @@ function renderMediaBrowserState(){
   const address=$('#mediaBrowserAddress');
   if(address){ address.textContent=browser.url||'下载网站将在这里打开'; address.title=browser.url||''; }
   const status=$('#mediaBrowserStatus');
-  if(status) status.textContent=browser.loading?'加载中':(browser.crashed?'页面需要刷新':(browser.autoSubmitted?'已自动解析':(browser.autoFilled?'已自动填入':'就绪')));
+  if(status) status.textContent=browser.loading?'加载中':(browser.crashed?'页面需要刷新':(browser.autoDownloadStarted?'已选择最高画质':(browser.autoSubmitted?'已自动解析':(browser.autoFilled?'已自动填入':'就绪'))));
   if($('#mediaBrowserBack')) $('#mediaBrowserBack').disabled=!browser.canGoBack;
   if($('#mediaBrowserForward')) $('#mediaBrowserForward').disabled=!browser.canGoForward;
   if($('#mediaBrowserReload')) $('#mediaBrowserReload').title=browser.loading?'停止加载':'刷新';

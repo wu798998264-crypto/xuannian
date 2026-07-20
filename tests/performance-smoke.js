@@ -123,6 +123,8 @@ async function run() {
   assert(mainSource.includes("MEDIA_DOWNLOAD_HISTORY_FILE = 'xuannian-media-download-history.json'"), 'completed download history must be stored outside the main favorites data');
   assert(mainSource.includes('function sanitizeMediaDownloadHistory(') && mainSource.includes('.slice(0, 10);'), 'completed download history must retain only the latest ten records');
   assert(mainSource.includes('rememberCompletedMediaDownload(completedTask);'), 'completed downloads must be persisted before the renderer is notified');
+  assert(mainSource.includes('showMediaDownloadNotification({ status: \'completed\'') && mainSource.includes("new Notification({ title, body, silent: false })"), 'completed downloads must trigger a native XuanNian notification from the real download completion event');
+  assert(mainSource.includes("qualityPreference === 'highest'") && mainSource.includes('autoDownloadStarted: !!result.autoDownloadClicked'), 'Douyin automation must wait for and report the highest-quality download action');
   assert(mainSource.includes('function destroyMediaPortalView('), 'embedded media browser must have an explicit destruction path');
   assert(mainSource.includes("kind === 'note-category'") && mainSource.includes("action('rename', '修改')") && mainSource.includes("action('delete', '删除'"), 'favorite category names need native rename and delete context-menu actions');
   assert(mainSource.includes("ipcMain.on('ui:setNativeTheme'") && mainSource.includes('nativeTheme.themeSource'), 'native context menus must follow the app color mode');
@@ -133,6 +135,9 @@ async function run() {
   assert(mediaLibrarySource.includes('async function scanMediaDirectory'), 'local media files must be derived from the selected folders');
   assert(mediaLibrarySource.includes('async function listManagedMediaFiles'), 'media scanning must enumerate only supported media files');
   assert(mediaLibrarySource.includes('async function deleteMediaCollection'), 'media collections need a file-preserving delete path');
+  assert(mediaLibrarySource.includes("portalUrl: 'https://www.hellotik.app/zh/douyin'") && mediaLibrarySource.includes("autoDownloadQuality: 'highest'"), 'Douyin must default to HelloTik with highest-quality automation');
+  assert(mediaLibrarySource.includes("id: 'tiktok'") && mediaLibrarySource.includes("portalUrl: 'https://dlpanda.com/zh-CN'"), 'TikTok must keep the VPN-oriented DLPanda route');
+  assert(mediaLibrarySource.includes('function scoreMediaDownloadQualityLabel('), 'highest-quality download selection must use a deterministic quality scorer');
   assert(!mediaLibrarySource.includes('fetch('), 'media library must not call third-party private download APIs');
 
   const indexSource = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
@@ -141,6 +146,7 @@ async function run() {
   const wheelSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'wheel-scroll.js'), 'utf8');
   const mediaStyleSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'media-library.css'), 'utf8');
   assert(indexSource.includes('id="mediaBrowserSurface"'), 'media download sites must have an embedded browser surface');
+  assert(indexSource.includes("browser.autoDownloadStarted?'已选择最高画质'"), 'embedded browser status must confirm highest-quality selection');
   assert(indexSource.includes('id="mediaDownloadBubble"'), 'download progress must remain visible in the main window');
   assert(!indexSource.includes('data-media-filters="downloads"'), 'media lists must use only the shared video/music selector');
   assert(indexSource.includes('id="mediaKindTabs"'), 'video and music must use two direct buttons');

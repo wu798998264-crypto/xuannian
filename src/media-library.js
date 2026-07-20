@@ -11,9 +11,16 @@ const MEDIA_KIND_DIRECTORIES = Object.freeze({ video: '视频', audio: '音乐' 
 
 const VIDEO_PROVIDERS = [
   {
-    id: 'douyin-tiktok',
-    label: '抖音 / TikTok',
-    hosts: ['douyin.com', 'iesdouyin.com', 'tiktok.com'],
+    id: 'douyin',
+    label: '抖音',
+    hosts: ['douyin.com', 'iesdouyin.com'],
+    portalUrl: 'https://www.hellotik.app/zh/douyin',
+    autoDownloadQuality: 'highest',
+  },
+  {
+    id: 'tiktok',
+    label: 'TikTok（需开启 VPN）',
+    hosts: ['tiktok.com'],
     portalUrl: 'https://dlpanda.com/zh-CN',
   },
   {
@@ -76,6 +83,36 @@ function detectVideoProvider(value) {
   } catch {
     return null;
   }
+}
+
+function scoreMediaDownloadQualityLabel(value) {
+  const label = String(value || '').trim().toLowerCase();
+  if (!label || /(?:复制|copy)/i.test(label)) return -1;
+  if (!/(?:无水印|no\s*watermark|原画|original|最高|best|超清|高清|ultra\s*hd|uhd|full\s*hd|fhd|\bhd\b|(?:8|4|2)\s*k|\b(?:2160|1440|1080|720|480)\s*p?\b)/i.test(label)) return -1;
+
+  let score = 100;
+  if (/(?:原画|original|最高|best)/i.test(label)) score = Math.max(score, 12000);
+  if (/(?:8\s*k)/i.test(label)) score = Math.max(score, 8000);
+  if (/(?:4\s*k)/i.test(label)) score = Math.max(score, 4000);
+  if (/(?:2\s*k)/i.test(label)) score = Math.max(score, 2000);
+  if (/(?:超清|ultra\s*hd|uhd)/i.test(label)) score = Math.max(score, 2160);
+  if (/(?:full\s*hd|fhd)/i.test(label)) score = Math.max(score, 1080);
+  if (/(?:高清|\bhd\b)/i.test(label)) score = Math.max(score, 720);
+
+  const resolutionMatches = label.match(/\b\d{3,4}\s*p?\b/gi) || [];
+  for (const match of resolutionMatches) {
+    const resolution = Number.parseInt(match, 10);
+    if (Number.isFinite(resolution)) score = Math.max(score, resolution);
+  }
+
+  const sizeMatch = label.match(/(\d+(?:\.\d+)?)\s*(gb|mb|kb)\b/i);
+  if (sizeMatch) {
+    const amount = Number.parseFloat(sizeMatch[1]);
+    const unit = sizeMatch[2].toLowerCase();
+    const megabytes = unit === 'gb' ? amount * 1024 : (unit === 'kb' ? amount / 1024 : amount);
+    if (Number.isFinite(megabytes)) score += Math.min(0.99, megabytes / 100000);
+  }
+  return score;
 }
 
 function musicSearchUrl(keyword) {
@@ -411,4 +448,5 @@ module.exports = {
   renameMediaCollection,
   sanitizeCollectionName,
   scanMediaDirectory,
+  scoreMediaDownloadQualityLabel,
 };

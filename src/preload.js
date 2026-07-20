@@ -378,8 +378,8 @@ contextBridge.exposeInMainWorld('nativeAPI', {
   async deleteLocalMedia(filePath, location) {
     return ipcRenderer.invoke('media:deleteLocal', filePath || '', location || 'downloads');
   },
-  async openMediaPortal(url, downloadTarget = 'download', sourceText = '', autoSubmit = false, collection = '') {
-    return ipcRenderer.invoke('media:openPortal', url || '', downloadTarget || 'download', sourceText || '', !!autoSubmit, collection || '');
+  async openMediaPortal(url, downloadTarget = 'download', sourceText = '', autoSubmit = false, collection = '', qualityPreference = '') {
+    return ipcRenderer.invoke('media:openPortal', url || '', downloadTarget || 'download', sourceText || '', !!autoSubmit, collection || '', qualityPreference || '');
   },
   setMediaBrowserBounds(bounds = {}, visible = false) {
     ipcRenderer.send('media:browserBounds', bounds || {}, !!visible);

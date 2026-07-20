@@ -1,5 +1,5 @@
 ﻿const { app, BrowserWindow, ipcMain, dialog, globalShortcut, clipboard, desktopCapturer, screen, Menu, nativeImage, shell } = require('electron');
-const { WebContentsView, nativeTheme } = require('electron');
+const { Notification, WebContentsView, nativeTheme } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
@@ -27,6 +27,7 @@ const {
   moveMediaToCollection,
   musicSearchUrl,
   renameMediaCollection,
+  scoreMediaDownloadQualityLabel,
 } = require('./media-library');
 
 let mainWindow;
@@ -132,6 +133,7 @@ let mediaPortalRequestId = 0;
 let mediaPortalInputState = null;
 const configuredMediaDownloadSessions = new WeakSet();
 const mediaPortalDownloadTargets = new WeakMap();
+const activeMediaDownloadNotifications = new Set();
 const recentClipboardDigests = new Map();
 const recentClipboardSequences = new Map();
 const pendingClipboardSequences = new Set();
@@ -2449,6 +2451,37 @@ function uniqueMediaDownloadPath(directory, filename) {
   return candidate;
 }
 
+function showMediaDownloadNotification({ status, name, filePath = '', favorite = false } = {}) {
+  if (!Notification.isSupported()) return false;
+  const completed = status === 'completed';
+  const title = completed ? '玄念下载完成' : '玄念下载未完成';
+  const body = completed
+    ? `${String(name || '媒体文件')} 已保存到${favorite ? '收藏' : '已下载'}`
+    : `${String(name || '媒体文件')} 下载失败，请在下载网站中重试`;
+  try {
+    const notification = new Notification({ title, body, silent: false });
+    activeMediaDownloadNotifications.add(notification);
+    const release = () => activeMediaDownloadNotifications.delete(notification);
+    notification.once('close', release);
+    notification.once('failed', release);
+    notification.on('click', () => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        if (mainWindow.isMinimized()) mainWindow.restore();
+        mainWindow.show();
+        mainWindow.focus();
+      }
+      if (completed && filePath && fs.existsSync(filePath)) shell.showItemInFolder(filePath);
+    });
+    notification.show();
+    const releaseTimer = setTimeout(release, 30 * 1000);
+    releaseTimer.unref?.();
+    return true;
+  } catch (error) {
+    runtimeLog(`media download notification failed: ${error?.message || error}`);
+    return false;
+  }
+}
+
 function configureMediaDownloadSession(electronSession) {
   if (!electronSession || configuredMediaDownloadSessions.has(electronSession)) return;
   configuredMediaDownloadSessions.add(electronSession);
@@ -2499,9 +2532,11 @@ function configureMediaDownloadSession(electronSession) {
         rememberCompletedMediaDownload(completedTask);
         notifyMediaDownloadProgress(completedTask);
         notifyMediaDownloadsChanged({ status: 'completed', path: destination, favorite: favoriteDownload, message: favoriteDownload ? '媒体已下载到收藏目录' : '媒体已下载' });
+        showMediaDownloadNotification({ status: 'completed', name: filename, filePath: destination, favorite: favoriteDownload });
       } else if (state !== 'cancelled') {
         notifyMediaDownloadProgress(progressPayload('error'));
         notifyMediaDownloadsChanged({ status: 'error', message: '下载未完成，请在网站中重试' });
+        showMediaDownloadNotification({ status: 'error', name: filename });
       } else {
         notifyMediaDownloadProgress(progressPayload('cancelled'));
       }
@@ -2607,14 +2642,18 @@ function scheduleMediaPortalInput() {
     if (!mediaPortalView || mediaPortalView.webContents.isDestroyed() || state.requestId !== mediaPortalRequestId) return;
     const value = JSON.stringify(state.value);
     const autoSubmit = state.autoSubmit ? 'true' : 'false';
+    const qualityPreference = JSON.stringify(state.qualityPreference || '');
+    const qualityScorer = scoreMediaDownloadQualityLabel.toString();
     const script = `(() => new Promise((resolve) => {
       const value = ${value};
       const autoSubmit = ${autoSubmit};
-      const deadline = Date.now() + 7000;
+      const qualityPreference = ${qualityPreference};
+      const qualityScore = ${qualityScorer};
+      const inputDeadline = Date.now() + 7000;
       const visible = (element) => {
         const rect = element.getBoundingClientRect();
         const style = getComputedStyle(element);
-        return rect.width > 80 && rect.height > 18 && style.display !== 'none' && style.visibility !== 'hidden';
+        return rect.width > 48 && rect.height > 18 && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
       };
       const score = (input) => {
         const hint = [input.placeholder, input.name, input.id, input.getAttribute('aria-label')].filter(Boolean).join(' ').toLowerCase();
@@ -2631,13 +2670,41 @@ function scheduleMediaPortalInput() {
         input.dispatchEvent(new Event('change', { bubbles: true }));
         input.focus();
       };
+      const waitForHighestQuality = (baseResult) => {
+        const qualityDeadline = Date.now() + 30000;
+        let candidatesVisibleAt = 0;
+        const attemptQuality = () => {
+          const candidates = [...document.querySelectorAll('button,[role="button"],a[download]')]
+            .filter((element) => !element.disabled && visible(element))
+            .map((element) => {
+              const label = String(element.innerText || element.textContent || element.value || element.getAttribute('aria-label') || '').trim();
+              return { element, label, score: qualityScore(label) };
+            })
+            .filter((candidate) => candidate.score >= 0)
+            .sort((left, right) => right.score - left.score);
+          if (!candidates.length) {
+            if (Date.now() < qualityDeadline) setTimeout(attemptQuality, 240);
+            else resolve({ ...baseResult, autoDownloadClicked: false, qualityLabel: '' });
+            return;
+          }
+          if (!candidatesVisibleAt) candidatesVisibleAt = Date.now();
+          if (Date.now() - candidatesVisibleAt < 900) {
+            setTimeout(attemptQuality, 180);
+            return;
+          }
+          const best = candidates[0];
+          best.element.click();
+          resolve({ ...baseResult, autoDownloadClicked: true, qualityLabel: best.label });
+        };
+        setTimeout(attemptQuality, 420);
+      };
       const attempt = () => {
         const inputs = [...document.querySelectorAll('input:not([type]),input[type="text"],input[type="url"],input[type="search"],textarea')]
           .filter((input) => !input.disabled && !input.readOnly && visible(input))
           .sort((left, right) => score(right) - score(left));
         const input = inputs[0];
         if (!input) {
-          if (Date.now() < deadline) setTimeout(attempt, 250); else resolve({ filled: false, submitted: false });
+          if (Date.now() < inputDeadline) setTimeout(attempt, 250); else resolve({ filled: false, submitted: false });
           return;
         }
         setValue(input);
@@ -2652,7 +2719,9 @@ function scheduleMediaPortalInput() {
             submitted = true;
           }
         }
-        resolve({ filled: true, submitted });
+        const result = { filled: true, submitted };
+        if (submitted && qualityPreference === 'highest') waitForHighestQuality(result);
+        else resolve(result);
       };
       attempt();
     }))()`;
@@ -2661,7 +2730,12 @@ function scheduleMediaPortalInput() {
       if (state.requestId !== mediaPortalRequestId) return;
       if (result?.filled) {
         mediaPortalInputState = null;
-        notifyMediaBrowserState({ autoFilled: true, autoSubmitted: !!result.submitted });
+        notifyMediaBrowserState({
+          autoFilled: true,
+          autoSubmitted: !!result.submitted,
+          autoDownloadStarted: !!result.autoDownloadClicked,
+          qualityLabel: String(result.qualityLabel || ''),
+        });
       }
     } catch {
       if (state.requestId === mediaPortalRequestId) scheduleMediaPortalInput();
@@ -2737,7 +2811,7 @@ function setMediaPortalBounds(bounds = {}, visible = false) {
   return true;
 }
 
-function openMediaPortal(url, downloadTarget = 'download', sourceText = '', autoSubmit = false, collection = '') {
+function openMediaPortal(url, downloadTarget = 'download', sourceText = '', autoSubmit = false, collection = '', qualityPreference = '') {
   const value = String(url || '').trim();
   if (!isAllowedPortalUrl(value)) return false;
   const view = ensureMediaPortalView();
@@ -2747,14 +2821,26 @@ function openMediaPortal(url, downloadTarget = 'download', sourceText = '', auto
     location: downloadTarget === 'favorite' ? 'favorite' : 'download',
     collection: String(collection || '').trim(),
   });
+  const normalizedQualityPreference = qualityPreference === 'highest' ? 'highest' : '';
   mediaPortalInputState = String(sourceText || '').trim()
-    ? { requestId: mediaPortalRequestId, value: String(sourceText).trim(), autoSubmit: !!autoSubmit }
+    ? {
+      requestId: mediaPortalRequestId,
+      value: String(sourceText).trim(),
+      autoSubmit: !!autoSubmit,
+      qualityPreference: normalizedQualityPreference,
+    }
     : null;
   view.webContents.loadURL(value).catch((error) => {
     runtimeLog(`media portal load failed: ${error?.message || error}`);
     notifyMediaBrowserState({ loadError: true });
   });
-  notifyMediaBrowserState({ opening: true });
+  notifyMediaBrowserState({
+    opening: true,
+    autoFilled: false,
+    autoSubmitted: false,
+    autoDownloadStarted: false,
+    qualityLabel: '',
+  });
   return true;
 }
 
@@ -5217,6 +5303,7 @@ ipcMain.handle('media:resolveVideoProvider', (_event, value) => {
     portalUrl: provider.portalUrl,
     fallbackUrl: provider.fallbackUrl || '',
     sourceUrl: provider.sourceUrl,
+    autoDownloadQuality: provider.autoDownloadQuality || '',
   };
 });
 ipcMain.handle('media:musicSearchUrl', (_event, keyword) => musicSearchUrl(keyword));
@@ -5277,8 +5364,8 @@ ipcMain.handle('media:deleteLocal', async (_event, filePath, location) => {
     return { ok: true };
   });
 });
-ipcMain.handle('media:openPortal', (_event, url, downloadTarget = 'download', sourceText = '', autoSubmit = false, collection = '') => (
-  openMediaPortal(url, downloadTarget, sourceText, autoSubmit, collection)
+ipcMain.handle('media:openPortal', (_event, url, downloadTarget = 'download', sourceText = '', autoSubmit = false, collection = '', qualityPreference = '') => (
+  openMediaPortal(url, downloadTarget, sourceText, autoSubmit, collection, qualityPreference)
 ));
 ipcMain.on('media:browserBounds', (event, bounds = {}, visible = false) => {
   if (!mainWindow || event.sender !== mainWindow.webContents) return;
