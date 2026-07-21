@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
 const crypto = require('crypto');
+const http = require('http');
 const https = require('https');
 const { execFile, execFileSync, spawn, spawnSync } = require('child_process');
 const { Tray } = require('electron');
@@ -152,6 +153,7 @@ let activeMediaPortalDownloads = 0;
 const configuredMediaDownloadSessions = new WeakSet();
 const mediaPortalDownloadTargets = new WeakMap();
 const mediaPortalExpectedPopupDownloads = new WeakMap();
+const mediaPortalDownloadStartCounts = new WeakMap();
 const activeMediaDownloadNotifications = new Set();
 const recentClipboardDigests = new Map();
 const recentClipboardSequences = new Map();
@@ -2753,6 +2755,319 @@ function mediaKindForDownloadUrl(value) {
   }
 }
 
+function mediaPortalDownloadStartCount(webContents) {
+  return Math.max(0, Number(mediaPortalDownloadStartCounts.get(webContents) || 0));
+}
+
+function markMediaPortalTransferStarted(webContents) {
+  mediaPortalDownloadStartCounts.set(webContents, mediaPortalDownloadStartCount(webContents) + 1);
+  markMediaPortalDownloadStarted(webContents);
+}
+
+function streamNodeMediaPortalUrlToFile(url, destination, options = {}, redirects = 0) {
+  return new Promise((resolve, reject) => {
+    const value = String(url || '');
+    const client = /^https:/i.test(value) ? https : http;
+    const temporary = `${destination}.nodepart-${process.pid}-${Math.random().toString(16).slice(2, 8)}`;
+    let output = null;
+    let settled = false;
+    const finish = (error, result) => {
+      if (settled) return;
+      settled = true;
+      try { output?.destroy(); } catch {}
+      if (error) {
+        try { if (fs.existsSync(temporary)) fs.unlinkSync(temporary); } catch {}
+        reject(error);
+      } else {
+        resolve(result);
+      }
+    };
+    const request = client.get(value, {
+      headers: {
+        Accept: 'video/mp4,video/*;q=0.9,audio/*;q=0.8,application/octet-stream;q=0.7,*/*;q=0.5',
+        'User-Agent': `Mozilla/5.0 XuanNian/${app.getVersion()}`,
+      },
+    }, (response) => {
+      const location = response.headers.location;
+      if (location && response.statusCode >= 300 && response.statusCode < 400 && redirects < 8) {
+        response.resume();
+        streamNodeMediaPortalUrlToFile(new URL(location, value).toString(), destination, options, redirects + 1).then(resolve, reject);
+        settled = true;
+        return;
+      }
+      const contentType = String(response.headers['content-type'] || '').toLowerCase();
+      const kind = mediaKindForDownloadUrl(value)
+        || (/^video\//i.test(contentType) ? 'video' : (/^audio\//i.test(contentType) ? 'audio' : ''));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        response.resume();
+        finish(new Error(`HTTP ${response.statusCode}`));
+        return;
+      }
+      if (!kind) {
+        response.resume();
+        finish(new Error(`unexpected media response ${contentType || 'without content type'}`));
+        return;
+      }
+      try {
+        fs.mkdirSync(path.dirname(destination), { recursive: true });
+        output = fs.createWriteStream(temporary, { flags: 'wx' });
+      } catch (error) {
+        response.destroy();
+        finish(error);
+        return;
+      }
+      const totalBytes = Math.max(0, Number(response.headers['content-length'] || 0));
+      let receivedBytes = 0;
+      options.onStarted?.({ contentType, kind, resolvedUrl: value, totalBytes });
+      response.on('data', (chunk) => {
+        receivedBytes += chunk.length;
+        options.onProgress?.({ receivedBytes, totalBytes });
+      });
+      response.once('aborted', () => finish(new Error('media response aborted')));
+      response.once('error', finish);
+      output.once('error', (error) => {
+        response.destroy();
+        finish(error);
+      });
+      output.once('finish', () => {
+        if (receivedBytes <= 0) {
+          finish(new Error('empty media response'));
+          return;
+        }
+        try {
+          output.close(() => {
+            try {
+              output = null;
+              if (fs.existsSync(destination)) fs.unlinkSync(destination);
+              fs.renameSync(temporary, destination);
+              finish(null, { ok: true, path: destination, contentType, kind, resolvedUrl: value, receivedBytes, totalBytes: totalBytes || receivedBytes, transport: 'node-http' });
+            } catch (error) {
+              finish(error);
+            }
+          });
+        } catch (error) {
+          finish(error);
+        }
+      });
+      response.pipe(output);
+    });
+    request.setTimeout(30000, () => request.destroy(new Error('media response timeout')));
+    request.once('error', finish);
+  });
+}
+
+async function streamMediaPortalUrlToFile(webContents, url, destination, options = {}) {
+  const temporary = `${destination}.part-${process.pid}-${Math.random().toString(16).slice(2, 8)}`;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), Math.max(30000, Number(options.timeoutMs || MEDIA_PREVIEW_DOWNLOAD_TIMEOUT_MS)));
+  let responseTimeout = null;
+  let output = null;
+  let reader = null;
+  try {
+    const headers = {
+      Accept: 'video/mp4,video/*;q=0.9,audio/*;q=0.8,application/octet-stream;q=0.7,*/*;q=0.5',
+    };
+    const referer = String(options.referer || '').trim();
+    if (referer) headers.Referer = referer;
+    const userAgent = String(webContents?.getUserAgent?.() || '').trim();
+    if (userAgent) headers['User-Agent'] = userAgent;
+    const response = await Promise.race([
+      webContents.session.fetch(url, {
+        method: 'GET',
+        headers,
+        redirect: 'follow',
+        signal: controller.signal,
+      }),
+      new Promise((_, reject) => {
+        responseTimeout = setTimeout(() => {
+          controller.abort();
+          reject(new Error('media response timeout'));
+        }, 25000);
+      }),
+    ]);
+    clearTimeout(responseTimeout);
+    responseTimeout = null;
+    const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+    const resolvedUrl = String(response.url || url);
+    const kind = mediaKindForDownloadUrl(resolvedUrl)
+      || mediaKindForDownloadUrl(url)
+      || (/^video\//i.test(contentType) ? 'video' : (/^audio\//i.test(contentType) ? 'audio' : ''));
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    if (!kind || !response.body) throw new Error(`unexpected media response ${contentType || 'without content type'}`);
+    fs.mkdirSync(path.dirname(destination), { recursive: true });
+    try { if (fs.existsSync(temporary)) fs.unlinkSync(temporary); } catch {}
+    output = fs.createWriteStream(temporary, { flags: 'wx' });
+    reader = response.body.getReader();
+    const totalBytes = Math.max(0, Number(response.headers.get('content-length') || 0));
+    let receivedBytes = 0;
+    options.onStarted?.({ contentType, kind, resolvedUrl, totalBytes });
+    while (true) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      const buffer = Buffer.from(chunk.value);
+      await new Promise((resolve, reject) => output.write(buffer, (error) => error ? reject(error) : resolve()));
+      receivedBytes += buffer.length;
+      options.onProgress?.({ receivedBytes, totalBytes });
+    }
+    await new Promise((resolve, reject) => output.end((error) => error ? reject(error) : resolve()));
+    output = null;
+    if (receivedBytes <= 0) throw new Error('empty media response');
+    if (fs.existsSync(destination)) fs.unlinkSync(destination);
+    fs.renameSync(temporary, destination);
+    return { ok: true, path: destination, contentType, kind, resolvedUrl, receivedBytes, totalBytes: totalBytes || receivedBytes };
+  } catch (error) {
+    try { await reader?.cancel(); } catch {}
+    try { output?.destroy(); } catch {}
+    try { if (fs.existsSync(temporary)) fs.unlinkSync(temporary); } catch {}
+    runtimeLog(`Electron media stream failed, retrying with Node HTTP: ${error?.message || error}`);
+    return streamNodeMediaPortalUrlToFile(url, destination, options);
+  } finally {
+    clearTimeout(responseTimeout);
+    clearTimeout(timeout);
+  }
+}
+
+async function startDirectMediaPortalPreview(webContents, url, referer) {
+  const captureState = mediaPortalPreviewCapture;
+  if (!captureState || captureState.webContents !== webContents) return { ok: false, started: false };
+  let started = false;
+  let destination = '';
+  try {
+    const urlExtension = path.extname(new URL(String(url)).pathname);
+    const extension = mediaKindForPath(`preview${urlExtension}`) === 'video' ? urlExtension : '.mp4';
+    destination = mediaPreviewCachePath(captureState.sourceUrl, extension);
+    const result = await streamMediaPortalUrlToFile(webContents, url, destination, {
+      referer,
+      onStarted: ({ totalBytes }) => {
+        started = true;
+        runtimeLog(`direct media preview response started bytes=${totalBytes || 0}`);
+      },
+      onProgress: ({ receivedBytes, totalBytes }) => {
+        const filePercent = totalBytes > 0 ? Math.max(0, Math.min(100, Math.round((receivedBytes / totalBytes) * 100))) : 0;
+        captureState.state.previewDownloadPercent = filePercent;
+        emitMediaPortalProgress(captureState.state, {
+          percent: Math.min(99, 94 + Math.round(filePercent * 0.05)),
+          message: totalBytes > 0 ? `正在下载临时预览 ${filePercent}%` : '正在下载临时预览',
+        });
+      },
+    });
+    if (mediaPortalPreviewCapture === captureState) {
+      clearMediaPortalPreviewCapture({
+        url: pathToFileURL(destination).href,
+        localPath: destination,
+        filename: path.basename(destination),
+        mimeType: result.contentType,
+        embedded: false,
+        temporary: true,
+      });
+    }
+    runtimeLog(`direct media preview completed bytes=${result.receivedBytes}`);
+    return { ok: true, started: true };
+  } catch (error) {
+    runtimeLog(`direct media preview failed started=${started}: ${error?.message || error}`);
+    if (started && mediaPortalPreviewCapture === captureState) clearMediaPortalPreviewCapture(null);
+    return { ok: false, started };
+  }
+}
+
+async function startDirectTrackedMediaDownload(webContents, url, referer) {
+  const directories = mediaDirectories();
+  const target = mediaPortalDownloadTargets.get(webContents) || {};
+  const favoriteDownload = target.location === 'favorite';
+  const rootPath = favoriteDownload ? directories.favoritePath : directories.downloadPath;
+  let extension = '.mp4';
+  let sourceName = 'video.mp4';
+  try {
+    const pathname = decodeURIComponent(new URL(String(url)).pathname);
+    const candidateExtension = path.extname(pathname);
+    if (mediaKindForPath(`media${candidateExtension}`)) extension = candidateExtension;
+    sourceName = path.basename(pathname) || `video${extension}`;
+  } catch {}
+  const preferredName = String(target.preferredName || '').trim();
+  const filename = sanitizeDownloadFilename(preferredName
+    ? `${path.basename(preferredName, path.extname(preferredName))}${extension}`
+    : (mediaKindForPath(sourceName) ? sourceName : `${path.basename(sourceName, path.extname(sourceName))}${extension}`));
+  const kind = mediaKindForPath(filename) || 'video';
+  const downloadPath = mediaCollectionDirectory(rootPath, kind, target.collection || '');
+  const destination = uniqueMediaDownloadPath(downloadPath, filename);
+  const taskId = `media-direct-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+  let started = false;
+  let receivedBytes = 0;
+  let totalBytes = 0;
+  let lastProgressAt = 0;
+  const progressPayload = (status) => ({
+    id: taskId,
+    name: filename,
+    path: destination,
+    location: favoriteDownload ? 'favorites' : 'downloads',
+    status,
+    receivedBytes,
+    totalBytes,
+    percent: totalBytes > 0 ? Math.max(0, Math.min(100, Math.round((receivedBytes / totalBytes) * 100))) : 0,
+    updatedAt: Date.now(),
+  });
+  try {
+    const result = await streamMediaPortalUrlToFile(webContents, url, destination, {
+      referer,
+      onStarted: (details) => {
+        started = true;
+        totalBytes = Number(details.totalBytes || 0);
+        activeMediaPortalDownloads += 1;
+        cancelMediaPortalIdleDestroy();
+        markMediaPortalTransferStarted(webContents);
+        notifyMediaDownloadProgress(progressPayload('downloading'));
+        runtimeLog(`direct tracked media response started bytes=${totalBytes}`);
+      },
+      onProgress: (progress) => {
+        receivedBytes = Number(progress.receivedBytes || 0);
+        totalBytes = Number(progress.totalBytes || totalBytes || 0);
+        const now = Date.now();
+        if (now - lastProgressAt < 120) return;
+        lastProgressAt = now;
+        notifyMediaDownloadProgress(progressPayload('downloading'));
+      },
+    });
+    receivedBytes = Number(result.receivedBytes || receivedBytes || 0);
+    totalBytes = Number(result.totalBytes || receivedBytes || 0);
+    const completedTask = progressPayload('completed');
+    rememberCompletedMediaDownload(completedTask);
+    notifyMediaDownloadProgress(completedTask);
+    notifyMediaDownloadsChanged({ status: 'completed', path: destination, favorite: favoriteDownload, message: favoriteDownload ? '媒体已下载到收藏目录' : '媒体已下载' });
+    showMediaDownloadNotification({ status: 'completed', name: filename, filePath: destination, favorite: favoriteDownload });
+    runtimeLog(`direct tracked media completed bytes=${receivedBytes} path=${destination}`);
+    return { ok: true, started: true, path: destination };
+  } catch (error) {
+    runtimeLog(`direct tracked media failed started=${started}: ${error?.message || error}`);
+    if (started) {
+      notifyMediaDownloadProgress(progressPayload('error'));
+      notifyMediaDownloadsChanged({ status: 'error', message: '下载连接中断，请重新尝试' });
+      showMediaDownloadNotification({ status: 'error', name: filename });
+    }
+    return { ok: false, started };
+  } finally {
+    if (started) activeMediaPortalDownloads = Math.max(0, activeMediaPortalDownloads - 1);
+    if (!activeMediaPortalDownloads && !mediaPortalInputState) scheduleMediaPortalIdleDestroy();
+  }
+}
+
+function startCapturedMediaPortalDownload(webContents, url) {
+  const referer = webContents.getURL();
+  const previewCapture = mediaPortalPreviewCapture?.webContents === webContents;
+  const direct = previewCapture
+    ? startDirectMediaPortalPreview(webContents, url, referer)
+    : startDirectTrackedMediaDownload(webContents, url, referer);
+  direct.then((result) => {
+    if (result?.started || webContents.isDestroyed()) return;
+    runtimeLog('direct media request did not start; falling back to header-free Electron downloadURL');
+    try { webContents.downloadURL(url); } catch {}
+    if (previewCapture) {
+      setTimeout(() => {
+        if (mediaPortalPreviewCapture?.webContents === webContents) clearMediaPortalPreviewCapture(null);
+      }, 15000);
+    }
+  }).catch((error) => runtimeLog(`captured media download failed: ${error?.message || error}`));
+}
+
 function configureMediaDownloadSession(electronSession) {
   if (!electronSession || configuredMediaDownloadSessions.has(electronSession)) return;
   configuredMediaDownloadSessions.add(electronSession);
@@ -2813,7 +3128,7 @@ function configureMediaDownloadSession(electronSession) {
       });
       return;
     }
-    markMediaPortalDownloadStarted(webContents);
+    markMediaPortalTransferStarted(webContents);
     const directories = mediaDirectories();
     const target = mediaPortalDownloadTargets.get(webContents) || {};
     const favoriteDownload = target.location === 'favorite';
@@ -3230,7 +3545,7 @@ async function prepareMediaPortalVideoPreview(state, parsed) {
     const href = sanitizeRemoteMediaUrl(result?.href);
     if (href && isMediaUrl(href)) {
       try {
-        view.webContents.downloadURL(href, { headers: { Referer: view.webContents.getURL() } });
+        view.webContents.downloadURL(href);
       } catch {
         clearMediaPortalPreviewCapture();
         return null;
@@ -3238,7 +3553,7 @@ async function prepareMediaPortalVideoPreview(state, parsed) {
     }
     if (href && result?.ok && !isMediaUrl(href)) {
       try {
-        view.webContents.downloadURL(href, { headers: { Referer: view.webContents.getURL() } });
+        view.webContents.downloadURL(href);
       } catch {}
     }
     if (!result?.ok) {
@@ -3708,12 +4023,15 @@ async function downloadParsedMediaVideo(downloadTarget = 'download', collection 
   clearMediaPortalPreviewCapture();
   const waitForDownloadStart = (trigger, timeoutMs = 12000) => new Promise((resolve) => {
     const electronSession = view.webContents.session;
+    const initialDirectStartCount = mediaPortalDownloadStartCount(view.webContents);
     let settled = false;
     let timer = null;
+    let directStartTimer = null;
     const finish = (result) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      clearInterval(directStartTimer);
       electronSession.removeListener('will-download', onDownload);
       resolve(result);
     };
@@ -3722,6 +4040,9 @@ async function downloadParsedMediaVideo(downloadTarget = 'download', collection 
       finish({ ok: true, filename: String(item.getFilename() || '') });
     };
     electronSession.on('will-download', onDownload);
+    directStartTimer = setInterval(() => {
+      if (mediaPortalDownloadStartCount(view.webContents) > initialDirectStartCount) finish({ ok: true, direct: true });
+    }, 80);
     timer = setTimeout(() => finish({ ok: false, reason: '当前画质没有启动下载' }), timeoutMs);
     Promise.resolve()
       .then(trigger)
@@ -3752,7 +4073,7 @@ async function downloadParsedMediaVideo(downloadTarget = 'download', collection 
           })()`, true);
           return triggered ? { ok: true } : { ok: false, reason: '预览视频下载入口暂时不可用' };
         }
-        view.webContents.downloadURL(directUrl, { headers: { Referer: view.webContents.getURL() } });
+        view.webContents.downloadURL(directUrl);
         return { ok: true };
       });
     }
@@ -3773,7 +4094,7 @@ async function downloadParsedMediaVideo(downloadTarget = 'download', collection 
           if (!result?.ok) return { ok: false, reason: String(result?.reason || '当前画质按钮暂时不可用') };
           if (href) {
             mediaPortalExpectedPopupDownloads.delete(view.webContents);
-            view.webContents.downloadURL(href, { headers: { Referer: view.webContents.getURL() } });
+            view.webContents.downloadURL(href);
           }
           return { ok: true };
         }, firstPass ? 8000 : (candidateIndex === 0 ? 12000 : 9000));
@@ -3793,7 +4114,7 @@ async function downloadParsedMediaVideo(downloadTarget = 'download', collection 
         const replayDirectUrl = replay.qualityHref && isMediaUrl(replay.qualityHref) ? replay.qualityHref : '';
         if (replayDirectUrl) {
           started = await waitForDownloadStart(() => {
-            view.webContents.downloadURL(replayDirectUrl, { headers: { Referer: view.webContents.getURL() } });
+            view.webContents.downloadURL(replayDirectUrl);
             return { ok: true };
           });
         }
@@ -3817,7 +4138,7 @@ async function downloadParsedMediaVideo(downloadTarget = 'download', collection 
           const triggered = await view.webContents.executeJavaScript(script, true);
           return triggered ? { ok: true } : { ok: false, reason: '预览视频下载入口暂时不可用' };
         }
-        view.webContents.downloadURL(previewFallbackUrl, { headers: { Referer: view.webContents.getURL() } });
+        view.webContents.downloadURL(previewFallbackUrl);
         return { ok: true };
       });
     }
@@ -3948,7 +4269,7 @@ function ensureMediaPortalView() {
     const expectedDownload = consumeMediaPortalPopupDownload(view.webContents);
     if (disposition === 'download' || (expectedDownload && isHttpUrl(url))) {
       runtimeLog('captured media portal download popup: ' + String(url || '').slice(0, 300));
-      setImmediate(() => view.webContents.downloadURL(url, { headers: { Referer: view.webContents.getURL() } }));
+      setImmediate(() => startCapturedMediaPortalDownload(view.webContents, url));
     } else if (disposition === 'same-site') {
       setImmediate(() => view.webContents.loadURL(url).catch(() => {}));
     } else {
@@ -3962,7 +4283,7 @@ function ensureMediaPortalView() {
     const expectedDownload = consumeMediaPortalPopupDownload(view.webContents);
     if (disposition === 'download' || (expectedDownload && isHttpUrl(url))) {
       event.preventDefault();
-      view.webContents.downloadURL(url, { headers: { Referer: view.webContents.getURL() } });
+      startCapturedMediaPortalDownload(view.webContents, url);
     } else if (disposition === 'block') {
       event.preventDefault();
       runtimeLog(`blocked media portal navigation: ${String(url || '').slice(0, 300)}`);

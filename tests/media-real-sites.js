@@ -1,4 +1,6 @@
 const { app, BrowserWindow } = require('electron');
+const fs = require('fs');
+const path = require('path');
 const { buildPortalScript, classifyMediaPortalPopup, isMediaUrl } = require('../src/media-portal-automation');
 const { detectVideoProvider, musicSearchUrl, scoreMediaDownloadQualityLabel } = require('../src/media-library');
 
@@ -100,10 +102,21 @@ async function waitForTriggeredDownload(webContents, action, timeoutMs = 15000) 
     const onDownload = (_event, item, sourceWebContents) => {
       if (sourceWebContents !== webContents) return;
       const result = { ok: true, filename: item.getFilename(), url: item.getURL() };
-      item.cancel();
-      finish(result);
+      if (process.env.REAL_MEDIA_SAVE_DOWNLOAD === '1') {
+        const destination = path.join(app.getPath('temp'), `xuannian-real-media-${Date.now()}.mp4`);
+        item.setSavePath(destination);
+        item.once('done', (_doneEvent, state) => {
+          const bytes = fs.existsSync(destination) ? fs.statSync(destination).size : 0;
+          try { if (fs.existsSync(destination)) fs.unlinkSync(destination); } catch {}
+          finish({ ...result, ok: state === 'completed' && bytes > 0, state, bytes });
+        });
+      } else {
+        item.cancel();
+        finish(result);
+      }
     };
-    const timer = setTimeout(() => finish({ ok: false, reason: 'download-not-triggered' }), timeoutMs);
+    const effectiveTimeoutMs = process.env.REAL_MEDIA_SAVE_DOWNLOAD === '1' ? Math.max(90000, timeoutMs) : timeoutMs;
+    const timer = setTimeout(() => finish({ ok: false, reason: 'download-not-triggered' }), effectiveTimeoutMs);
     webContents.session.on('will-download', onDownload);
     try {
       const result = await action();

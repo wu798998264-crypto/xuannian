@@ -130,6 +130,10 @@ async function run() {
   assert(mainSource.includes('reloadParsedVideoDownloadPage') && mainSource.includes("automationStage: 'video-download-reparse'"), 'a stale or preview-consumed result page must be reparsed before download fallback candidates are tried');
   assert(mainSource.includes('promoteMediaPreviewToLibrary') && mainSource.includes('parsed.capturedLocalPath'), 'a completed temporary preview must become the tracked download fallback when higher qualities fail');
   assert(mainSource.includes('media portal reused cached preview for repeated source'), 'repeated video links should reuse the valid preview cache instead of re-triggering a rate-limited parse');
+  assert(mainSource.includes('streamMediaPortalUrlToFile') && mainSource.includes('webContents.session.fetch'), 'captured CDN responses must have a session-aware streaming path when Electron downloadURL does not emit will-download');
+  assert(mainSource.includes('streamNodeMediaPortalUrlToFile') && mainSource.includes('retrying with Node HTTP'), 'Chromium-blocked signed CDN URLs must retry through a streaming Node HTTP transport');
+  assert(mainSource.includes('startDirectMediaPortalPreview') && mainSource.includes('startDirectTrackedMediaDownload'), 'direct CDN streaming must support both temporary previews and tracked final downloads');
+  assert(mainSource.includes('falling back to header-free Electron downloadURL') && mainSource.includes('webContents.downloadURL(url);'), 'CDN fallback must avoid custom Referer headers that Chromium blocks for XHS signed media URLs');
   assert(mainSource.includes("mode === 'music-search'") && mainSource.includes('sanitizeMusicResults') && mainSource.includes('downloadMediaMusicResult'), 'music automation must return multiple results before downloading the selected version');
   assert(mainSource.includes('media:portalProgress') && mainSource.includes('waitForMediaPortalDownload'), 'media parsing and delayed music downloads must expose real progress states');
   assert(mainSource.includes('findInstalledMusicClient') && mainSource.includes('openHighQualityMusic'), 'high-quality music must prefer an installed cloud-drive client');
