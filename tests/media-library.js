@@ -25,12 +25,10 @@ async function run() {
   const douyin = detectVideoProvider('https://v.douyin.com/example');
   assert.strictEqual(douyin.id, 'douyin');
   assert.strictEqual(douyin.portalUrl, 'https://www.seekin.ai/zh/downloader/');
-  assert.strictEqual(douyin.fallbackUrl, 'https://www.hellotik.app/zh/douyin');
-  assert.deepStrictEqual(douyin.portals.map((route) => route.label), ['Seekin', 'Seekin 抖音', 'HelloTik', 'DLPanda']);
+  assert.strictEqual(douyin.fallbackUrl, undefined);
+  assert.deepStrictEqual(douyin.portals.map((route) => route.label), ['Seekin']);
   assert.strictEqual(douyin.portals[0].requiresVpn, undefined);
-  assert.strictEqual(douyin.portals.at(-1).url, 'https://dlpanda.com/zh-CN');
-  assert.strictEqual(douyin.portals.at(-1).requiresVpn, true);
-  assert.strictEqual(douyin.portals.at(-1).finalFallback, true);
+  assert.strictEqual(douyin.portals[0].url, 'https://www.seekin.ai/zh/downloader/');
   assert.strictEqual(douyin.autoDownloadQuality, 'highest');
   const tiktok = detectVideoProvider('https://www.tiktok.com/@example/video/1');
   assert.strictEqual(tiktok.id, 'tiktok');
@@ -41,20 +39,20 @@ async function run() {
   const bilibili = detectVideoProvider('看看这个 https://www.bilibili.com/video/BV1xx');
   assert.strictEqual(bilibili.id, 'bilibili');
   assert.strictEqual(bilibili.portalUrl, 'https://www.seekin.ai/zh/downloader/');
-  assert.deepStrictEqual(bilibili.portals.map((route) => route.label), ['Seekin', 'Seekin Bilibili', 'DLPanda']);
+  assert.deepStrictEqual(bilibili.portals.map((route) => route.label), ['Seekin']);
   assert.strictEqual(bilibiliEpisodeId('https://www.bilibili.com/bangumi/play/ep3648907/?share_source=copy_web'), '3648907');
   assert.strictEqual(bilibiliEpisodeId('https://www.bilibili.com/video/BV1STE56zEdA'), '');
   assert.strictEqual(bilibiliProgressiveApiUrl('https://www.bilibili.com/bangumi/play/ep3648907/'), 'https://api.bilibili.com/pgc/player/web/playurl?ep_id=3648907&qn=80&fnval=0&fourk=1');
   assert.strictEqual(detectVideoProvider('【凡人修仙传：第183话 慕兰之战07】 https://www.bilibili.com/bangumi/play/ep3854807/?share_source=copy_web').id, 'bilibili');
   assert.strictEqual(detectVideoProvider('https://xhslink.com/example').id, 'xiaohongshu');
-  assert.deepStrictEqual(detectVideoProvider('https://xhslink.com/example').portals.map((route) => route.label), ['Seekin', 'Seekin 小红书', 'HelloTik', 'Xiaohongshua', 'DLPanda']);
+  assert.deepStrictEqual(detectVideoProvider('https://xhslink.com/example').portals.map((route) => route.label), ['Seekin']);
   assert.strictEqual(detectVideoProvider('34 【codex制作个人作品集网站】 https://www.xiaohongshu.com/discovery/item/6a4a67270000000006036794?source=webshare&xsec_token=test').id, 'xiaohongshu');
   assert.strictEqual(detectVideoProvider('https://v.kuaishou.com/example').id, 'kuaishou');
   const kuaishou = detectVideoProvider('https://www.kuaishou.com/f/X-1NCQbuUPVIY1dm');
   assert.strictEqual(kuaishou.id, 'kuaishou');
   assert.strictEqual(kuaishou.portalUrl, 'https://www.seekin.ai/zh/downloader/');
-  assert.strictEqual(kuaishou.fallbackUrl, 'https://www.hellotik.app/zh/kuaishou');
-  assert.deepStrictEqual(kuaishou.portals.map((route) => route.label), ['Seekin', 'Seekin 快手', 'Seekin Kwai', 'HelloTik', 'DLPanda']);
+  assert.strictEqual(kuaishou.fallbackUrl, undefined);
+  assert.deepStrictEqual(kuaishou.portals.map((route) => route.label), ['Seekin']);
   const universalSources = [
     'https://www.youtube.com/watch?v=example',
     'https://www.tiktok.com/@example/video/1',
@@ -70,6 +68,7 @@ async function run() {
     const provider = detectVideoProvider(source);
     assert(provider, 'provider should be detected for ' + source);
     assert.strictEqual(provider.portalUrl, 'https://www.seekin.ai/zh/downloader/');
+    assert.strictEqual(provider.portals.length, 1);
     assert.strictEqual(provider.portals[0].url, 'https://www.seekin.ai/zh/downloader/');
   });
   assert.strictEqual(detectVideoProvider('https://youtu.be/example').id, 'youtube');
@@ -81,8 +80,8 @@ async function run() {
   assert.strictEqual(mediaKindForPath('clip.MP4'), 'video');
   assert.strictEqual(mediaKindForPath('song.flac'), 'audio');
   assert.strictEqual(mediaKindForPath('setup.exe'), '');
-  assert.strictEqual(isAllowedPortalUrl('https://www.hellotik.app/zh/kuaishou'), true);
-  assert.strictEqual(isAllowedPortalUrl('https://www.hellotik.app/zh/douyin'), true);
+  assert.strictEqual(isAllowedPortalUrl('https://www.hellotik.app/zh/kuaishou'), false);
+  assert.strictEqual(isAllowedPortalUrl('https://www.hellotik.app/zh/douyin'), false);
   assert.strictEqual(isAllowedPortalUrl('https://evil.example/'), false);
   assert.strictEqual(musicSearchUrl('测试 歌曲'), 'https://www.gequbao.com/s/%E6%B5%8B%E8%AF%95%20%E6%AD%8C%E6%9B%B2');
   assert(scoreMediaDownloadQualityLabel('下载原画 65 MB') > scoreMediaDownloadQualityLabel('下载 4K 40 MB'));

@@ -1166,11 +1166,16 @@ async function run() {
       updateMediaDownloadTask({id:'runtime-download',name:'runtime.mp4',status:'downloading',receivedBytes:50,totalBytes:100,percent:50});
       state.media.downloadsExpanded=true;
       renderMediaDownloadBubble();
+      const downloadToggleRect=document.querySelector('#mediaDownloadToggle').getBoundingClientRect();
+      const downloadRingRect=document.querySelector('.media-download-ring').getBoundingClientRect();
       const downloadBubble={
         active:document.querySelector('#mediaDownloadBubble').classList.contains('active'),
         open:document.querySelector('#mediaDownloadBubble').classList.contains('open'),
         ring:document.querySelector('#mediaDownloadRing').getAttribute('stroke-dasharray'),
         tasks:document.querySelectorAll('#mediaDownloadTaskList .media-download-task').length,
+        toggleSize:[downloadToggleRect.width,downloadToggleRect.height],
+        ringSize:[downloadRingRect.width,downloadRingRect.height],
+        ringAligned:Math.abs(downloadToggleRect.left-downloadRingRect.left)<0.1&&Math.abs(downloadToggleRect.top-downloadRingRect.top)<0.1,
       };
       for(let index=0;index<12;index+=1){
         updateMediaDownloadTask({
@@ -1245,14 +1250,12 @@ async function run() {
       recordMediaPortalFailure(douyinRoutes[0],'parse-timeout','https://v.douyin.com/content-one');
       const oneTimeoutKeepsSite=nextHealthyMediaPortalIndex(douyinProvider,0)===0;
       recordMediaPortalFailure(douyinRoutes[0],'parse-timeout','https://v.douyin.com/content-two');
-      const twoSourcesTripSite=nextHealthyMediaPortalIndex(douyinProvider,0)===1;
+      const twoSourcesTripSite=nextHealthyMediaPortalIndex(douyinProvider,0)===-1;
       const failureClassification={contentFailureKeepsSite,oneTimeoutKeepsSite,twoSourcesTripSite};
       localStorage.removeItem(MEDIA_PORTAL_HEALTH_KEY);
       markMediaPortalUnavailable(douyinRoutes[0],'quota-or-ad-required');
-      markMediaPortalUnavailable(douyinRoutes[1],'qr-code-required');
-      markMediaPortalUnavailable(douyinRoutes[2],'automation-error');
       const dailyFallbackIndex=nextHealthyMediaPortalIndex(douyinProvider,0);
-      const dailyFallback={index:dailyFallbackIndex,route:douyinRoutes[dailyFallbackIndex],health:readMediaPortalHealth()};
+      const dailyFallback={index:dailyFallbackIndex,route:douyinRoutes[dailyFallbackIndex]||null,health:readMediaPortalHealth()};
       localStorage.removeItem(MEDIA_PORTAL_HEALTH_KEY);
       localStorage.removeItem(MEDIA_FAVORITE_ORDER_KEY);
       return {
@@ -1310,12 +1313,10 @@ async function run() {
   assert.strictEqual(mediaLibraryMetrics.providerRouting.douyinProvider.id, 'douyin');
   assert.strictEqual(mediaLibraryMetrics.providerRouting.douyinProvider.portalUrl, 'https://www.seekin.ai/zh/downloader/');
   assert.strictEqual(mediaLibraryMetrics.providerRouting.douyinProvider.autoDownloadQuality, 'highest');
-  assert.strictEqual(mediaLibraryMetrics.providerRouting.douyinProvider.portals.at(-1).url, 'https://dlpanda.com/zh-CN');
-  assert.strictEqual(mediaLibraryMetrics.providerRouting.douyinProvider.portals.at(-1).finalFallback, true);
-  assert.strictEqual(mediaLibraryMetrics.providerRouting.dailyFallback.index, 3);
-  assert.strictEqual(mediaLibraryMetrics.providerRouting.dailyFallback.route.label, 'DLPanda');
-  assert.strictEqual(mediaLibraryMetrics.providerRouting.dailyFallback.route.requiresVpn, true);
-  assert.strictEqual(Object.keys(mediaLibraryMetrics.providerRouting.dailyFallback.health.unavailable).length, 3);
+  assert.deepStrictEqual(mediaLibraryMetrics.providerRouting.douyinProvider.portals, [{url:'https://www.seekin.ai/zh/downloader/',label:'Seekin'}]);
+  assert.strictEqual(mediaLibraryMetrics.providerRouting.dailyFallback.index, -1);
+  assert.strictEqual(mediaLibraryMetrics.providerRouting.dailyFallback.route, null);
+  assert.strictEqual(Object.keys(mediaLibraryMetrics.providerRouting.dailyFallback.health.unavailable).length, 1);
   assert.deepStrictEqual(mediaLibraryMetrics.providerRouting.failureClassification, {contentFailureKeepsSite:true,oneTimeoutKeepsSite:true,twoSourcesTripSite:true});
   assert.strictEqual(mediaLibraryMetrics.providerRouting.tiktokProvider.id, 'tiktok');
   assert.strictEqual(mediaLibraryMetrics.providerRouting.tiktokProvider.portalUrl, 'https://www.seekin.ai/zh/downloader/');
@@ -1353,7 +1354,7 @@ async function run() {
   assert.strictEqual(mediaLibraryMetrics.hasAllFilter, false);
   assert.strictEqual(mediaLibraryMetrics.copyActions, 0);
   assert.strictEqual(mediaLibraryMetrics.deleteActions, mediaLibraryMetrics.rows);
-  assert.deepStrictEqual(mediaLibraryMetrics.downloadBubble, {active:true,open:true,ring:'50 100',tasks:1});
+  assert.deepStrictEqual(mediaLibraryMetrics.downloadBubble, {active:true,open:true,ring:'50 100',tasks:1,toggleSize:[40,40],ringSize:[40,40],ringAligned:true});
   assert.strictEqual(mediaLibraryMetrics.completedHistory.count, 10);
   assert.strictEqual(mediaLibraryMetrics.completedHistory.rendered, 11, 'active task plus ten completed records should be visible');
   assert.strictEqual(mediaLibraryMetrics.completedHistory.deleteButtons, 10, 'every completed download record with a file must expose a delete button');

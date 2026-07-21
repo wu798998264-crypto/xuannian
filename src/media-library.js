@@ -9,7 +9,9 @@ const AUDIO_EXTENSIONS = new Set([
 ]);
 const MEDIA_KIND_DIRECTORIES = Object.freeze({ video: '视频', audio: '音乐' });
 const SEEKIN_UNIVERSAL_PORTAL = 'https://www.seekin.ai/zh/downloader/';
-const DLPANDA_PORTAL = 'https://dlpanda.com/zh-CN';
+const SEEKIN_ONLY_PORTALS = Object.freeze([
+  Object.freeze({ url: SEEKIN_UNIVERSAL_PORTAL, label: 'Seekin' }),
+]);
 
 const VIDEO_PROVIDERS = [
   {
@@ -17,13 +19,7 @@ const VIDEO_PROVIDERS = [
     label: '抖音',
     hosts: ['douyin.com', 'iesdouyin.com'],
     portalUrl: SEEKIN_UNIVERSAL_PORTAL,
-    fallbackUrl: 'https://www.hellotik.app/zh/douyin',
-    portals: [
-      { url: SEEKIN_UNIVERSAL_PORTAL, label: 'Seekin' },
-      { url: 'https://www.seekin.ai/zh/douyin-downloader/', label: 'Seekin 抖音' },
-      { url: 'https://www.hellotik.app/zh/douyin', label: 'HelloTik' },
-      { url: DLPANDA_PORTAL, label: 'DLPanda', requiresVpn: true, finalFallback: true },
-    ],
+    portals: SEEKIN_ONLY_PORTALS,
     autoDownloadQuality: 'highest',
   },
   {
@@ -31,104 +27,61 @@ const VIDEO_PROVIDERS = [
     label: 'TikTok',
     hosts: ['tiktok.com'],
     portalUrl: SEEKIN_UNIVERSAL_PORTAL,
-    fallbackUrl: DLPANDA_PORTAL,
-    portals: [
-      { url: SEEKIN_UNIVERSAL_PORTAL, label: 'Seekin' },
-      { url: 'https://www.seekin.ai/zh/download-tiktok-no-watermark/', label: 'Seekin TikTok' },
-      { url: DLPANDA_PORTAL, label: 'DLPanda', requiresVpn: true, finalFallback: true },
-    ],
+    portals: SEEKIN_ONLY_PORTALS,
   },
   {
     id: 'bilibili',
     label: '哔哩哔哩',
     hosts: ['bilibili.com', 'b23.tv'],
     portalUrl: SEEKIN_UNIVERSAL_PORTAL,
-    fallbackUrl: 'https://www.seekin.ai/zh/bilibili-downloader/',
-    portals: [
-      { url: SEEKIN_UNIVERSAL_PORTAL, label: 'Seekin' },
-      { url: 'https://www.seekin.ai/zh/bilibili-downloader/', label: 'Seekin Bilibili' },
-      { url: DLPANDA_PORTAL, label: 'DLPanda', requiresVpn: true, finalFallback: true },
-    ],
+    portals: SEEKIN_ONLY_PORTALS,
   },
   {
     id: 'xiaohongshu',
     label: '小红书',
     hosts: ['xiaohongshu.com', 'xhslink.com'],
     portalUrl: SEEKIN_UNIVERSAL_PORTAL,
-    fallbackUrl: 'https://www.xiaohongshua.com/',
-    portals: [
-      { url: SEEKIN_UNIVERSAL_PORTAL, label: 'Seekin' },
-      { url: 'https://www.seekin.ai/zh/xiaohongshu-video-downloader/', label: 'Seekin 小红书' },
-      { url: 'https://www.hellotik.app/zh/rednote', label: 'HelloTik' },
-      { url: 'https://www.xiaohongshua.com/', label: 'Xiaohongshua' },
-      { url: DLPANDA_PORTAL, label: 'DLPanda', requiresVpn: true, finalFallback: true },
-    ],
+    portals: SEEKIN_ONLY_PORTALS,
   },
   {
     id: 'kuaishou',
     label: '快手',
     hosts: ['kuaishou.com', 'gifshow.com', 'kwai.com'],
     portalUrl: SEEKIN_UNIVERSAL_PORTAL,
-    fallbackUrl: 'https://www.hellotik.app/zh/kuaishou',
-    portals: [
-      { url: SEEKIN_UNIVERSAL_PORTAL, label: 'Seekin' },
-      { url: 'https://www.seekin.ai/zh/kuaishou-video-downloader/', label: 'Seekin 快手' },
-      { url: 'https://www.seekin.ai/zh/kwai-video-downloader/', label: 'Seekin Kwai' },
-      { url: 'https://www.hellotik.app/zh/kuaishou', label: 'HelloTik' },
-      { url: DLPANDA_PORTAL, label: 'DLPanda', requiresVpn: true, finalFallback: true },
-    ],
+    portals: SEEKIN_ONLY_PORTALS,
   },
   {
     id: 'youtube',
     label: 'YouTube',
     hosts: ['youtube.com', 'youtu.be'],
     portalUrl: SEEKIN_UNIVERSAL_PORTAL,
-    portals: [
-      { url: SEEKIN_UNIVERSAL_PORTAL, label: 'Seekin' },
-      { url: 'https://www.seekin.ai/zh/youtube-video-downloader/', label: 'Seekin YouTube' },
-      { url: DLPANDA_PORTAL, label: 'DLPanda', requiresVpn: true, finalFallback: true },
-    ],
+    portals: SEEKIN_ONLY_PORTALS,
   },
   {
     id: 'instagram',
     label: 'Instagram',
     hosts: ['instagram.com'],
     portalUrl: SEEKIN_UNIVERSAL_PORTAL,
-    portals: [
-      { url: SEEKIN_UNIVERSAL_PORTAL, label: 'Seekin' },
-      { url: 'https://www.seekin.ai/zh/download-instagram-reels/', label: 'Seekin Instagram' },
-      { url: DLPANDA_PORTAL, label: 'DLPanda', requiresVpn: true, finalFallback: true },
-    ],
+    portals: SEEKIN_ONLY_PORTALS,
   },
   {
     id: 'twitter',
     label: 'Twitter / X',
     hosts: ['twitter.com', 'x.com'],
     portalUrl: SEEKIN_UNIVERSAL_PORTAL,
-    portals: [
-      { url: SEEKIN_UNIVERSAL_PORTAL, label: 'Seekin' },
-      { url: 'https://www.seekin.ai/zh/x-video-downloader/', label: 'Seekin X' },
-      { url: DLPANDA_PORTAL, label: 'DLPanda', requiresVpn: true, finalFallback: true },
-    ],
+    portals: SEEKIN_ONLY_PORTALS,
   },
   {
     id: 'facebook',
     label: 'Facebook',
     hosts: ['facebook.com', 'fb.watch'],
     portalUrl: SEEKIN_UNIVERSAL_PORTAL,
-    portals: [
-      { url: SEEKIN_UNIVERSAL_PORTAL, label: 'Seekin' },
-      { url: 'https://www.seekin.ai/zh/facebook-video-downloader/', label: 'Seekin Facebook' },
-      { url: DLPANDA_PORTAL, label: 'DLPanda', requiresVpn: true, finalFallback: true },
-    ],
+    portals: SEEKIN_ONLY_PORTALS,
   },
 ];
 
 const PORTAL_HOSTS = new Set([
-  'dlpanda.com',
   'seekin.ai',
-  'xiaohongshua.com',
-  'hellotik.app',
   'gequbao.com',
 ]);
 

@@ -151,8 +151,8 @@ async function run() {
   assert(mediaLibrarySource.includes('async function listManagedMediaFiles'), 'media scanning must enumerate only supported media files');
   assert(mediaLibrarySource.includes('async function deleteMediaCollection'), 'media collections need a file-preserving delete path');
   assert(mediaLibrarySource.includes("portalUrl: SEEKIN_UNIVERSAL_PORTAL") && mediaLibrarySource.includes("autoDownloadQuality: 'highest'"), 'all supported video providers must start with Seekin while retaining highest-quality automation');
-  assert(mediaLibrarySource.includes("id: 'tiktok'") && mediaLibrarySource.includes("{ url: SEEKIN_UNIVERSAL_PORTAL, label: 'Seekin' }"), 'TikTok must use Seekin before its VPN fallback');
-  assert(mediaLibrarySource.includes('finalFallback: true') && mediaLibrarySource.includes("label: 'DLPanda'"), 'Douyin must keep DLPanda as its final VPN fallback');
+  assert(mediaLibrarySource.includes("id: 'tiktok'") && mediaLibrarySource.includes('portals: SEEKIN_ONLY_PORTALS'), 'every video provider must use the shared Seekin-only route');
+  assert(!mediaLibrarySource.includes("label: 'DLPanda'") && !mediaLibrarySource.includes('finalFallback: true'), 'video providers must not configure automatic backup sites');
   assert(mediaLibrarySource.includes('function scoreMediaDownloadQualityLabel('), 'highest-quality download selection must use a deterministic quality scorer');
   assert(!mediaLibrarySource.includes('fetch('), 'media library must not call third-party private download APIs');
 
