@@ -56,12 +56,50 @@ function buildPortalScript({ mode, value = '', phase = '', timeoutMs = 30000 } =
       return rect.width > 36 && rect.height > 16 && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
     };
     const absoluteUrl = (value) => {
-      try { return new URL(String(value || ''), location.href).href; } catch { return ''; }
+      const raw = String(value || '').trim();
+      if (!raw) return '';
+      try { return new URL(raw, location.href).href; } catch { return ''; }
     };
     const httpUrl = (value) => {
       const url = absoluteUrl(value);
       return /^https?:\\/\\//i.test(url) ? url : '';
     };
+    const sameDocumentUrl = (value) => {
+      try {
+        const candidate = new URL(String(value || ''), location.href);
+        const current = new URL(location.href);
+        return candidate.origin === current.origin
+          && candidate.pathname === current.pathname
+          && candidate.search === current.search;
+      } catch {
+        return false;
+      }
+    };
+    const portalToolNavigation = (value) => {
+      try {
+        const candidate = new URL(String(value || ''), location.href);
+        const current = new URL(location.href);
+        return candidate.hostname === current.hostname
+          && candidate.pathname !== current.pathname
+          && /(?:downloader|download-[a-z0-9-]+|[a-z0-9-]+-download)/i.test(candidate.pathname);
+      } catch {
+        return false;
+      }
+    };
+    const platformFor = (value) => {
+      const normalized = String(value || '').toLowerCase();
+      if (/(?:douyin|iesdouyin)/.test(normalized)) return 'douyin';
+      if (/(?:bilibili|b23\.tv)/.test(normalized)) return 'bilibili';
+      if (/(?:xiaohongshu|xhslink|rednote)/.test(normalized)) return 'xiaohongshu';
+      if (/(?:kuaishou|gifshow|kwai)/.test(normalized)) return 'kuaishou';
+      if (/tiktok/.test(normalized)) return 'tiktok';
+      if (/instagram/.test(normalized)) return 'instagram';
+      if (/youtube|youtu\.be/.test(normalized)) return 'youtube';
+      if (/facebook/.test(normalized)) return 'facebook';
+      if (/twitter|x\.com/.test(normalized)) return 'twitter';
+      return '';
+    };
+    const sourcePlatform = platformFor(sourceValue);
     const mediaUrl = (value) => {
       const url = httpUrl(value);
       return /\\.(?:mp4|m4v|mov|webm|mkv|mp3|m4a|wav|flac|aac|ogg)(?:[?#]|$)/i.test(url) ? url : '';
@@ -75,6 +113,17 @@ function buildPortalScript({ mode, value = '', phase = '', timeoutMs = 30000 } =
     const humanVerificationRequired = () => {
       const value = String(document.body?.innerText || '').slice(0, 5000);
       return /安全验证|验证您是真人|请验证您是真人|verify you are human|security verification|captcha|cloudflare/i.test(value);
+    };
+    const providerFailureReason = () => {
+      const value = [...document.querySelectorAll('[role="alert"],[role="dialog"],.error,.alert,.toast,.modal,[class*="error-"],[class*="-error"],[class*="modal"],[class*="popup"]')]
+        .filter(visible)
+        .map(text)
+        .join(' ')
+        .slice(0, 3000);
+      if (/观看.{0,12}广告|广告.{0,12}(?:免费|次数|额度)|免费次数.{0,12}(?:用完|不足)|watch.{0,12}ad|free.{0,12}(?:quota|limit)/i.test(value)) return 'quota-or-ad-required';
+      if (/受版权保护|私密内容|private content|copyright protected/i.test(value)) return 'protected-or-private';
+      if (/链接无效|视频不存在|不支持.*链接|无法解析|解析失败|invalid link|not supported|failed to parse/i.test(value)) return 'provider-rejected';
+      return '';
     };
     const scoreInput = (input) => {
       const hint = [input.placeholder, input.name, input.id, input.getAttribute('aria-label')].filter(Boolean).join(' ').toLowerCase();
@@ -93,7 +142,7 @@ function buildPortalScript({ mode, value = '', phase = '', timeoutMs = 30000 } =
     };
     const findAction = (input) => {
       const scope = input?.closest('form') || input?.parentElement?.parentElement || document;
-      const matcher = /下载|解析|开始|搜索|download|parse|start|search/i;
+      const matcher = /下载|解析|获取|提取|开始|搜索|download|parse|extract|start|search/i;
       const local = [...scope.querySelectorAll('button,input[type="submit"],[role="button"]')].filter(visible);
       return local.find((element) => matcher.test(text(element)))
         || [...document.querySelectorAll('button,input[type="submit"],[role="button"]')].filter(visible).find((element) => matcher.test(text(element)));
@@ -104,10 +153,30 @@ function buildPortalScript({ mode, value = '', phase = '', timeoutMs = 30000 } =
         const label = text(element);
         const href = httpUrl(element.href || element.getAttribute('href'));
         const quality = qualityScore(label);
-        const disallowed = /(?:为什么|无法下载|下载失败|帮助|教程|常见问题|faq|how\s+to|support)/i.test(label) || /[?？]\s*$/.test(label);
+        const parserAction = element.getAttribute('data-xuannian-parser-action') === 'true';
+        const inertSamePageLink = element.tagName === 'A' && !!href && sameDocumentUrl(href);
+        const toolNavigationLink = element.tagName === 'A' && !!href && portalToolNavigation(href);
+        const candidatePlatform = platformFor(label + ' ' + href);
+        const mismatchedPlatformLink = element.tagName === 'A' && !!candidatePlatform && !!sourcePlatform && candidatePlatform !== sourcePlatform;
+        const nearbyInput = element.closest('form')?.querySelector('input,textarea')
+          || element.parentElement?.querySelector?.('input,textarea');
+        const repeatsSourceInput = !!sourceValue && String(nearbyInput?.value || '').trim() === sourceValue.trim();
+        const resultRoot = element.closest('[class*="result"],[class*="quality"],[class*="resolution"],[class*="download-item"],article,li,tr');
+        const resultText = text(resultRoot);
+        const hasResultEvidence = !!mediaUrl(href)
+          || element.hasAttribute('download')
+          || !!resultRoot?.querySelector?.('video,audio,img,source')
+          || /(?:\d+(?:\.\d+)?\s*(?:gb|mb|kb)|\b(?:2160|1440|1080|720|480)\s*p?\b|原画|超清|高清|original|best|uhd|fhd|\bhd\b)/i.test(resultText);
+        const disallowed = parserAction
+          || inertSamePageLink
+          || toolNavigationLink
+          || mismatchedPlatformLink
+          || repeatsSourceInput
+          || /(?:为什么|无法下载|下载失败|帮助|教程|常见问题|faq|how\s+to|support)/i.test(label)
+          || /[?？]\s*$/.test(label);
         let score = quality >= 0 ? 100000 + quality : -1;
         if (disallowed) score = -1;
-        if (!disallowed && score < 0 && !/(?:复制|copy|解析|parse|搜索|search|应用|app)/i.test(label) && /(?:下载|download|保存|save)/i.test(label)) score = 20;
+        if (!disallowed && hasResultEvidence && score < 0 && !/(?:复制|copy|解析|parse|搜索|search|应用|app)/i.test(label) && /(?:下载|download|保存|save)/i.test(label)) score = 20;
         if (!disallowed && score < 0 && (element.hasAttribute('download') || mediaUrl(href))) score = 10;
         return { element, index, label, href, score };
       })
@@ -116,16 +185,16 @@ function buildPortalScript({ mode, value = '', phase = '', timeoutMs = 30000 } =
     const previewUrl = () => {
       const video = [...document.querySelectorAll('video')].find(visible) || document.querySelector('video');
       const sources = [
-        video?.currentSrc,
-        video?.src,
-        video?.querySelector?.('source')?.src,
-        document.querySelector('meta[property="og:video:url"]')?.content,
-        document.querySelector('meta[property="og:video"]')?.content,
-        document.querySelector('meta[name="twitter:player:stream"]')?.content,
+        { value: video?.currentSrc, trusted: Number(video?.readyState || 0) >= 1 },
+        { value: video?.src, trusted: Number(video?.readyState || 0) >= 1 },
+        { value: video?.querySelector?.('source')?.src, trusted: Number(video?.readyState || 0) >= 1 },
+        { value: document.querySelector('meta[property="og:video:url"]')?.content, trusted: false },
+        { value: document.querySelector('meta[property="og:video"]')?.content, trusted: false },
+        { value: document.querySelector('meta[name="twitter:player:stream"]')?.content, trusted: false },
       ];
       for (const candidate of sources) {
-        const url = httpUrl(candidate);
-        if (url) return url;
+        const url = httpUrl(candidate.value);
+        if (url && !sameDocumentUrl(url) && (candidate.trusted || !!mediaUrl(url))) return url;
       }
       return videoCandidates().map((candidate) => mediaUrl(candidate.href)).find(Boolean) || '';
     };
@@ -151,10 +220,29 @@ function buildPortalScript({ mode, value = '', phase = '', timeoutMs = 30000 } =
         return { id: String(index + 1), url: item.url, title: (parts.shift() || item.label).trim(), artist: parts.join(' - ').trim(), label: item.label };
       });
     };
-    const findMusicDownload = () => [...document.querySelectorAll('button,a,[role="button"]')]
+    const musicDownloadCandidates = () => [...document.querySelectorAll('button,a,[role="button"]')]
       .filter(visible)
-      .map((element) => ({ element, label: text(element), href: httpUrl(element.href || element.getAttribute('href')) }))
-      .find((candidate) => /(?:下载歌曲|download\\s*song)/i.test(candidate.label) && !/(?:歌词|lyric)/i.test(candidate.label));
+      .map((element, index) => {
+        const label = text(element);
+        const href = httpUrl(element.href || element.getAttribute('href'));
+        const finalAction = /(?:下载)?(?:低品质|低音质|普通音质)\\s*mp3|备用线路/i.test(label);
+        const score = finalAction ? 100 : (/下载歌曲|继续下载|download\\s*song|continue\\s*download/i.test(label) ? 20 : 10);
+        return { element, index, label, href, finalAction, score };
+      })
+      .filter((candidate) => /(?:下载歌曲|继续下载|立即下载|普通下载|下载(?:低品质|低音质|普通音质)\\s*mp3|备用线路|download\\s*song|continue\\s*download)/i.test(candidate.label) && !/(?:歌词|lyric|无损|高清|高品质|推荐|网盘|夸克|阿里)/i.test(candidate.label))
+      .sort((left, right) => {
+        const directDifference = Number(!!mediaUrl(right.href)) - Number(!!mediaUrl(left.href));
+        return directDifference || right.score - left.score || left.index - right.index;
+      });
+    const directAudioUrl = () => {
+      const sources = [
+        document.querySelector('audio')?.currentSrc,
+        document.querySelector('audio')?.src,
+        document.querySelector('audio source')?.src,
+        ...[...document.querySelectorAll('a[href]')].map((element) => element.href),
+      ];
+      return sources.map(mediaUrl).find((url) => /\.(?:mp3|m4a|wav|flac|aac|ogg)(?:[?#]|$)/i.test(url)) || '';
+    };
 
     const attemptVideoInput = () => {
       if (humanVerificationRequired()) { resolve({ ok: false, stage: 'input', reason: 'human-verification' }); return; }
@@ -172,11 +260,14 @@ function buildPortalScript({ mode, value = '', phase = '', timeoutMs = 30000 } =
         if (Date.now() < deadline) pause(attemptVideoInput); else resolve({ ok: false, stage: 'input', reason: 'parse-action-missing' });
         return;
       }
+      action.setAttribute('data-xuannian-parser-action', 'true');
       action.click();
       resolve({ ok: true, stage: 'input', filled: true, submitted: true, continueAutomation: true, nextPhase: 'result' });
     };
     const attemptVideoResult = () => {
       if (humanVerificationRequired()) { resolve({ ok: false, stage: 'result', reason: 'human-verification' }); return; }
+      const providerFailure = providerFailureReason();
+      if (providerFailure) { resolve({ ok: false, stage: 'result', reason: providerFailure }); return; }
       const candidates = videoCandidates();
       const preview = previewUrl();
       if (candidates.length) {
@@ -211,13 +302,31 @@ function buildPortalScript({ mode, value = '', phase = '', timeoutMs = 30000 } =
     };
     const attemptMusicDownload = () => {
       if (humanVerificationRequired()) { resolve({ ok: false, stage: 'download', reason: 'human-verification' }); return; }
-      const candidate = findMusicDownload();
-      if (candidate) {
-        if (mediaUrl(candidate.href)) resolve({ ok: true, stage: 'download', href: candidate.href, label: candidate.label, clicked: false });
-        else { candidate.element.click(); resolve({ ok: true, stage: 'download', href: '', label: candidate.label, clicked: true }); }
-        return;
-      }
-      if (Date.now() < deadline) pause(attemptMusicDownload, 240); else resolve({ ok: false, stage: 'download', reason: 'download-action-missing' });
+      const direct = directAudioUrl();
+      if (direct) { resolve({ ok: true, stage: 'download', href: direct, label: '普通音质', clicked: false }); return; }
+      const clicked = new WeakSet();
+      let actionStarted = false;
+      const waitForDownload = () => {
+        if (humanVerificationRequired()) { resolve({ ok: false, stage: 'download', reason: 'human-verification' }); return; }
+        const readyUrl = directAudioUrl();
+        if (readyUrl) { resolve({ ok: true, stage: 'download', href: readyUrl, label: '普通音质', clicked: actionStarted }); return; }
+        const candidate = musicDownloadCandidates().find((item) => !clicked.has(item.element));
+        if (candidate) {
+          const directHref = mediaUrl(candidate.href);
+          if (directHref) { resolve({ ok: true, stage: 'download', href: directHref, label: candidate.label, clicked: actionStarted }); return; }
+          clicked.add(candidate.element);
+          actionStarted = true;
+          candidate.element.click();
+          if (candidate.finalAction) {
+            resolve({ ok: true, stage: 'download', href: '', label: candidate.label, clicked: true, pending: true });
+            return;
+          }
+        }
+        if (Date.now() < deadline) pause(waitForDownload, 240);
+        else if (actionStarted) resolve({ ok: true, stage: 'download', href: '', label: '普通音质', clicked: true, pending: true });
+        else resolve({ ok: false, stage: 'download', reason: 'download-action-missing' });
+      };
+      waitForDownload();
     };
 
     if (mode === 'video-parse') {

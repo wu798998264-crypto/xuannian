@@ -1,0 +1,257 @@
+const { app, BrowserWindow } = require('electron');
+const { buildPortalScript, isMediaUrl } = require('../src/media-portal-automation');
+const { detectVideoProvider, musicSearchUrl, scoreMediaDownloadQualityLabel } = require('../src/media-library');
+
+const CASES = [
+  {
+    id: 'douyin',
+    source: '7.10 J@i.ca 10/01 srR:/ :4pm 《万物生》第01集 https://v.douyin.com/RSoqNxKyWQE/ 复制此链接，打开Dou音搜索，直接观看视频！',
+  },
+  {
+    id: 'bilibili',
+    source: '【凡人修仙传：第183话 慕兰之战07】 https://www.bilibili.com/bangumi/play/ep3854807/?share_source=copy_web',
+  },
+  {
+    id: 'xiaohongshu',
+    source: '34 【codex制作个人作品集网站 - 小羊同学 | 小红书】 https://www.xiaohongshu.com/discovery/item/6a4a67270000000006036794?source=webshare&xhsshare=pc_web&xsec_token=ABd96YY0cj_jBH0BmqTwPmcWsbYfoKVVjliEMnBZOiXgk=&xsec_source=pc_share',
+  },
+  {
+    id: 'kuaishou',
+    source: 'https://www.kuaishou.com/f/X-2Yx2wKCy7jxLZb',
+  },
+];
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function loadUrlWithTimeout(webContents, url, timeoutMs = 25000) {
+  let timer;
+  try {
+    await Promise.race([
+      webContents.loadURL(url),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => {
+          try { webContents.stop(); } catch {}
+          reject(new Error('page-load-timeout'));
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function runPortalAttemptWithTimeout(webContents, action, timeoutMs = 90000) {
+  let timer;
+  try {
+    return await Promise.race([
+      action(),
+      new Promise((resolve) => {
+        timer = setTimeout(() => {
+          try { webContents.stop(); } catch {}
+          resolve({ parsed: { ok: false, reason: 'portal-attempt-timeout' }, download: { ok: false, reason: 'portal-attempt-timeout' } });
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function probeRemoteMedia(webContents, value) {
+  const url = String(value || '');
+  if (!/^https?:\/\//i.test(url)) return { ok: false, reason: 'missing-direct-url' };
+  try {
+    const response = await webContents.session.fetch(url, {
+      headers: {
+        Range: 'bytes=0-65535',
+        Referer: webContents.getURL(),
+      },
+    });
+    const reader = response.body?.getReader();
+    const chunk = reader ? await reader.read() : { value: null };
+    try { await reader?.cancel(); } catch {}
+    const contentType = response.headers.get('content-type') || '';
+    const mediaResponse = /^(?:video|audio)\//i.test(contentType)
+      || /application\/(?:octet-stream|force-download)/i.test(contentType)
+      || isMediaUrl(response.url || url);
+    return {
+      ok: response.ok && mediaResponse && Number(chunk?.value?.byteLength || 0) > 0,
+      status: response.status,
+      contentType,
+      bytes: Number(chunk?.value?.byteLength || 0),
+    };
+  } catch (error) {
+    return { ok: false, reason: String(error?.message || error) };
+  }
+}
+
+async function waitForTriggeredDownload(webContents, action, timeoutMs = 15000) {
+  return new Promise(async (resolve) => {
+    let settled = false;
+    const finish = (value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      webContents.session.removeListener('will-download', onDownload);
+      resolve(value);
+    };
+    const onDownload = (_event, item, sourceWebContents) => {
+      if (sourceWebContents !== webContents) return;
+      const result = { ok: true, filename: item.getFilename(), url: item.getURL() };
+      item.cancel();
+      finish(result);
+    };
+    const timer = setTimeout(() => finish({ ok: false, reason: 'download-not-triggered' }), timeoutMs);
+    webContents.session.on('will-download', onDownload);
+    try {
+      const result = await action();
+      if (result?.href) {
+        const probe = await probeRemoteMedia(webContents, result.href);
+        finish({ ...probe, href: result.href });
+      } else if (!result?.ok) {
+        finish({ ok: false, reason: result?.reason || 'download-action-failed' });
+      }
+    } catch (error) {
+      finish({ ok: false, reason: String(error?.message || error) });
+    }
+  });
+}
+
+async function parseOnce(webContents, provider) {
+  await loadUrlWithTimeout(webContents, provider.portalUrl);
+  let inputResult;
+  try {
+    inputResult = await webContents.executeJavaScript(buildPortalScript({
+      mode: 'video-parse',
+      phase: 'input',
+      value: provider.sourceUrl,
+      timeoutMs: 30000,
+    }, scoreMediaDownloadQualityLabel), true);
+  } catch {
+    inputResult = { ok: true, continueAutomation: true, nextPhase: 'result' };
+  }
+  if (!inputResult?.continueAutomation) return { parsed: inputResult, download: { ok: false, reason: 'input-stage-failed' } };
+  await wait(1000);
+  const parsed = await webContents.executeJavaScript(buildPortalScript({
+    mode: 'video-parse',
+    phase: 'result',
+    value: provider.sourceUrl,
+    timeoutMs: 45000,
+  }, scoreMediaDownloadQualityLabel), true);
+  if (!parsed?.ok) return { parsed, download: { ok: false, reason: parsed?.reason || 'parse-failed' } };
+  const directUrl = parsed.qualityHref && isMediaUrl(parsed.qualityHref)
+    ? parsed.qualityHref
+    : parsed.previewUrl;
+  if (directUrl) {
+    const directProbe = await probeRemoteMedia(webContents, directUrl);
+    if (directProbe.ok || !parsed.downloadActionReady) return { parsed, download: directProbe };
+  }
+  if (!parsed.downloadActionReady) return { parsed, download: { ok: false, reason: 'no-download-source' } };
+  const download = await waitForTriggeredDownload(webContents, () => webContents.executeJavaScript(buildPortalScript({
+    mode: 'video-download',
+    value: provider.sourceUrl,
+    timeoutMs: 20000,
+  }, scoreMediaDownloadQualityLabel), true));
+  return { parsed, download };
+}
+
+async function run() {
+  await app.whenReady();
+  const window = new BrowserWindow({
+    show: false,
+    width: 1280,
+    height: 900,
+    webPreferences: {
+      partition: 'persist:xuannian-media-real-sites',
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      backgroundThrottling: false,
+    },
+  });
+  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  const results = [];
+  const caseFilter = String(process.env.REAL_MEDIA_FILTER || '').trim().toLowerCase();
+  const activeCases = caseFilter === 'music' ? [] : CASES.filter((testCase) => !caseFilter || testCase.id === caseFilter);
+  for (const testCase of activeCases) {
+    const provider = detectVideoProvider(testCase.source);
+    if (!provider) {
+      results.push({ id: testCase.id, attempt: 0, parsed: { ok: false, reason: 'provider-not-detected' } });
+      continue;
+    }
+    const attemptLimit = Math.max(1, Math.min(3, Number(process.env.REAL_MEDIA_ATTEMPTS || 2)));
+    for (let attempt = 1; attempt <= attemptLimit; attempt += 1) {
+      let result;
+      let usedFallback = false;
+      try {
+        result = await runPortalAttemptWithTimeout(window.webContents, () => parseOnce(window.webContents, provider));
+        if (!result.parsed?.ok && provider.fallbackUrl) {
+          usedFallback = true;
+          result = await runPortalAttemptWithTimeout(window.webContents, () => parseOnce(window.webContents, { ...provider, portalUrl: provider.fallbackUrl }));
+        }
+      } catch (error) {
+        result = { parsed: { ok: false, reason: String(error?.message || error) }, download: { ok: false } };
+      }
+      results.push({
+        id: testCase.id,
+        attempt,
+        usedFallback,
+        parsed: {
+          ok: !!result.parsed?.ok,
+          reason: result.parsed?.reason || '',
+          preview: !!result.parsed?.previewUrl,
+          previewUrl: String(result.parsed?.previewUrl || '').slice(0, 500),
+          quality: result.parsed?.qualityLabel || '',
+          qualityHref: String(result.parsed?.qualityHref || '').slice(0, 500),
+          action: !!result.parsed?.downloadActionReady,
+        },
+        download: result.download,
+      });
+      console.log('real media probe ' + JSON.stringify(results[results.length - 1]));
+    }
+  }
+  const skipMusic = !!caseFilter && caseFilter !== 'music';
+  let music = skipMusic
+    ? { skipped: true, search: { ok: true, reason: 'filtered' }, download: { ok: true, reason: 'filtered' } }
+    : { search: { ok: false, reason: 'not-run' }, download: { ok: false, reason: 'not-run' } };
+  if (!skipMusic) try {
+    await loadUrlWithTimeout(window.webContents, musicSearchUrl('唯一 邓紫棋'));
+    const search = await window.webContents.executeJavaScript(buildPortalScript({
+      mode: 'music-search',
+      value: '唯一 邓紫棋',
+      timeoutMs: 30000,
+    }, scoreMediaDownloadQualityLabel), true);
+    music = { search, download: { ok: false, reason: 'no-result' } };
+    if (search?.ok && search.results?.length) {
+      const selected = search.results[0];
+      await loadUrlWithTimeout(window.webContents, selected.url);
+      const download = await waitForTriggeredDownload(window.webContents, () => window.webContents.executeJavaScript(buildPortalScript({
+        mode: 'music-download',
+        timeoutMs: 55000,
+      }, scoreMediaDownloadQualityLabel), true), 65000);
+      music = {
+        search: {
+          ok: true,
+          count: search.results.length,
+          first: selected.label,
+        },
+        download,
+      };
+    }
+  } catch (error) {
+    music = { search: { ok: false, reason: String(error?.message || error) }, download: { ok: false } };
+  }
+  console.log('real music probe ' + JSON.stringify(music));
+  window.destroy();
+  const failed = results.filter((item) => !item.parsed?.ok || !item.download?.ok);
+  const musicFailed = !music.skipped && (!music.search?.ok || !music.download?.ok);
+  console.log('real media probe summary ' + JSON.stringify({ total: results.length, failed: failed.length, musicFailed }));
+  app.exit(failed.length || musicFailed ? 1 : 0);
+}
+
+run().catch((error) => {
+  console.error(error);
+  app.exit(1);
+});

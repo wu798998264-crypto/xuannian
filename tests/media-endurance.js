@@ -152,7 +152,8 @@ async function run() {
   const finalHeap = await rendererHeap(window);
   const heapGrowth = finalHeap - initialHeap;
   console.log(`media endurance metrics ${JSON.stringify({ durationMs, initialHeap, finalHeap, heapGrowth, ...metrics })}`);
-  assert(metrics.iterations > 100, `endurance loop completed too few iterations: ${metrics.iterations}`);
+  const minimumIterations = Math.max(50, Math.floor(durationMs / 100));
+  assert(metrics.iterations >= minimumIterations, `endurance loop completed too few iterations: ${metrics.iterations} < ${minimumIterations}`);
   assert(metrics.maxRows <= 96, `media virtual DOM exceeded 96 total rows: ${metrics.maxRows}`);
   assert(metrics.maxDomNodes < 3200, `media endurance DOM grew without bound: ${metrics.maxDomNodes}`);
   assert(metrics.completedTasks <= 10, `completed download history exceeded ten records: ${metrics.completedTasks}`);

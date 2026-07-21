@@ -378,6 +378,9 @@ contextBridge.exposeInMainWorld('nativeAPI', {
   async deleteLocalMedia(filePath, location) {
     return ipcRenderer.invoke('media:deleteLocal', filePath || '', location || 'downloads');
   },
+  async deleteMediaDownloadHistoryItem(taskId) {
+    return ipcRenderer.invoke('media:deleteDownloadHistoryItem', taskId || '');
+  },
   async openMediaPortal(url, downloadTarget = 'download', sourceText = '', autoSubmit = false, collection = '', qualityPreference = '', automationMode = '') {
     return ipcRenderer.invoke('media:openPortal', url || '', downloadTarget || 'download', sourceText || '', !!autoSubmit, collection || '', qualityPreference || '', automationMode || '');
   },
@@ -387,8 +390,11 @@ contextBridge.exposeInMainWorld('nativeAPI', {
   async downloadMediaMusicResult(url, downloadTarget = 'download', collection = '', preferredName = '') {
     return ipcRenderer.invoke('media:downloadMusicResult', url || '', downloadTarget || 'download', collection || '', preferredName || '');
   },
-  setMediaBrowserBounds(bounds = {}, visible = false) {
-    ipcRenderer.send('media:browserBounds', bounds || {}, !!visible);
+  async openHighQualityMusic(query = '', downloadTarget = 'download', collection = '') {
+    return ipcRenderer.invoke('media:openHighQualityMusic', query || '', downloadTarget || 'download', collection || '');
+  },
+  setMediaBrowserBounds(bounds = {}, visible = false, mode = 'browser') {
+    ipcRenderer.send('media:browserBounds', bounds || {}, !!visible, mode === 'preview' ? 'preview' : 'browser');
     return true;
   },
   async getMediaBrowserState() {
@@ -611,6 +617,9 @@ contextBridge.exposeInMainWorld('nativeAPI', {
   },
   onMediaMusicResults(callback) {
     ipcRenderer.on('media:musicResults', (_event, payload) => callback(payload || {}));
+  },
+  onMediaPortalProgress(callback) {
+    ipcRenderer.on('media:portalProgress', (_event, payload) => callback(payload || {}));
   },
   onStickyPinState(callback) {
     ipcRenderer.on('native-sticky-pin-state', (_event, ids) => callback(Array.isArray(ids) ? ids : []));

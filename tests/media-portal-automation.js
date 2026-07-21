@@ -17,10 +17,18 @@ function run() {
   assert(parseScript.includes("reason: 'human-verification'"));
   assert(parseScript.includes('attemptVideoResult'));
   assert(parseScript.includes('previewUrl'));
+  assert(parseScript.includes('mismatchedPlatformLink'));
+  assert(parseScript.includes('hasResultEvidence'));
+  assert(parseScript.includes('repeatsSourceInput'));
 
   const musicScript = buildPortalScript({ mode: 'music-search', value: '测试歌曲' }, scoreMediaDownloadQualityLabel);
   assert(musicScript.includes('parseMusicResults'));
   assert(musicScript.includes('results.length'));
+  assert(musicScript.includes('musicDownloadCandidates'));
+  assert(musicScript.includes('低品质'));
+  assert(musicScript.includes('finalAction'));
+  assert(musicScript.includes('directAudioUrl'));
+  assert(musicScript.includes("label: '普通音质'"));
   console.log('media portal automation tests passed');
 }
 

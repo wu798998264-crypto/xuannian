@@ -22,6 +22,7 @@ async function run() {
   const douyin = detectVideoProvider('https://v.douyin.com/example');
   assert.strictEqual(douyin.id, 'douyin');
   assert.strictEqual(douyin.portalUrl, 'https://www.hellotik.app/zh/douyin');
+  assert.strictEqual(douyin.fallbackUrl, 'https://www.seekin.ai/zh/downloader/');
   assert.strictEqual(douyin.autoDownloadQuality, 'highest');
   const tiktok = detectVideoProvider('https://www.tiktok.com/@example/video/1');
   assert.strictEqual(tiktok.id, 'tiktok');
@@ -29,8 +30,18 @@ async function run() {
   assert(tiktok.label.includes('VPN'));
   assert.strictEqual(tiktok.autoDownloadQuality, undefined);
   assert.strictEqual(detectVideoProvider('看看这个 https://www.bilibili.com/video/BV1xx').id, 'bilibili');
+  assert.strictEqual(detectVideoProvider('【凡人修仙传：第183话 慕兰之战07】 https://www.bilibili.com/bangumi/play/ep3854807/?share_source=copy_web').id, 'bilibili');
   assert.strictEqual(detectVideoProvider('https://xhslink.com/example').id, 'xiaohongshu');
+  assert.strictEqual(detectVideoProvider('34 【codex制作个人作品集网站】 https://www.xiaohongshu.com/discovery/item/6a4a67270000000006036794?source=webshare&xsec_token=test').id, 'xiaohongshu');
   assert.strictEqual(detectVideoProvider('https://v.kuaishou.com/example').id, 'kuaishou');
+  const kuaishou = detectVideoProvider('https://www.kuaishou.com/f/X-2Yx2wKCy7jxLZb');
+  assert.strictEqual(kuaishou.id, 'kuaishou');
+  assert.strictEqual(kuaishou.fallbackUrl, 'https://www.seekin.ai/zh/downloader/');
+  assert.strictEqual(detectVideoProvider('https://youtu.be/example').id, 'youtube');
+  assert.strictEqual(detectVideoProvider('https://www.instagram.com/reel/example').id, 'instagram');
+  assert.strictEqual(detectVideoProvider('https://x.com/example/status/1').id, 'twitter');
+  assert.strictEqual(detectVideoProvider('https://fb.watch/example').id, 'facebook');
+  assert.strictEqual(detectVideoProvider('7.10 J@i.ca 10/01 《万物生》第01集 https://v.douyin.com/RSoqNxKyWQE/ 复制此链接').id, 'douyin');
   assert.strictEqual(detectVideoProvider('https://example.com/video'), null);
   assert.strictEqual(mediaKindForPath('clip.MP4'), 'video');
   assert.strictEqual(mediaKindForPath('song.flac'), 'audio');

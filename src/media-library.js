@@ -8,6 +8,7 @@ const AUDIO_EXTENSIONS = new Set([
   'mp3', 'wav', 'm4a', 'aac', 'flac', 'ogg', 'oga', 'opus', 'wma', 'aiff', 'ape',
 ]);
 const MEDIA_KIND_DIRECTORIES = Object.freeze({ video: '视频', audio: '音乐' });
+const SEEKIN_UNIVERSAL_PORTAL = 'https://www.seekin.ai/zh/downloader/';
 
 const VIDEO_PROVIDERS = [
   {
@@ -15,6 +16,7 @@ const VIDEO_PROVIDERS = [
     label: '抖音',
     hosts: ['douyin.com', 'iesdouyin.com'],
     portalUrl: 'https://www.hellotik.app/zh/douyin',
+    fallbackUrl: SEEKIN_UNIVERSAL_PORTAL,
     autoDownloadQuality: 'highest',
   },
   {
@@ -22,25 +24,52 @@ const VIDEO_PROVIDERS = [
     label: 'TikTok（需开启 VPN）',
     hosts: ['tiktok.com'],
     portalUrl: 'https://dlpanda.com/zh-CN',
+    fallbackUrl: SEEKIN_UNIVERSAL_PORTAL,
   },
   {
     id: 'bilibili',
     label: '哔哩哔哩',
     hosts: ['bilibili.com', 'b23.tv'],
     portalUrl: 'https://www.seekin.ai/zh/bilibili-downloader/',
+    fallbackUrl: SEEKIN_UNIVERSAL_PORTAL,
   },
   {
     id: 'xiaohongshu',
     label: '小红书',
     hosts: ['xiaohongshu.com', 'xhslink.com'],
     portalUrl: 'https://www.xiaohongshua.com/',
-    fallbackUrl: 'https://www.hellotik.app/zh/rednote',
+    fallbackUrl: SEEKIN_UNIVERSAL_PORTAL,
   },
   {
     id: 'kuaishou',
     label: '快手',
     hosts: ['kuaishou.com', 'gifshow.com', 'kwai.com'],
     portalUrl: 'https://www.hellotik.app/zh/kuaishou',
+    fallbackUrl: SEEKIN_UNIVERSAL_PORTAL,
+  },
+  {
+    id: 'youtube',
+    label: 'YouTube（需开启 VPN）',
+    hosts: ['youtube.com', 'youtu.be'],
+    portalUrl: SEEKIN_UNIVERSAL_PORTAL,
+  },
+  {
+    id: 'instagram',
+    label: 'Instagram（需开启 VPN）',
+    hosts: ['instagram.com'],
+    portalUrl: SEEKIN_UNIVERSAL_PORTAL,
+  },
+  {
+    id: 'twitter',
+    label: 'Twitter / X（需开启 VPN）',
+    hosts: ['twitter.com', 'x.com'],
+    portalUrl: SEEKIN_UNIVERSAL_PORTAL,
+  },
+  {
+    id: 'facebook',
+    label: 'Facebook（需开启 VPN）',
+    hosts: ['facebook.com', 'fb.watch'],
+    portalUrl: SEEKIN_UNIVERSAL_PORTAL,
   },
 ];
 

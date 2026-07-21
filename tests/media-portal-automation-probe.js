@@ -75,6 +75,25 @@ async function run() {
   assert.strictEqual(previewFallback.previewUrl, 'https://cdn.example.com/preview-only.mp4');
   assert(!previewFallback.qualityLabel.includes('为什么'));
 
+  await loadFixture(win, `
+    <a href="https://www.seekin.ai/zh/download-instagram-reels/" style="display:block;width:220px;height:32px">Instagram Reels下载</a>
+    <button style="display:block;width:160px;height:32px">立即下载</button>
+  `);
+  console.log('probe: reject unrelated portal navigation');
+  const unrelatedPortal = await win.webContents.executeJavaScript(buildPortalScript({
+    mode: 'video-parse', phase: 'result', value: 'https://www.bilibili.com/bangumi/play/ep3854807/', timeoutMs: 1100,
+  }, scoreMediaDownloadQualityLabel), true);
+  assert.strictEqual(unrelatedPortal.ok, false);
+  assert.strictEqual(unrelatedPortal.reason, 'parse-timeout');
+
+  await loadFixture(win, '<article class="result-card"><img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==" style="width:80px;height:80px"><button id="generic-download" style="width:160px;height:32px">立即下载</button></article>');
+  console.log('probe: accept evidenced generic download');
+  const evidencedDownload = await win.webContents.executeJavaScript(buildPortalScript({
+    mode: 'video-parse', phase: 'result', value: 'https://www.kuaishou.com/f/example', timeoutMs: 1100,
+  }, scoreMediaDownloadQualityLabel), true);
+  assert.strictEqual(evidencedDownload.ok, true);
+  assert.strictEqual(evidencedDownload.downloadActionReady, true);
+
   await loadFixture(win, '<div id="results"></div>', `
     setTimeout(() => {
       document.querySelector('#results').innerHTML = '<a href="https://www.gequbao.com/music/101" style="display:block;width:320px;height:28px">测试歌曲 - 歌手甲</a><a href="https://www.gequbao.com/music/102" style="display:block;width:320px;height:28px">测试歌曲（现场版） - 歌手乙</a>';
@@ -90,10 +109,15 @@ async function run() {
     window.musicDownloaded = false;
     setTimeout(() => {
       document.querySelector('#slot').innerHTML = '<button id="download" style="width:120px;height:32px">下载歌曲</button>';
-      document.querySelector('#download').addEventListener('click', () => { window.musicDownloaded = true; });
+      document.querySelector('#download').addEventListener('click', () => {
+        setTimeout(() => {
+          document.querySelector('#slot').insertAdjacentHTML('beforeend', '<button id="low-quality" style="width:180px;height:42px">#2 下载低品质MP3</button>');
+          document.querySelector('#low-quality').addEventListener('click', () => { window.musicDownloaded = true; });
+        }, 240);
+      });
     }, 280);
   `);
-  console.log('probe: delayed music download');
+  console.log('probe: delayed music download quality dialog');
   const musicDownload = await win.webContents.executeJavaScript(buildPortalScript({ mode: 'music-download', timeoutMs: 4000 }, scoreMediaDownloadQualityLabel), true);
   assert.strictEqual(musicDownload.ok, true);
   assert.strictEqual(musicDownload.clicked, true);

@@ -34,6 +34,7 @@ const {
   classifyMediaPortalPopup,
   isMediaUrl,
 } = require('./media-portal-automation');
+const { findInstalledMusicClient } = require('./media-app-launcher');
 
 let mainWindow;
 let quickWindow;
@@ -81,6 +82,10 @@ let screenshotHotkey = 'Ctrl+Alt+D';
 let quickStickyHotkey = 'Ctrl+Alt+S';
 let fileSearchHotkey = 'Ctrl+Alt+A';
 let fileSearchService = null;
+let mediaExternalSearchService = null;
+let mediaExternalAudioMonitorTimer = null;
+let mediaExternalAudioMonitorBusy = false;
+const mediaExternalAudioTrackers = new Map();
 let lastQuickToggleAt = 0;
 let lastPasteTargetHwnd = '';
 let lastPasteTargetAt = 0;
@@ -137,6 +142,9 @@ let mediaPortalCacheCheckPromise = null;
 let mediaPortalRequestId = 0;
 let mediaPortalInputState = null;
 let mediaPortalParsedVideo = null;
+let mediaPortalProgressTimer = null;
+let mediaPortalPendingDownload = null;
+let mediaPortalPreviewCapture = null;
 let activeMediaPortalDownloads = 0;
 const configuredMediaDownloadSessions = new WeakSet();
 const mediaPortalDownloadTargets = new WeakMap();
@@ -165,6 +173,7 @@ const MEDIA_PORTAL_HISTORY_LIMIT = 20;
 const MEDIA_PORTAL_CACHE_LIMIT_BYTES = 128 * 1024 * 1024;
 const MEDIA_PORTAL_CACHE_CHECK_INTERVAL_MS = 60 * 1000;
 const MEDIA_DOWNLOAD_HISTORY_FILE = 'xuannian-media-download-history.json';
+const MEDIA_EXTERNAL_AUDIO_TIMEOUT_MS = 15 * 60 * 1000;
 const STARTUP_MIGRATION_STATE_FILE = 'xuannian-migration-state.json';
 const RECORDS_JOURNAL_FILE = 'xuannian-records.json';
 const RESIZE_EDGES = new Set(['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw']);
@@ -657,6 +666,185 @@ function getFileSearchService() {
     });
   }
   return fileSearchService;
+}
+
+function getMediaExternalSearchService() {
+  if (!mediaExternalSearchService) {
+    mediaExternalSearchService = new FileSearchService({
+      platform: process.platform,
+      userDataPath: app.getPath('userData'),
+      resourcesPath: process.resourcesPath,
+      appPath: app.getAppPath(),
+      isPackaged: app.isPackaged,
+    });
+  }
+  return mediaExternalSearchService;
+}
+
+function normalizedExternalAudioName(value = '') {
+  return path.basename(String(value || ''), path.extname(String(value || '')))
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, '');
+}
+
+function externalAudioSearchQuery(displayName = '') {
+  const title = String(displayName || '').split(/\s+-\s+/)[0] || String(displayName || '');
+  const tokens = title
+    .normalize('NFKC')
+    .replace(/[^\p{L}\p{N}\s]+/gu, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 4);
+  return tokens.join(' ') || 'dm:today';
+}
+
+function externalAudioNameScore(filePath, displayName = '') {
+  const candidate = normalizedExternalAudioName(filePath);
+  const full = normalizedExternalAudioName(displayName);
+  const title = normalizedExternalAudioName(String(displayName || '').split(/\s+-\s+/)[0]);
+  if (!candidate) return 0;
+  if (full.length >= 2 && (candidate.includes(full) || full.includes(candidate))) return 200 + Math.min(candidate.length, full.length);
+  if (title.length >= 2 && (candidate.includes(title) || title.includes(candidate))) return 100 + Math.min(candidate.length, title.length);
+  return 0;
+}
+
+async function searchExternalAudioCandidates(tracker) {
+  if (!['win32', 'darwin'].includes(process.platform)) return [];
+  const result = await getMediaExternalSearchService().search(tracker.query, {
+    type: 'audio',
+    sort: 'modified',
+    direction: 'desc',
+    limit: 120,
+  });
+  if (!result?.ready || !Array.isArray(result.results)) return [];
+  return result.results
+    .filter((item) => item?.path && mediaKindForPath(item.path) === 'audio' && fs.existsSync(item.path))
+    .map((item) => ({ ...item, matchScore: externalAudioNameScore(item.path, tracker.displayName) }))
+    .filter((item) => item.matchScore > 0)
+    .sort((left, right) => right.matchScore - left.matchScore || Number(right.modifiedAt || 0) - Number(left.modifiedAt || 0));
+}
+
+function stopMediaExternalAudioMonitorIfIdle() {
+  if (mediaExternalAudioTrackers.size || !mediaExternalAudioMonitorTimer) return;
+  clearInterval(mediaExternalAudioMonitorTimer);
+  mediaExternalAudioMonitorTimer = null;
+}
+
+async function importExternalAudioTracker(tracker, sourcePath) {
+  const directories = mediaDirectories();
+  const root = tracker.location === 'favorites' ? directories.favoritePath : directories.downloadPath;
+  const managedSource = path.resolve(sourcePath) === path.resolve(root) || isPathInside(sourcePath, root);
+  let destination = sourcePath;
+  if (!managedSource) {
+    const targetDirectory = mediaCollectionDirectory(root, 'audio', tracker.collection || '');
+    await fs.promises.mkdir(targetDirectory, { recursive: true });
+    destination = uniqueMediaDownloadPath(targetDirectory, sanitizeDownloadFilename(path.basename(sourcePath)));
+    await fs.promises.copyFile(sourcePath, destination);
+  }
+  const stat = await fs.promises.stat(destination);
+  const completedTask = {
+    id: tracker.id,
+    name: path.basename(destination),
+    path: destination,
+    location: tracker.location,
+    status: 'completed',
+    receivedBytes: Number(stat.size || 0),
+    totalBytes: Number(stat.size || 0),
+    percent: 100,
+    updatedAt: Date.now(),
+  };
+  rememberCompletedMediaDownload(completedTask);
+  notifyMediaDownloadProgress(completedTask);
+  notifyMediaDownloadsChanged({ status: 'completed', path: destination });
+  showMediaDownloadNotification({
+    status: 'completed',
+    name: completedTask.name,
+    filePath: destination,
+    favorite: tracker.location === 'favorites',
+  });
+}
+
+async function pollMediaExternalAudioTrackers() {
+  if (mediaExternalAudioMonitorBusy || !mediaExternalAudioTrackers.size || isQuitting) return;
+  mediaExternalAudioMonitorBusy = true;
+  try {
+    for (const tracker of [...mediaExternalAudioTrackers.values()]) {
+      if (Date.now() - tracker.startedAt >= MEDIA_EXTERNAL_AUDIO_TIMEOUT_MS) {
+        mediaExternalAudioTrackers.delete(tracker.id);
+        notifyMediaDownloadProgress({ ...tracker.task, status: 'error', updatedAt: Date.now() });
+        showMediaDownloadNotification({ status: 'error', name: tracker.task.name });
+        continue;
+      }
+      let candidates = [];
+      try { candidates = await searchExternalAudioCandidates(tracker); } catch (error) {
+        runtimeLog(`external audio detection failed: ${error?.message || error}`);
+      }
+      for (const candidate of candidates) {
+        const key = path.resolve(candidate.path).toLowerCase();
+        if (tracker.baseline.has(key) || Number(candidate.modifiedAt || 0) < tracker.startedAt - 5000) continue;
+        let stat;
+        try { stat = await fs.promises.stat(candidate.path); } catch { continue; }
+        if (!stat.isFile() || stat.size <= 0) continue;
+        const previous = tracker.candidates.get(key);
+        const stableCount = previous?.size === stat.size ? Number(previous.stableCount || 0) + 1 : 0;
+        tracker.candidates.set(key, { size: stat.size, stableCount });
+        if (stableCount < 1) continue;
+        try {
+          await importExternalAudioTracker(tracker, candidate.path);
+          mediaExternalAudioTrackers.delete(tracker.id);
+        } catch (error) {
+          runtimeLog(`external audio import failed: ${error?.message || error}`);
+          notifyMediaDownloadProgress({ ...tracker.task, status: 'error', updatedAt: Date.now() });
+          mediaExternalAudioTrackers.delete(tracker.id);
+        }
+        break;
+      }
+    }
+  } finally {
+    mediaExternalAudioMonitorBusy = false;
+    stopMediaExternalAudioMonitorIfIdle();
+  }
+}
+
+async function startMediaExternalAudioTracker(displayName, downloadTarget = 'download', collection = '') {
+  if (!['win32', 'darwin'].includes(process.platform)) return null;
+  const id = `external-media-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+  const tracker = {
+    id,
+    displayName: String(displayName || '').trim(),
+    query: externalAudioSearchQuery(displayName),
+    location: downloadTarget === 'favorite' ? 'favorites' : 'downloads',
+    collection: String(collection || '').trim(),
+    startedAt: Date.now(),
+    baseline: new Set(),
+    candidates: new Map(),
+  };
+  try {
+    const baseline = await searchExternalAudioCandidates(tracker);
+    tracker.baseline = new Set(baseline.map((item) => path.resolve(item.path).toLowerCase()));
+  } catch (error) {
+    runtimeLog(`external audio baseline failed: ${error?.message || error}`);
+  }
+  tracker.task = {
+    id,
+    name: `${tracker.displayName || '高清音质'}（等待云盘客户端下载）`,
+    path: '',
+    location: tracker.location,
+    status: 'external',
+    receivedBytes: 0,
+    totalBytes: 0,
+    percent: 0,
+    updatedAt: Date.now(),
+  };
+  mediaExternalAudioTrackers.set(id, tracker);
+  notifyMediaDownloadProgress(tracker.task);
+  if (!mediaExternalAudioMonitorTimer) {
+    mediaExternalAudioMonitorTimer = setInterval(pollMediaExternalAudioTrackers, 2500);
+    mediaExternalAudioMonitorTimer.unref?.();
+  }
+  return tracker;
 }
 
 function notifyMainSuspend() {
@@ -2409,6 +2597,19 @@ function rememberCompletedMediaDownload(task) {
   }
 }
 
+function forgetCompletedMediaDownload(taskId) {
+  const id = String(taskId || '').trim();
+  if (!id) return [];
+  try {
+    const items = loadMediaDownloadHistory().filter((item) => item.id !== id);
+    writeJsonAtomicSync(mediaDownloadHistoryFile(), JSON.stringify({ version: 1, items }));
+    return items;
+  } catch (error) {
+    runtimeLog(`media download history removal failed: ${error?.stack || error}`);
+    return null;
+  }
+}
+
 function notifyMediaDownloadsChanged(payload = {}) {
   if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
   mainWindow.webContents.send('media:downloadsChanged', payload || {});
@@ -2493,7 +2694,19 @@ function configureMediaDownloadSession(electronSession) {
   if (!electronSession || configuredMediaDownloadSessions.has(electronSession)) return;
   configuredMediaDownloadSessions.add(electronSession);
   electronSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
-  electronSession.on('will-download', (_event, item, webContents) => {
+  electronSession.on('will-download', (event, item, webContents) => {
+    if (mediaPortalPreviewCapture?.webContents === webContents) {
+      event.preventDefault();
+      const filename = sanitizeDownloadFilename(item.getFilename(), item.getMimeType());
+      const kind = mediaKindForPath(filename);
+      const mimeType = String(item.getMimeType() || '');
+      const capture = kind === 'video' || /^video\//i.test(mimeType)
+        ? { url: String(item.getURL() || ''), filename, mimeType, embedded: true }
+        : null;
+      clearMediaPortalPreviewCapture(capture);
+      return;
+    }
+    markMediaPortalDownloadStarted(webContents);
     const directories = mediaDirectories();
     const target = mediaPortalDownloadTargets.get(webContents) || {};
     const favoriteDownload = target.location === 'favorite';
@@ -2506,8 +2719,8 @@ function configureMediaDownloadSession(electronSession) {
       return;
     }
     let filename = receivedFilename;
-    if (kind === 'audio' && String(target.preferredName || '').trim()) {
-      const extension = path.extname(receivedFilename) || '.mp3';
+    if (String(target.preferredName || '').trim()) {
+      const extension = path.extname(receivedFilename) || (kind === 'audio' ? '.mp3' : '.mp4');
       const displayName = path.basename(String(target.preferredName).trim(), path.extname(String(target.preferredName).trim()));
       filename = sanitizeDownloadFilename(`${displayName}${extension}`, item.getMimeType());
     }
@@ -2569,6 +2782,9 @@ function cancelMediaPortalIdleDestroy() {
 function destroyMediaPortalView({ notify = true } = {}) {
   cancelMediaPortalIdleDestroy();
   clearMediaPortalInputTimer();
+  clearMediaPortalProgressTimer();
+  clearMediaPortalPendingDownload();
+  clearMediaPortalPreviewCapture();
   mediaPortalInputState = null;
   mediaPortalParsedVideo = null;
   mediaPortalRequestId += 1;
@@ -2656,6 +2872,204 @@ function sendMediaPortalEvent(channel, payload = {}) {
   mainWindow.webContents.send(channel, payload);
 }
 
+function clearMediaPortalProgressTimer() {
+  clearInterval(mediaPortalProgressTimer);
+  mediaPortalProgressTimer = null;
+}
+
+function mediaPortalProgressPayload(state, extra = {}) {
+  const mode = String(state?.automationMode || '');
+  const elapsedMs = Math.max(0, Date.now() - Number(state?.progressStartedAt || Date.now()));
+  let percent = 5;
+  let message = '正在连接下载站';
+  let operation = 'parse';
+  let kind = 'video';
+  if (mode === 'video-parse') {
+    const resultPhase = state?.phase === 'result';
+    percent = resultPhase
+      ? Math.min(94, 34 + Math.round((elapsedMs / 45000) * 60))
+      : Math.min(32, 6 + Math.round((elapsedMs / 7000) * 26));
+    message = resultPhase ? '正在分析清晰度并生成预览' : '正在提交视频链接';
+  } else if (mode === 'music-search') {
+    kind = 'audio';
+    operation = 'search';
+    percent = Math.min(94, 6 + Math.round((elapsedMs / 30000) * 88));
+    message = '正在读取歌曲名称、歌手和可下载版本';
+  } else if (mode === 'music-download') {
+    kind = 'audio';
+    operation = 'download';
+    percent = Math.min(97, 8 + Math.round((elapsedMs / 35000) * 89));
+    const remainingSeconds = Math.max(0, Math.ceil((30000 - elapsedMs) / 1000));
+    message = remainingSeconds > 0
+      ? '下载站正在准备普通音质文件，预计还需 ' + remainingSeconds + ' 秒'
+      : '下载站已响应，正在等待文件开始下载';
+  }
+  return {
+    requestId: Number(state?.requestId || 0),
+    kind,
+    operation,
+    status: 'running',
+    percent,
+    message,
+    reason: '',
+    ...extra,
+  };
+}
+
+function emitMediaPortalProgress(state, extra = {}) {
+  sendMediaPortalEvent('media:portalProgress', mediaPortalProgressPayload(state, extra));
+}
+
+function startMediaPortalProgress(state) {
+  clearMediaPortalProgressTimer();
+  state.progressStartedAt = Date.now();
+  emitMediaPortalProgress(state);
+  mediaPortalProgressTimer = setInterval(() => {
+    if (state.requestId !== mediaPortalRequestId) {
+      clearMediaPortalProgressTimer();
+      return;
+    }
+    emitMediaPortalProgress(state);
+  }, 500);
+}
+
+function finishMediaPortalProgress(state, ok, reason = '', message = '') {
+  clearMediaPortalProgressTimer();
+  const fallbackMessage = ok
+    ? (state?.automationMode === 'video-parse' ? '视频解析完成' : (state?.automationMode === 'music-search' ? '音乐版本读取完成' : '文件已开始下载'))
+    : '自动处理未完成';
+  emitMediaPortalProgress(state, {
+    status: ok ? 'success' : 'error',
+    percent: ok ? 100 : Math.min(99, mediaPortalProgressPayload(state).percent),
+    message: String(message || fallbackMessage),
+    reason: String(reason || ''),
+  });
+}
+
+function clearMediaPortalPendingDownload() {
+  if (mediaPortalPendingDownload?.timeout) clearTimeout(mediaPortalPendingDownload.timeout);
+  mediaPortalPendingDownload = null;
+}
+
+function waitForMediaPortalDownload(state) {
+  clearMediaPortalPendingDownload();
+  mediaPortalPendingDownload = {
+    requestId: state.requestId,
+    webContents: mediaPortalView?.webContents || null,
+    timeout: setTimeout(() => {
+      if (!mediaPortalPendingDownload || mediaPortalPendingDownload.requestId !== state.requestId) return;
+      clearMediaPortalPendingDownload();
+      finishMediaPortalProgress(state, false, 'download-timeout', '下载站没有返回文件，请点击右上角眼睛图标手动下载');
+      notifyMediaBrowserState({ opening: false, autoActionMissing: true, automationStage: 'music-download' });
+    }, 30000),
+  };
+}
+
+function markMediaPortalDownloadStarted(webContents) {
+  const state = mediaPortalInputState;
+  if (state?.automationMode === 'music-download' && state.requestId === mediaPortalRequestId) {
+    state.downloadObserved = true;
+    finishMediaPortalProgress(state, true, '', '普通音质文件已开始下载');
+  }
+  if (!mediaPortalPendingDownload || mediaPortalPendingDownload.webContents !== webContents) return;
+  const pendingState = {
+    requestId: mediaPortalPendingDownload.requestId,
+    automationMode: 'music-download',
+    progressStartedAt: Date.now(),
+  };
+  clearMediaPortalPendingDownload();
+  finishMediaPortalProgress(pendingState, true, '', '普通音质文件已开始下载');
+}
+
+function clearMediaPortalPreviewCapture(result = null) {
+  const capture = mediaPortalPreviewCapture;
+  mediaPortalPreviewCapture = null;
+  if (!capture) return;
+  clearTimeout(capture.timeout);
+  capture.resolve(result);
+}
+
+async function prepareMediaPortalVideoPreview(state, parsed) {
+  const view = mediaPortalView;
+  if (!view || view.webContents.isDestroyed() || state.requestId !== mediaPortalRequestId) return null;
+  clearMediaPortalPreviewCapture();
+  const capturedDownload = new Promise((resolve) => {
+    mediaPortalPreviewCapture = {
+      requestId: state.requestId,
+      webContents: view.webContents,
+      resolve,
+      timeout: setTimeout(() => clearMediaPortalPreviewCapture(null), 22000),
+    };
+  });
+  try {
+    const result = await view.webContents.executeJavaScript(buildPortalScript({
+      mode: 'video-download',
+      value: state.value,
+      timeoutMs: 20000,
+    }, scoreMediaDownloadQualityLabel), true);
+    if (state.requestId !== mediaPortalRequestId) {
+      clearMediaPortalPreviewCapture();
+      return null;
+    }
+    const href = sanitizeRemoteMediaUrl(result?.href);
+    if (href && isMediaUrl(href)) {
+      clearMediaPortalPreviewCapture();
+      return { url: href, embedded: false, label: String(result?.label || parsed.qualityLabel || '') };
+    }
+    if (href && result?.ok) {
+      try {
+        view.webContents.downloadURL(href, { headers: { Referer: view.webContents.getURL() } });
+      } catch {}
+    }
+    if (!result?.ok) {
+      clearMediaPortalPreviewCapture();
+      return null;
+    }
+    return await capturedDownload;
+  } catch (error) {
+    runtimeLog('media preview capture failed: ' + (error?.message || error));
+    clearMediaPortalPreviewCapture();
+    return null;
+  }
+}
+
+function setMediaPortalPresentationMode(mode = 'browser', previewUrl = '') {
+  const view = mediaPortalView;
+  if (!view || view.webContents.isDestroyed()) return;
+  const normalizedMode = mode === 'preview' ? 'preview' : 'browser';
+  const source = String(previewUrl || '');
+  const script = [
+    '(() => {',
+    "const id = 'xuannian-media-preview-overlay';",
+    'let overlay = document.getElementById(id);',
+    'if (' + JSON.stringify(normalizedMode) + " === 'preview') {",
+    'if (!overlay) {',
+    "overlay = document.createElement('div');",
+    'overlay.id = id;',
+    "overlay.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:#111;display:grid;place-items:center;margin:0;padding:0;';",
+    "const video = document.createElement('video');",
+    'video.controls = true;',
+    "video.controlsList.add('nodownload', 'noremoteplayback');",
+    'video.disablePictureInPicture = true;',
+    "video.addEventListener('contextmenu', (event) => event.preventDefault());",
+    "video.preload = 'metadata';",
+    "video.style.cssText = 'width:100%;height:100%;object-fit:contain;background:#111;';",
+    'overlay.appendChild(video);',
+    'document.body.appendChild(overlay);',
+    '}',
+    "const video = overlay.querySelector('video');",
+    'const next = ' + JSON.stringify(source) + ';',
+    'if (next && video.src !== next) { video.src = next; video.load(); }',
+    "overlay.style.display = 'grid';",
+    '} else if (overlay) {',
+    "overlay.style.display = 'none';",
+    "overlay.querySelector('video')?.pause();",
+    '}',
+    '})()',
+  ].join('\n');
+  view.webContents.executeJavaScript(script, true).catch(() => {});
+}
+
 function sanitizeRemoteMediaUrl(value) {
   const url = String(value || '').trim();
   if (!/^https?:\/\//i.test(url) || url.length > 4096) return '';
@@ -2685,12 +3099,31 @@ function sanitizeMusicResults(results) {
   return sanitized;
 }
 
-function completeMediaPortalAutomation(state, result = {}) {
+function publishMediaPortalVideo(state, parsed) {
+  mediaPortalInputState = null;
+  mediaPortalParsedVideo = parsed.ok && parsed.downloadReady ? parsed : null;
+  const {
+    capturedDownloadUrl: _capturedDownloadUrl,
+    capturedFilename: _capturedFilename,
+    ...publicParsed
+  } = parsed;
+  sendMediaPortalEvent('media:videoParsed', publicParsed);
+  finishMediaPortalProgress(state, parsed.ok && parsed.downloadReady, parsed.reason);
+  notifyMediaBrowserState({
+    opening: false,
+    autoFilled: true,
+    autoSubmitted: true,
+    parsed: parsed.ok,
+    autoActionMissing: !parsed.ok || !parsed.downloadReady,
+    qualityLabel: parsed.qualityLabel,
+  });
+}
+
+async function completeMediaPortalAutomation(state, result = {}) {
   if (state.requestId !== mediaPortalRequestId) return;
   const view = mediaPortalView;
   const mode = state.automationMode;
   if (mode === 'video-parse') {
-    mediaPortalInputState = null;
     const parsed = {
       requestId: state.requestId,
       ok: !!result.ok,
@@ -2702,27 +3135,40 @@ function completeMediaPortalAutomation(state, result = {}) {
       qualityLabel: String(result.qualityLabel || '').trim().slice(0, 120),
       qualityHref: sanitizeRemoteMediaUrl(result.qualityHref),
       reason: String(result.reason || ''),
+      embeddedPreview: false,
+      capturedDownloadUrl: '',
+      capturedFilename: '',
     };
-    mediaPortalParsedVideo = parsed.ok && parsed.downloadReady ? parsed : null;
-    sendMediaPortalEvent('media:videoParsed', parsed);
-    notifyMediaBrowserState({
-      opening: false,
-      autoFilled: true,
-      autoSubmitted: true,
-      parsed: parsed.ok,
-      autoActionMissing: !parsed.ok || !parsed.downloadReady,
-      qualityLabel: parsed.qualityLabel,
-    });
+    if (parsed.ok && parsed.downloadReady && parsed.downloadActionReady) {
+      emitMediaPortalProgress(state, {
+        percent: 96,
+        message: '正在准备视频预览',
+      });
+      const captured = await prepareMediaPortalVideoPreview(state, parsed);
+      if (state.requestId !== mediaPortalRequestId) return;
+      if (captured?.embedded && captured.url) {
+        parsed.embeddedPreview = true;
+        parsed.previewUrl = '';
+        parsed.capturedDownloadUrl = captured.url;
+        parsed.capturedFilename = String(captured.filename || '').slice(0, 220);
+      } else if (captured?.url) {
+        parsed.previewUrl = sanitizeRemoteMediaUrl(captured.url);
+        parsed.qualityLabel = String(captured.label || parsed.qualityLabel || '');
+      }
+    }
+    publishMediaPortalVideo(state, parsed);
   } else if (mode === 'music-search') {
     mediaPortalInputState = null;
     const results = sanitizeMusicResults(result.results);
+    const searchSucceeded = !!result.ok && results.length > 0;
     sendMediaPortalEvent('media:musicResults', {
       requestId: state.requestId,
-      ok: !!result.ok && results.length > 0,
+      ok: searchSucceeded,
       query: state.value,
       results,
       reason: String(result.reason || ''),
     });
+    finishMediaPortalProgress(state, searchSucceeded, String(result.reason || ''));
     notifyMediaBrowserState({
       opening: false,
       musicResultsReady: results.length > 0,
@@ -2731,14 +3177,21 @@ function completeMediaPortalAutomation(state, result = {}) {
   } else if (mode === 'music-download') {
     mediaPortalInputState = null;
     const href = sanitizeRemoteMediaUrl(result.href);
-    if (result.ok && href && isMediaUrl(href) && view && !view.webContents.isDestroyed()) {
-      view.webContents.downloadURL(href);
+    if (!result.ok) {
+      finishMediaPortalProgress(state, false, String(result.reason || 'download-action-missing'));
+    } else if (state.downloadObserved) {
+      finishMediaPortalProgress(state, true, '', '普通音质文件已开始下载');
+    } else {
+      waitForMediaPortalDownload(state);
+      if (href && isMediaUrl(href) && view && !view.webContents.isDestroyed()) {
+        view.webContents.downloadURL(href);
+      }
     }
     notifyMediaBrowserState({
       opening: false,
       autoDownloadStarted: !!result.ok,
       autoActionMissing: !result.ok,
-      qualityLabel: 'MP3',
+      qualityLabel: '普通音质',
     });
   }
   if (!activeMediaPortalDownloads && !mediaPortalInputState) scheduleMediaPortalIdleDestroy();
@@ -2755,7 +3208,9 @@ function scheduleMediaPortalInput() {
       mode: state.automationMode,
       phase: state.phase || '',
       value: state.value || '',
-      timeoutMs: state.automationMode === 'video-parse' && state.phase === 'result' ? 45000 : 30000,
+      timeoutMs: state.automationMode === 'video-parse' && state.phase === 'result'
+        ? 45000
+        : (state.automationMode === 'music-download' ? 55000 : 30000),
     }, scoreMediaDownloadQualityLabel);
     try {
       const result = await view.webContents.executeJavaScript(script, true);
@@ -2766,7 +3221,7 @@ function scheduleMediaPortalInput() {
         scheduleMediaPortalInput();
         return;
       }
-      completeMediaPortalAutomation(state, result || {});
+      await completeMediaPortalAutomation(state, result || {});
     } catch (error) {
       if (state.requestId !== mediaPortalRequestId) return;
       state.retryCount = Number(state.retryCount || 0) + 1;
@@ -2778,7 +3233,7 @@ function scheduleMediaPortalInput() {
         return;
       }
       runtimeLog(`media portal automation failed: ${error?.message || error}`);
-      completeMediaPortalAutomation(state, { ok: false, reason: 'automation-error' });
+      await completeMediaPortalAutomation(state, { ok: false, reason: 'automation-error' });
     }
   }, 320);
 }
@@ -2792,39 +3247,78 @@ async function downloadParsedMediaVideo(downloadTarget = 'download', collection 
   mediaPortalDownloadTargets.set(view.webContents, {
     location: downloadTarget === 'favorite' ? 'favorite' : 'download',
     collection: String(collection || '').trim(),
+    preferredName: String(parsed.capturedFilename || '').trim(),
   });
   cancelMediaPortalIdleDestroy();
   notifyMediaBrowserState({ opening: true, automationStage: 'video-download', autoActionMissing: false });
-  const directUrl = parsed.qualityHref && isMediaUrl(parsed.qualityHref)
-    ? parsed.qualityHref
-    : (!parsed.downloadActionReady ? parsed.previewUrl : '');
-  if (directUrl) {
-    runtimeLog(`parsed video direct download source=${directUrl === parsed.previewUrl ? 'preview' : 'quality-link'}`);
-    view.webContents.downloadURL(directUrl);
-    notifyMediaBrowserState({
-      opening: false,
-      autoDownloadStarted: true,
-      autoActionMissing: false,
-      qualityLabel: parsed.qualityLabel,
-    });
-    return { ok: true, reason: '' };
-  }
+  clearMediaPortalPreviewCapture();
+  const waitForDownloadStart = (trigger) => new Promise((resolve) => {
+    const electronSession = view.webContents.session;
+    let settled = false;
+    let timer = null;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      electronSession.removeListener('will-download', onDownload);
+      resolve(result);
+    };
+    const onDownload = (_event, item, sourceWebContents) => {
+      if (sourceWebContents !== view.webContents) return;
+      finish({ ok: true, filename: String(item.getFilename() || '') });
+    };
+    electronSession.on('will-download', onDownload);
+    timer = setTimeout(() => finish({ ok: false, reason: '下载站没有启动文件下载，请点击右上角眼睛图标手动处理' }), 12000);
+    Promise.resolve()
+      .then(trigger)
+      .then((result) => {
+        if (result?.ok === false) finish({ ok: false, reason: String(result.reason || '下载按钮暂时不可用') });
+      })
+      .catch((error) => finish({ ok: false, reason: String(error?.message || '下载按钮暂时不可用') }));
+  });
+  const directUrl = parsed.capturedDownloadUrl
+    || (parsed.qualityHref && isMediaUrl(parsed.qualityHref)
+      ? parsed.qualityHref
+      : (!parsed.downloadActionReady ? parsed.previewUrl : ''));
   try {
-    const result = await view.webContents.executeJavaScript(buildPortalScript({
-      mode: 'video-download',
-      timeoutMs: 20000,
-    }, scoreMediaDownloadQualityLabel), true);
-    const href = sanitizeRemoteMediaUrl(result?.href);
-    runtimeLog(`parsed video download action ok=${!!result?.ok} clicked=${!!result?.clicked} href=${href ? 'media' : 'none'} label=${String(result?.label || '').slice(0, 120)}`);
-    if (result?.ok && href && isMediaUrl(href)) view.webContents.downloadURL(href);
+    const started = await waitForDownloadStart(async () => {
+      if (directUrl) {
+        runtimeLog(`parsed video direct download source=${directUrl.startsWith('blob:') ? 'captured-blob' : (directUrl === parsed.previewUrl ? 'preview' : 'quality-link')}`);
+        if (directUrl.startsWith('blob:')) {
+          const triggered = await view.webContents.executeJavaScript(`(() => {
+            const anchor = document.createElement('a');
+            anchor.href = ${JSON.stringify(directUrl)};
+            anchor.download = ${JSON.stringify(String(parsed.capturedFilename || 'video.mp4'))};
+            anchor.style.display = 'none';
+            document.body.appendChild(anchor);
+            anchor.click();
+            anchor.remove();
+            return true;
+          })()`, true);
+          return triggered ? { ok: true } : { ok: false, reason: '预览视频下载入口暂时不可用' };
+        }
+        view.webContents.downloadURL(directUrl, { headers: { Referer: view.webContents.getURL() } });
+        return { ok: true };
+      }
+      const result = await view.webContents.executeJavaScript(buildPortalScript({
+        mode: 'video-download',
+        value: parsed.sourceUrl,
+        timeoutMs: 20000,
+      }, scoreMediaDownloadQualityLabel), true);
+      const href = sanitizeRemoteMediaUrl(result?.href);
+      runtimeLog(`parsed video download action ok=${!!result?.ok} clicked=${!!result?.clicked} href=${href ? 'media' : 'none'} label=${String(result?.label || '').slice(0, 120)}`);
+      if (!result?.ok) return { ok: false, reason: String(result?.reason || '下载按钮暂时不可用') };
+      if (href) view.webContents.downloadURL(href, { headers: { Referer: view.webContents.getURL() } });
+      return { ok: true };
+    });
     notifyMediaBrowserState({
       opening: false,
-      autoDownloadStarted: !!result?.ok,
-      autoActionMissing: !result?.ok,
-      qualityLabel: String(result?.label || parsed.qualityLabel || ''),
+      autoDownloadStarted: !!started.ok,
+      autoActionMissing: !started.ok,
+      qualityLabel: String(parsed.qualityLabel || ''),
     });
-    if (!result?.ok) scheduleMediaPortalIdleDestroy();
-    return { ok: !!result?.ok, reason: String(result?.reason || '') };
+    if (!started.ok) scheduleMediaPortalIdleDestroy();
+    return started;
   } catch (error) {
     runtimeLog(`parsed video download failed: ${error?.message || error}`);
     notifyMediaBrowserState({ opening: false, autoActionMissing: true });
@@ -2858,6 +3352,53 @@ function downloadMediaMusicResult(url, downloadTarget = 'download', collection =
   return opened;
 }
 
+async function openHighQualityMusic(query = '', downloadTarget = 'download', collection = '') {
+  const value = String(query || '').trim().slice(0, 240);
+  if (!value) return { ok: false, reason: '缺少歌曲名称' };
+  const tracker = await startMediaExternalAudioTracker(value, downloadTarget, collection);
+  const failTracker = () => {
+    if (!tracker) return;
+    mediaExternalAudioTrackers.delete(tracker.id);
+    notifyMediaDownloadProgress({ ...tracker.task, status: 'error', updatedAt: Date.now() });
+    stopMediaExternalAudioMonitorIfIdle();
+  };
+  clipboard.writeText(value);
+  const client = process.platform === 'win32' ? findInstalledMusicClient() : null;
+  if (client?.executablePath) {
+    try {
+      const args = client.id === 'quark' ? [client.url] : [];
+      const child = spawn(client.executablePath, args, {
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: true,
+      });
+      child.unref();
+      return {
+        ok: true,
+        target: client.id,
+        label: client.label,
+        taskId: tracker?.id || '',
+        message: '已复制歌曲名称并打开' + client.label + '；玄念会在后台检测下载完成并自动导入',
+      };
+    } catch (error) {
+      runtimeLog('open high quality music client failed: ' + (error?.message || error));
+    }
+  }
+  try {
+    await shell.openExternal('https://www.alipan.com/');
+    return {
+      ok: true,
+      target: 'web',
+      label: '阿里云盘网页',
+      taskId: tracker?.id || '',
+      message: '未检测到阿里云盘或夸克客户端，已复制歌曲名称并打开网页；玄念会检测本地下载完成',
+    };
+  } catch {
+    failTracker();
+    return { ok: false, reason: '高清音质入口暂时无法打开' };
+  }
+}
+
 function ensureMediaPortalView() {
   cancelMediaPortalIdleDestroy();
   if (mediaPortalView && !mediaPortalView.webContents.isDestroyed()) return mediaPortalView;
@@ -2881,7 +3422,7 @@ function ensureMediaPortalView() {
     const disposition = classifyMediaPortalPopup(url, view.webContents.getURL());
     if (disposition === 'download') {
       setImmediate(() => view.webContents.downloadURL(url));
-    } else if (disposition === 'same-site' && !mediaPortalInputState) {
+    } else if (disposition === 'same-site') {
       setImmediate(() => view.webContents.loadURL(url).catch(() => {}));
     } else {
       runtimeLog(`blocked media portal popup: ${String(url || '').slice(0, 300)}`);
@@ -2919,7 +3460,7 @@ function ensureMediaPortalView() {
   return view;
 }
 
-function setMediaPortalBounds(bounds = {}, visible = false) {
+function setMediaPortalBounds(bounds = {}, visible = false, mode = 'browser') {
   const view = visible ? ensureMediaPortalView() : mediaPortalView;
   if (!view || view.webContents.isDestroyed()) return false;
   const content = mainWindow?.getContentBounds();
@@ -2931,6 +3472,8 @@ function setMediaPortalBounds(bounds = {}, visible = false) {
   const height = Math.max(0, Math.min(maxHeight - y, Math.round(Number(bounds.height || 0))));
   const shouldShow = !!visible && width >= 120 && height >= 80;
   if (width >= 120 && height >= 80) view.setBounds({ x, y, width, height });
+  const previewUrl = mediaPortalParsedVideo?.capturedDownloadUrl || mediaPortalParsedVideo?.previewUrl || '';
+  setMediaPortalPresentationMode(shouldShow && mode === 'preview' ? 'preview' : 'browser', previewUrl);
   view.setVisible(shouldShow);
   view.webContents.setAudioMuted(!shouldShow);
   if (shouldShow) {
@@ -2972,11 +3515,30 @@ function openMediaPortal(url, downloadTarget = 'download', sourceText = '', auto
       retryCount: 0,
     }
     : null;
-  view.webContents.loadURL(value).catch((error) => {
+  clearMediaPortalInputTimer();
+  clearMediaPortalPendingDownload();
+  if (mediaPortalInputState) startMediaPortalProgress(mediaPortalInputState);
+  let loadPromise;
+  try {
+    if (view.webContents.getURL() === value) {
+      view.webContents.reloadIgnoringCache();
+      loadPromise = Promise.resolve();
+    } else {
+      loadPromise = view.webContents.loadURL(value);
+    }
+  } catch (error) {
+    loadPromise = Promise.reject(error);
+  }
+  loadPromise.catch((error) => {
     runtimeLog(`media portal load failed: ${error?.message || error}`);
-    notifyMediaBrowserState({ loadError: true });
+    const state = mediaPortalInputState;
+    if (state && state.requestId === mediaPortalRequestId) {
+      completeMediaPortalAutomation(state, { ok: false, reason: 'load-error' });
+    }
+    notifyMediaBrowserState({ loadError: true, opening: false });
   });
   notifyMediaBrowserState({
+    requestId: mediaPortalRequestId,
     opening: true,
     autoFilled: false,
     autoSubmitted: false,
@@ -2984,7 +3546,7 @@ function openMediaPortal(url, downloadTarget = 'download', sourceText = '', auto
     autoActionMissing: false,
     qualityLabel: '',
   });
-  return true;
+  return { ok: true, requestId: mediaPortalRequestId };
 }
 
 function resizeBoundsFromPointer(session, point) {
@@ -5423,6 +5985,12 @@ app.on('will-quit', () => {
   stopMouseHotkeyHook();
   stopNativeHotkeyHook();
   stopClipboardWatcher();
+  if (mediaExternalAudioMonitorTimer) {
+    clearInterval(mediaExternalAudioMonitorTimer);
+    mediaExternalAudioMonitorTimer = null;
+  }
+  mediaExternalAudioTrackers.clear();
+  mediaExternalSearchService?.shutdown();
   fileSearchService?.shutdown();
   destroyVideoThumbnailWindow();
   if (tray) {
@@ -5507,6 +6075,23 @@ ipcMain.handle('media:deleteLocal', async (_event, filePath, location) => {
     return { ok: true };
   });
 });
+ipcMain.handle('media:deleteDownloadHistoryItem', async (_event, taskId) => {
+  const id = String(taskId || '').trim();
+  const task = loadMediaDownloadHistory().find((item) => item.id === id);
+  if (!task) return { ok: false, reason: '下载记录不存在或已被清除' };
+  const filePath = String(task.path || '').trim();
+  const removed = await runMediaFileOperation('delete completed media download', async () => {
+    const existed = !!filePath && path.isAbsolute(filePath) && !!mediaKindForPath(filePath) && fs.existsSync(filePath);
+    if (existed) {
+      await shell.trashItem(filePath);
+    }
+    const history = forgetCompletedMediaDownload(id);
+    if (!history) throw new Error('download history could not be updated');
+    notifyMediaDownloadsChanged({ status: 'deleted', path: filePath });
+    return { ok: true, missing: !existed };
+  });
+  return removed;
+});
 ipcMain.handle('media:openPortal', (_event, url, downloadTarget = 'download', sourceText = '', autoSubmit = false, collection = '', qualityPreference = '', automationMode = '') => (
   openMediaPortal(url, downloadTarget, sourceText, autoSubmit, collection, qualityPreference, automationMode)
 ));
@@ -5517,9 +6102,10 @@ ipcMain.handle('media:downloadParsedVideo', (_event, downloadTarget = 'download'
 ipcMain.handle('media:downloadMusicResult', (_event, url, downloadTarget = 'download', collection = '', preferredName = '') => (
   downloadMediaMusicResult(url, downloadTarget, collection, preferredName)
 ));
-ipcMain.on('media:browserBounds', (event, bounds = {}, visible = false) => {
+ipcMain.handle('media:openHighQualityMusic', (_event, query = '', downloadTarget = 'download', collection = '') => openHighQualityMusic(query, downloadTarget, collection));
+ipcMain.on('media:browserBounds', (event, bounds = {}, visible = false, mode = 'browser') => {
   if (!mainWindow || event.sender !== mainWindow.webContents) return;
-  setMediaPortalBounds(bounds, visible);
+  setMediaPortalBounds(bounds, visible, mode);
 });
 ipcMain.handle('media:browserState', () => mediaBrowserState());
 ipcMain.handle('media:browserAction', (event, action) => {
