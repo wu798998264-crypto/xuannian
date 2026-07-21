@@ -38,12 +38,14 @@ async function run() {
   assert.strictEqual(detectVideoProvider('看看这个 https://www.bilibili.com/video/BV1xx').id, 'bilibili');
   assert.strictEqual(detectVideoProvider('【凡人修仙传：第183话 慕兰之战07】 https://www.bilibili.com/bangumi/play/ep3854807/?share_source=copy_web').id, 'bilibili');
   assert.strictEqual(detectVideoProvider('https://xhslink.com/example').id, 'xiaohongshu');
+  assert.deepStrictEqual(detectVideoProvider('https://xhslink.com/example').portals.map((route) => route.label), ['Seekin', 'HelloTik', 'Xiaohongshua', 'DLPanda']);
   assert.strictEqual(detectVideoProvider('34 【codex制作个人作品集网站】 https://www.xiaohongshu.com/discovery/item/6a4a67270000000006036794?source=webshare&xsec_token=test').id, 'xiaohongshu');
   assert.strictEqual(detectVideoProvider('https://v.kuaishou.com/example').id, 'kuaishou');
   const kuaishou = detectVideoProvider('https://www.kuaishou.com/f/X-2Yx2wKCy7jxLZb');
   assert.strictEqual(kuaishou.id, 'kuaishou');
   assert.strictEqual(kuaishou.portalUrl, 'https://www.seekin.ai/zh/downloader/');
   assert.strictEqual(kuaishou.fallbackUrl, 'https://www.hellotik.app/zh/kuaishou');
+  assert.deepStrictEqual(kuaishou.portals.map((route) => route.label), ['Seekin', 'HelloTik', 'DLPanda']);
   assert.strictEqual(detectVideoProvider('https://youtu.be/example').id, 'youtube');
   assert.strictEqual(detectVideoProvider('https://www.instagram.com/reel/example').id, 'instagram');
   assert.strictEqual(detectVideoProvider('https://x.com/example/status/1').id, 'twitter');

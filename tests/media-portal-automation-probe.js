@@ -86,6 +86,30 @@ async function run() {
   assert.strictEqual(marketingCopy.ok, false);
   assert.strictEqual(marketingCopy.reason, 'parse-timeout');
 
+  await loadFixture(win, '<section><img src="data:image/gif;base64,R0lGODlhAQABAAAAACw="><h2>多平台视频去水印免费下载</h2><p>高画质、极速、无水印，只需粘贴链接即可保存</p><button style="display:block;width:160px;height:32px">立即下载</button></section>');
+  console.log('probe: reject generic marketing hero');
+  const marketingHero = await win.webContents.executeJavaScript(buildPortalScript({
+    mode: 'video-parse', phase: 'result', timeoutMs: 1100,
+  }, scoreMediaDownloadQualityLabel), true);
+  assert.strictEqual(marketingHero.ok, false);
+  assert.strictEqual(marketingHero.reason, 'parse-timeout');
+
+  await loadFixture(win, '<article class="result-card"><img src="data:image/gif;base64,R0lGODlhAQABAAAAACw="><h2>立即下载 B站 视频/音频</h2><p>粘贴 B站视频链接，即可选择 MP4 视频或 MP3 音频下载，由 Seekin 提供。</p><button style="display:block;width:160px;height:32px">立即下载</button></article>');
+  console.log('probe: reject provider landing card');
+  const providerLanding = await win.webContents.executeJavaScript(buildPortalScript({
+    mode: 'video-parse', phase: 'result', timeoutMs: 1100,
+  }, scoreMediaDownloadQualityLabel), true);
+  assert.strictEqual(providerLanding.ok, false);
+  assert.strictEqual(providerLanding.reason, 'parse-timeout');
+
+  await loadFixture(win, '<article class="result-card"><img src="data:image/gif;base64,R0lGODlhAQABAAAAACw="><h2>Bilibili Video Download</h2><p>Free Bilibili video downloader, Without Watermark, Lossless Video Quality. Require bilibili sessdata to download 1080p.</p><button style="display:block;width:160px;height:32px">Download</button></article>');
+  console.log('probe: reject VPN provider landing card');
+  const vpnProviderLanding = await win.webContents.executeJavaScript(buildPortalScript({
+    mode: 'video-parse', phase: 'result', timeoutMs: 1100,
+  }, scoreMediaDownloadQualityLabel), true);
+  assert.strictEqual(vpnProviderLanding.ok, false);
+  assert.strictEqual(vpnProviderLanding.reason, 'parse-timeout');
+
   await loadFixture(win, `
     <a href="https://www.seekin.ai/zh/download-instagram-reels/" style="display:block;width:220px;height:32px">Instagram Reels下载</a>
     <button style="display:block;width:160px;height:32px">立即下载</button>

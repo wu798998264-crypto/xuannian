@@ -33,7 +33,7 @@ const VIDEO_PROVIDERS = [
     fallbackUrl: DLPANDA_PORTAL,
     portals: [
       { url: SEEKIN_UNIVERSAL_PORTAL, label: 'Seekin' },
-      { url: DLPANDA_PORTAL, label: 'DLPanda', requiresVpn: true },
+      { url: DLPANDA_PORTAL, label: 'DLPanda', requiresVpn: true, finalFallback: true },
     ],
   },
   {
@@ -45,6 +45,7 @@ const VIDEO_PROVIDERS = [
     portals: [
       { url: SEEKIN_UNIVERSAL_PORTAL, label: 'Seekin' },
       { url: 'https://www.seekin.ai/zh/bilibili-downloader/', label: 'Seekin Bilibili' },
+      { url: DLPANDA_PORTAL, label: 'DLPanda', requiresVpn: true, finalFallback: true },
     ],
   },
   {
@@ -55,7 +56,9 @@ const VIDEO_PROVIDERS = [
     fallbackUrl: 'https://www.xiaohongshua.com/',
     portals: [
       { url: SEEKIN_UNIVERSAL_PORTAL, label: 'Seekin' },
+      { url: 'https://www.hellotik.app/zh/rednote', label: 'HelloTik' },
       { url: 'https://www.xiaohongshua.com/', label: 'Xiaohongshua' },
+      { url: DLPANDA_PORTAL, label: 'DLPanda', requiresVpn: true, finalFallback: true },
     ],
   },
   {
@@ -67,6 +70,7 @@ const VIDEO_PROVIDERS = [
     portals: [
       { url: SEEKIN_UNIVERSAL_PORTAL, label: 'Seekin' },
       { url: 'https://www.hellotik.app/zh/kuaishou', label: 'HelloTik' },
+      { url: DLPANDA_PORTAL, label: 'DLPanda', requiresVpn: true, finalFallback: true },
     ],
   },
   {
@@ -74,28 +78,40 @@ const VIDEO_PROVIDERS = [
     label: 'YouTube',
     hosts: ['youtube.com', 'youtu.be'],
     portalUrl: SEEKIN_UNIVERSAL_PORTAL,
-    portals: [{ url: SEEKIN_UNIVERSAL_PORTAL, label: 'Seekin' }],
+    portals: [
+      { url: SEEKIN_UNIVERSAL_PORTAL, label: 'Seekin' },
+      { url: DLPANDA_PORTAL, label: 'DLPanda', requiresVpn: true, finalFallback: true },
+    ],
   },
   {
     id: 'instagram',
     label: 'Instagram',
     hosts: ['instagram.com'],
     portalUrl: SEEKIN_UNIVERSAL_PORTAL,
-    portals: [{ url: SEEKIN_UNIVERSAL_PORTAL, label: 'Seekin' }],
+    portals: [
+      { url: SEEKIN_UNIVERSAL_PORTAL, label: 'Seekin' },
+      { url: DLPANDA_PORTAL, label: 'DLPanda', requiresVpn: true, finalFallback: true },
+    ],
   },
   {
     id: 'twitter',
     label: 'Twitter / X',
     hosts: ['twitter.com', 'x.com'],
     portalUrl: SEEKIN_UNIVERSAL_PORTAL,
-    portals: [{ url: SEEKIN_UNIVERSAL_PORTAL, label: 'Seekin' }],
+    portals: [
+      { url: SEEKIN_UNIVERSAL_PORTAL, label: 'Seekin' },
+      { url: DLPANDA_PORTAL, label: 'DLPanda', requiresVpn: true, finalFallback: true },
+    ],
   },
   {
     id: 'facebook',
     label: 'Facebook',
     hosts: ['facebook.com', 'fb.watch'],
     portalUrl: SEEKIN_UNIVERSAL_PORTAL,
-    portals: [{ url: SEEKIN_UNIVERSAL_PORTAL, label: 'Seekin' }],
+    portals: [
+      { url: SEEKIN_UNIVERSAL_PORTAL, label: 'Seekin' },
+      { url: DLPANDA_PORTAL, label: 'DLPanda', requiresVpn: true, finalFallback: true },
+    ],
   },
 ];
 

@@ -1007,6 +1007,7 @@ async function run() {
         ],
       });
       await switchView('media',{skipCoach:true});
+      const manualPortalInitiallyHidden=document.querySelector('#mediaVideoManualPortal').hidden&&document.querySelector('#mediaMusicManualPortal').hidden;
       const videoInput=document.querySelector('#mediaVideoInput');
       const douyinProvider=resolveMediaVideoProviderFallback('https://v.douyin.com/runtime');
       const tiktokProvider=resolveMediaVideoProviderFallback('https://www.tiktok.com/@runtime/video/1');
@@ -1061,10 +1062,11 @@ async function run() {
       await downloadMediaMusicVersion(1,'wav',false);
       const backgroundPortal={browserHidden:document.querySelector('#mediaBrowserShell').hidden,directVisible:!document.querySelector('#mediaDirectShell').hidden};
       state.media.browser={...state.media.browser,ready:true};
+      state.media.manualPortal={available:true,kind:'audio',url:'https://www.gequbao.com/',reason:'human-verification',prompting:false};
       state.media.browserVisible=true;
       renderMediaBrowserState();
       const browserTogglePersistence={
-        removed:!document.querySelector('#mediaToggleBrowser'),
+        available:!document.querySelector('#mediaMusicManualPortal').hidden,
         browserVisible:!document.querySelector('#mediaBrowserShell').hidden,
       };
       state.media.browserVisible=false;
@@ -1077,7 +1079,7 @@ async function run() {
         controls:document.querySelector('#mediaLocalAudio').controls,
         path:document.querySelector('#mediaLocalAudio').dataset.mediaPath,
         musicProviderLabel:document.querySelector('#mediaMusicProvider')?.textContent.trim()||'',
-        musicBrowserToggleRemoved:!document.querySelector('#mediaToggleBrowser'),
+        musicManualPortalAvailable:!document.querySelector('#mediaMusicManualPortal').hidden,
       };
       document.querySelector('#mediaKindTabs [data-media-kind="video"]').click();
       const videoDownloadModeSelected=state.media.kind==='video'&&state.media.tab==='downloads';
@@ -1223,7 +1225,7 @@ async function run() {
       localStorage.removeItem(MEDIA_FAVORITE_ORDER_KEY);
       return {
         openedPortals,portalTargets,portalInputs,externalUrls,copiedText,copiedFiles,draggedFiles,contextMenus,favoriteCollections,movedFavorites,deletedFavorites,
-        downloadedVideos,downloadedSongs,previewedSongs,highQualityRequests,openedDownloadHistory,downloadHistoryContextMenus,deletedDownloadHistory,localPlaybackRequests,nativeMediaBridgeAvailableBeforeStub,videoUi,favoritePreviewModal,musicUi,backgroundPortal,browserTogglePersistence,localAudioPlayer,
+        downloadedVideos,downloadedSongs,previewedSongs,highQualityRequests,openedDownloadHistory,downloadHistoryContextMenus,deletedDownloadHistory,localPlaybackRequests,nativeMediaBridgeAvailableBeforeStub,videoUi,favoritePreviewModal,musicUi,backgroundPortal,browserTogglePersistence,localAudioPlayer,manualPortalInitiallyHidden,
         providerRouting:{douyinProvider,tiktokProvider,dailyFallback,failureClassification},
         activeView:document.querySelector('.view.active')?.id||'',
         activeNav:document.querySelector('.nav-btn.active')?.dataset.view||'',
@@ -1263,9 +1265,10 @@ async function run() {
   assert.deepStrictEqual(mediaLibraryMetrics.musicUi, {rows:2,actions:['下载','下载并收藏','下载','下载并收藏'],formatChoices:['普通音质','高清音质'],previewButtons:2,activeAudioControls:true,topFormatControls:false});
   assert.deepStrictEqual(mediaLibraryMetrics.previewedSongs, ['https://www.gequbao.com/music/101']);
   assert.deepStrictEqual(mediaLibraryMetrics.backgroundPortal, {browserHidden:true,directVisible:true});
-  assert.deepStrictEqual(mediaLibraryMetrics.browserTogglePersistence, {removed:true,browserVisible:false});
+  assert.strictEqual(mediaLibraryMetrics.manualPortalInitiallyHidden, true, 'manual-site controls must remain hidden before automatic routes fail');
+  assert.deepStrictEqual(mediaLibraryMetrics.browserTogglePersistence, {available:true,browserVisible:true});
   assert.deepStrictEqual(mediaLibraryMetrics.localPlaybackRequests, ['C:/Downloads/music.flac']);
-  assert.deepStrictEqual(mediaLibraryMetrics.localAudioPlayer, {visible:true,controls:true,path:'C:/Downloads/music.flac',musicProviderLabel:'歌曲宝',musicBrowserToggleRemoved:true});
+  assert.deepStrictEqual(mediaLibraryMetrics.localAudioPlayer, {visible:true,controls:true,path:'C:/Downloads/music.flac',musicProviderLabel:'歌曲宝',musicManualPortalAvailable:true});
   assert.strictEqual(mediaLibraryMetrics.providerRouting.douyinProvider.id, 'douyin');
   assert.strictEqual(mediaLibraryMetrics.providerRouting.douyinProvider.portalUrl, 'https://www.seekin.ai/zh/downloader/');
   assert.strictEqual(mediaLibraryMetrics.providerRouting.douyinProvider.autoDownloadQuality, 'highest');

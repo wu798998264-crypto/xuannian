@@ -1,5 +1,5 @@
 const { app, BrowserWindow } = require('electron');
-const { buildPortalScript, isMediaUrl } = require('../src/media-portal-automation');
+const { buildPortalScript, classifyMediaPortalPopup, isMediaUrl } = require('../src/media-portal-automation');
 const { detectVideoProvider, musicSearchUrl, scoreMediaDownloadQualityLabel } = require('../src/media-library');
 
 const CASES = [
@@ -177,6 +177,18 @@ async function parseOnce(webContents, provider) {
     if (directProbe.ok || !parsed.downloadActionReady) return { parsed, download: directProbe };
   }
   if (!parsed.downloadActionReady) return { parsed, download: { ok: false, reason: 'no-download-source' } };
+  if (process.env.REAL_MEDIA_DEBUG === 'download') {
+    const debug = await webContents.executeJavaScript(`(() => [...document.querySelectorAll('button,a,[role="button"]')]
+      .filter((element) => /download|下载/i.test(String(element.innerText || element.textContent || '')))
+      .map((element) => ({
+        tag: element.tagName,
+        text: String(element.innerText || element.textContent || '').trim().slice(0, 500),
+        href: element.href || element.getAttribute('href') || '',
+        download: element.getAttribute('download') || '',
+        outerHTML: element.outerHTML.slice(0, 1200),
+      })).slice(0, 20))()`, true);
+    console.log('real media download debug ' + JSON.stringify(debug));
+  }
   let download = { ok: false, reason: 'download-not-triggered' };
   const candidateCount = Math.max(1, Math.min(8, Number(parsed.candidateCount || 1)));
   for (let candidateIndex = 0; candidateIndex < candidateCount; candidateIndex += 1) {
@@ -206,7 +218,13 @@ async function run() {
       backgroundThrottling: false,
     },
   });
-  window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    if (process.env.REAL_MEDIA_DEBUG === 'download') console.log('real media popup ' + String(url || '').slice(0, 2000));
+    if (classifyMediaPortalPopup(url, window.webContents.getURL()) === 'download') {
+      setImmediate(() => window.webContents.downloadURL(url));
+    }
+    return { action: 'deny' };
+  });
   const results = [];
   const caseFilter = String(process.env.REAL_MEDIA_FILTER || '').trim().toLowerCase();
   const sourceOverride = String(process.env.REAL_MEDIA_SOURCE || '').trim();
@@ -242,7 +260,6 @@ async function run() {
             downloadReason: result.download?.reason || '',
           });
           if (result.parsed?.ok && result.download?.ok) break;
-          if (['protected-or-private', 'provider-rejected'].includes(result.parsed?.reason)) break;
         }
       } catch (error) {
         result = { parsed: { ok: false, reason: String(error?.message || error) }, download: { ok: false } };

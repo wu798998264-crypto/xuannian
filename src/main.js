@@ -2878,7 +2878,6 @@ function destroyMediaPortalView({ notify = true } = {}) {
   clearMediaPortalPendingDownload();
   clearMediaPortalPreviewCapture();
   mediaPortalInputState = null;
-  mediaPortalParsedVideo = null;
   mediaPortalRequestId += 1;
   const view = mediaPortalView;
   mediaPortalView = null;
@@ -3062,7 +3061,7 @@ function waitForMediaPortalDownload(state) {
       if (!mediaPortalPendingDownload || mediaPortalPendingDownload.requestId !== state.requestId) return;
       clearMediaPortalPendingDownload();
       finishMediaPortalProgress(state, false, 'download-timeout', '下载站没有返回文件，请重新尝试该版本');
-      notifyMediaBrowserState({ opening: false, autoActionMissing: true, automationStage: 'music-download' });
+      notifyMediaBrowserState({ opening: false, autoActionMissing: true, automationStage: 'music-download', failureReason: 'download-timeout' });
     }, 30000),
   };
 }
@@ -3307,6 +3306,7 @@ async function completeMediaPortalAutomation(state, result = {}) {
       requestId: state.requestId,
       ok: !!result.ok,
       sourceUrl: state.value,
+      portalUrl: state.portalUrl,
       previewUrl: sanitizeRemoteMediaUrl(result.previewUrl),
       title: String(result.title || '').trim().slice(0, 160),
       downloadReady: !!result.downloadReady,
@@ -3418,6 +3418,8 @@ async function completeMediaPortalAutomation(state, result = {}) {
       opening: false,
       autoDownloadStarted: !!result.ok,
       autoActionMissing: !result.ok,
+      automationStage: 'music-download',
+      failureReason: result.ok ? '' : String(result.reason || 'download-action-missing'),
       qualityLabel: '普通音质',
     });
   }
@@ -3469,16 +3471,78 @@ function scheduleMediaPortalInput() {
   }, 320);
 }
 
-async function downloadParsedMediaVideo(downloadTarget = 'download', collection = '') {
-  const view = mediaPortalView;
-  const parsed = mediaPortalParsedVideo;
-  if (!view || view.webContents.isDestroyed() || !parsed?.downloadReady) {
-    return { ok: false, reason: '请先完成视频解析' };
+async function reloadParsedVideoDownloadPage(view, parsed) {
+  if (!view || view.webContents.isDestroyed() || !parsed?.sourceUrl || !isAllowedPortalUrl(parsed.portalUrl)) {
+    return { ok: false, reason: 'download-page-unavailable' };
   }
+  const webContents = view.webContents;
+  try {
+    await new Promise((resolve, reject) => {
+      let settled = false;
+      const finish = (error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        webContents.removeListener('did-finish-load', onLoaded);
+        webContents.removeListener('did-fail-load', onFailed);
+        if (error) reject(error); else resolve();
+      };
+      const onLoaded = () => finish();
+      const onFailed = (_event, code, description, validatedUrl, isMainFrame) => {
+        if (isMainFrame === false) return;
+        finish(new Error(`${code}:${description}:${validatedUrl}`));
+      };
+      const timer = setTimeout(() => finish(new Error('download-page-load-timeout')), 25000);
+      webContents.once('did-finish-load', onLoaded);
+      webContents.on('did-fail-load', onFailed);
+      try {
+        if (webContents.getURL() === parsed.portalUrl) webContents.reloadIgnoringCache();
+        else webContents.loadURL(parsed.portalUrl).catch(finish);
+      } catch (error) {
+        finish(error);
+      }
+    });
+  } catch (error) {
+    runtimeLog(`parsed video replay load failed: ${error?.message || error}`);
+    return { ok: false, reason: 'load-error' };
+  }
+  try {
+    const input = await webContents.executeJavaScript(buildPortalScript({
+      mode: 'video-parse',
+      phase: 'input',
+      value: parsed.sourceUrl,
+      timeoutMs: 20000,
+    }, scoreMediaDownloadQualityLabel), true);
+    if (!input?.continueAutomation) return { ok: false, reason: String(input?.reason || 'parse-action-missing') };
+    const result = await webContents.executeJavaScript(buildPortalScript({
+      mode: 'video-parse',
+      phase: 'result',
+      value: parsed.sourceUrl,
+      timeoutMs: 45000,
+    }, scoreMediaDownloadQualityLabel), true);
+    if (!result?.ok || !result?.downloadReady) return { ok: false, reason: String(result?.reason || 'parse-timeout') };
+    return {
+      ok: true,
+      candidateCount: Math.max(1, Math.min(8, Number(result.candidateCount || 1))),
+      qualityLabel: String(result.qualityLabel || parsed.qualityLabel || ''),
+      qualityHref: sanitizeRemoteMediaUrl(result.qualityHref),
+      downloadActionReady: !!result.downloadActionReady,
+    };
+  } catch (error) {
+    runtimeLog(`parsed video replay automation failed: ${error?.message || error}`);
+    return { ok: false, reason: 'automation-error' };
+  }
+}
+
+async function downloadParsedMediaVideo(downloadTarget = 'download', collection = '') {
+  const parsed = mediaPortalParsedVideo;
+  if (!parsed?.downloadReady) return { ok: false, code: 'parse-required', reason: '请先完成视频解析' };
+  const view = ensureMediaPortalView();
+  if (!view || view.webContents.isDestroyed()) return { ok: false, code: 'load-error', reason: '下载页面无法启动' };
   mediaPortalDownloadTargets.set(view.webContents, {
     location: downloadTarget === 'favorite' ? 'favorite' : 'download',
     collection: String(collection || '').trim(),
-    preferredName: String(parsed.capturedFilename || '').trim(),
+    preferredName: String(parsed.title || parsed.capturedFilename || '').trim(),
   });
   cancelMediaPortalIdleDestroy();
   keepMediaPortalWorkerVisible(view);
@@ -3534,10 +3598,11 @@ async function downloadParsedMediaVideo(downloadTarget = 'download', collection 
         return { ok: true };
       });
     }
-    if (!started.ok && parsed.downloadActionReady) {
-      const candidateCount = Math.max(1, Math.min(8, Number(parsed.candidateCount || 3)));
-      for (let candidateIndex = 0; candidateIndex < candidateCount; candidateIndex += 1) {
-        started = await waitForDownloadStart(async () => {
+    const tryCandidates = async (candidateCount, firstPass = false) => {
+      let candidateResult = { ok: false, reason: '下载站没有返回可用文件' };
+      const limit = firstPass ? Math.min(1, candidateCount) : candidateCount;
+      for (let candidateIndex = 0; candidateIndex < limit; candidateIndex += 1) {
+        candidateResult = await waitForDownloadStart(async () => {
           const result = await view.webContents.executeJavaScript(buildPortalScript({
             mode: 'video-download',
             value: parsed.sourceUrl,
@@ -3549,27 +3614,54 @@ async function downloadParsedMediaVideo(downloadTarget = 'download', collection 
           if (!result?.ok) return { ok: false, reason: String(result?.reason || '当前画质按钮暂时不可用') };
           if (href && isMediaUrl(href)) view.webContents.downloadURL(href, { headers: { Referer: view.webContents.getURL() } });
           return { ok: true };
-        }, candidateIndex === 0 ? 12000 : 9000);
-        if (started.ok) break;
+        }, firstPass ? 8000 : (candidateIndex === 0 ? 12000 : 9000));
+        if (candidateResult.ok) break;
+      }
+      return candidateResult;
+    };
+    if (!started.ok && parsed.downloadActionReady) {
+      const candidateCount = Math.max(1, Math.min(8, Number(parsed.candidateCount || 3)));
+      started = await tryCandidates(candidateCount, true);
+    }
+    if (!started.ok && parsed.portalUrl) {
+      notifyMediaBrowserState({ opening: true, automationStage: 'video-download-reparse', autoActionMissing: false });
+      const replay = await reloadParsedVideoDownloadPage(view, parsed);
+      if (replay.ok) {
+        mediaPortalParsedVideo = { ...parsed, ...replay, requestId: parsed.requestId };
+        const replayDirectUrl = replay.qualityHref && isMediaUrl(replay.qualityHref) ? replay.qualityHref : '';
+        if (replayDirectUrl) {
+          started = await waitForDownloadStart(() => {
+            view.webContents.downloadURL(replayDirectUrl, { headers: { Referer: view.webContents.getURL() } });
+            return { ok: true };
+          });
+        }
+        if (!started.ok && replay.downloadActionReady) started = await tryCandidates(replay.candidateCount, false);
+      } else {
+        started = { ok: false, code: replay.reason, reason: replay.reason };
       }
     }
-    if (!started.ok) started.reason = '最高、次高清和普通画质均未启动下载，请重新解析或打开原站处理';
+    if (!started.ok) {
+      started.code = String(started.code || started.reason || 'download-timeout');
+      started.reason = '最高、次高清和普通画质均未启动下载';
+    }
     notifyMediaBrowserState({
       opening: false,
       autoDownloadStarted: !!started.ok,
       autoActionMissing: !started.ok,
+      automationStage: 'video-download',
+      failureReason: started.ok ? '' : String(started.code || 'download-timeout'),
       qualityLabel: String(parsed.qualityLabel || ''),
     });
     if (!started.ok) {
       view.setVisible(false);
       scheduleMediaPortalIdleDestroy();
     }
-    return started;
+    return started.ok ? started : { ...started, ok: false };
   } catch (error) {
     runtimeLog(`parsed video download failed: ${error?.message || error}`);
     notifyMediaBrowserState({ opening: false, autoActionMissing: true });
     scheduleMediaPortalIdleDestroy();
-    return { ok: false, reason: '下载按钮暂时不可用，请重新解析' };
+    return { ok: false, code: 'automation-error', reason: '下载按钮暂时不可用' };
   }
 }
 
@@ -3807,6 +3899,7 @@ function openMediaPortal(url, downloadTarget = 'download', sourceText = '', auto
   });
   notifyMediaBrowserState({
     requestId: mediaPortalRequestId,
+    destroyed: false,
     opening: true,
     autoFilled: false,
     autoSubmitted: false,

@@ -126,6 +126,7 @@ async function run() {
   assert(mainSource.includes('rememberCompletedMediaDownload(completedTask);'), 'completed downloads must be persisted before the renderer is notified');
   assert(mainSource.includes('showMediaDownloadNotification({ status: \'completed\'') && mainSource.includes("new Notification({ title, body, silent: false })"), 'completed downloads must trigger a native XuanNian notification from the real download completion event');
   assert(mainSource.includes("mode: 'video-download'") && mainSource.includes('downloadParsedMediaVideo'), 'video automation must parse before an explicit highest-quality download action');
+  assert(mainSource.includes('reloadParsedVideoDownloadPage') && mainSource.includes("automationStage: 'video-download-reparse'"), 'a stale or preview-consumed result page must be reparsed before download fallback candidates are tried');
   assert(mainSource.includes("mode === 'music-search'") && mainSource.includes('sanitizeMusicResults') && mainSource.includes('downloadMediaMusicResult'), 'music automation must return multiple results before downloading the selected version');
   assert(mainSource.includes('media:portalProgress') && mainSource.includes('waitForMediaPortalDownload'), 'media parsing and delayed music downloads must expose real progress states');
   assert(mainSource.includes('findInstalledMusicClient') && mainSource.includes('openHighQualityMusic'), 'high-quality music must prefer an installed cloud-drive client');
@@ -141,7 +142,7 @@ async function run() {
   assert(mediaLibrarySource.includes('async function scanMediaDirectory'), 'local media files must be derived from the selected folders');
   assert(mediaLibrarySource.includes('async function listManagedMediaFiles'), 'media scanning must enumerate only supported media files');
   assert(mediaLibrarySource.includes('async function deleteMediaCollection'), 'media collections need a file-preserving delete path');
-  assert(mediaLibrarySource.includes('portalUrl: SEEKIN_UNIVERSAL_PORTAL') && mediaLibrarySource.includes("autoDownloadQuality: 'highest'"), 'video providers must default to Seekin with highest-quality automation');
+  assert(mediaLibrarySource.includes("portalUrl: SEEKIN_UNIVERSAL_PORTAL") && mediaLibrarySource.includes("autoDownloadQuality: 'highest'"), 'all supported video providers must start with Seekin while retaining highest-quality automation');
   assert(mediaLibrarySource.includes("id: 'tiktok'") && mediaLibrarySource.includes("{ url: SEEKIN_UNIVERSAL_PORTAL, label: 'Seekin' }"), 'TikTok must use Seekin before its VPN fallback');
   assert(mediaLibrarySource.includes('finalFallback: true') && mediaLibrarySource.includes("label: 'DLPanda'"), 'Douyin must keep DLPanda as its final VPN fallback');
   assert(mediaLibrarySource.includes('function scoreMediaDownloadQualityLabel('), 'highest-quality download selection must use a deterministic quality scorer');
@@ -164,7 +165,9 @@ async function run() {
   assert(indexSource.includes('MEDIA_PORTAL_HEALTH_KEY') && indexSource.includes('recordMediaPortalFailure') && indexSource.includes('MEDIA_PORTAL_IMMEDIATE_DAILY_FAILURES') && indexSource.includes('nextHealthyMediaPortalIndex'), 'verified site failures must be skipped for the rest of the local day without treating one content failure as a site outage');
   assert(indexSource.includes('普通音质') && indexSource.includes('高清音质') && indexSource.includes("api.openHighQualityMusic(displayName,favorite?'favorite':'download',collection)"), 'music quality choices must use user-facing labels and pass the selected library destination to the native high-quality client bridge');
   assert(mainSource.includes('startMediaExternalAudioTracker') && mainSource.includes('等待云盘客户端下载') && mainSource.includes('importExternalAudioTracker'), 'external cloud-drive audio downloads must be tracked and imported without recursive disk scanning');
-  assert(!indexSource.includes('id="mediaToggleBrowser"') && indexSource.includes('id="mediaVideoProvider"') && indexSource.includes('id="mediaMusicProvider"'), 'media pages must keep provider labels without exposing an original-site eye toggle');
+  assert(indexSource.includes('id="mediaVideoManualPortal"') && indexSource.includes('id="mediaMusicManualPortal"') && indexSource.includes('offerMediaManualPortal'), 'media pages must expose a conditional original-site control after automatic handling fails');
+  assert(indexSource.includes("const nextIndex=currentIndex+1<routes.length?currentIndex+1:-1") && indexSource.includes("let portalIndex=Number.isInteger(routeSelection)?routeSelection:0"), 'each video request must actually try the primary route and every configured fallback before manual handling');
+  assert(mediaStyleSource.includes('.media-manual-portal{width:28px;height:28px;margin-left:auto') && mediaStyleSource.includes('.media-manual-portal[hidden]{display:none!important}'), 'the conditional manual-site control must stay at the right edge and remain absent before all automatic routes fail');
   assert(indexSource.includes('id="mediaAutomationProgress"') && indexSource.includes('onMediaPortalProgress'), 'native media pages must display parser and countdown progress');
   assert(/id="mediaDirectShell"[\s\S]*?id="mediaAutomationProgress"/.test(indexSource) && indexSource.includes("const visible=progress.status==='running'"), 'media progress must stay in the content area and disappear immediately after success or failure');
   assert(indexSource.includes('id="mediaDownloadBubble"'), 'download progress must remain visible in the main window');

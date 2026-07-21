@@ -12,7 +12,31 @@ function isHttpUrl(value) {
 }
 
 function isMediaUrl(value) {
-  return isHttpUrl(value) && /\.(?:mp4|m4v|mov|webm|mkv|mp3|m4a|wav|flac|aac|ogg)(?:[?#]|$)/i.test(String(value || ''));
+  if (!isHttpUrl(value)) return false;
+  const raw = String(value || '');
+  if (/\.(?:mp4|m4v|mov|webm|mkv|mp3|m4a|wav|flac|aac|ogg)(?:[?#]|$)/i.test(raw)) return true;
+  let parsed;
+  try { parsed = new URL(raw); } catch { return false; }
+  const host = parsed.hostname.toLowerCase().replace(/^www\./, '');
+  const mediaCdnHost = [
+    'douyinvod.com',
+    'douyinpic.com',
+    'bytev.com',
+    'bilivideo.com',
+    'hdslb.com',
+    'xhscdn.com',
+    'xhscdn.net',
+    'kwimgs.com',
+    'ksapisrv.com',
+    'googlevideo.com',
+    'fbcdn.net',
+    'cdninstagram.com',
+    'akamaized.net',
+  ].some((domain) => host === domain || host.endsWith(`.${domain}`));
+  const mediaSignal = /(?:^|[?&])(?:mime_type|mime|format|type)=(?:video|audio)(?:_|%2f|\/)/i.test(parsed.search)
+    || /\/(?:video|audio)\/(?:tos|play|download|stream)(?:\/|$)/i.test(parsed.pathname)
+    || /\/(?:video|audio)\/tos\//i.test(parsed.pathname);
+  return mediaCdnHost && mediaSignal;
 }
 
 function normalizedHost(value) {
@@ -135,10 +159,20 @@ function buildPortalScript({ mode, value = '', phase = '', timeoutMs = 30000, ca
       return score;
     };
     const setInputValue = (input) => {
+      const previousValue = String(input.value || '');
       const prototype = input.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
       const setter = Object.getOwnPropertyDescriptor(prototype, 'value')?.set;
       if (setter) setter.call(input, sourceValue); else input.value = sourceValue;
-      input.dispatchEvent(new Event('input', { bubbles: true }));
+      try {
+        const tracker = input._valueTracker;
+        if (tracker) tracker.setValue(previousValue);
+      } catch {}
+      try {
+        input.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertFromPaste', data: sourceValue }));
+        input.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertFromPaste', data: sourceValue }));
+      } catch {
+        input.dispatchEvent(new Event('input', { bubbles: true }));
+      }
       input.dispatchEvent(new Event('change', { bubbles: true }));
       input.focus();
     };
@@ -149,14 +183,26 @@ function buildPortalScript({ mode, value = '', phase = '', timeoutMs = 30000, ca
       return local.find((element) => matcher.test(text(element)))
         || [...document.querySelectorAll('button,input[type="submit"],[role="button"]')].filter(visible).find((element) => matcher.test(text(element)));
     };
+    const videoResultRoot = (element) => {
+      let current = element?.parentElement;
+      for (let depth = 0; current && depth < 6; depth += 1, current = current.parentElement) {
+        const value = text(current).replace(/\s+/g, ' ').trim();
+        const actions = [...current.querySelectorAll('button,a,[role="button"]')]
+          .filter(visible)
+          .filter((item) => /(?:下载|download|保存|save)/i.test(text(item)));
+        if (actions.length <= 2 && /(?:\d+(?:\.\d+)?\s*(?:gb|mb|kb)|\b(?:2160|1440|1080|720|480)\s*p?\b|原画|超清|高清|original|best|uhd|fhd|\bhd\b|\.mp4)/i.test(value)) return current;
+      }
+      return element?.closest('article,li,tr,[class*="quality"],[class*="resolution"],[class*="download-item"],[class*="format"],[class*="option"],[class*="card"]') || element?.parentElement;
+    };
     const videoCandidates = () => [...document.querySelectorAll('button,[role="button"],a')]
       .filter(visible)
       .map((element, index) => {
         const label = text(element);
         const href = httpUrl(element.href || element.getAttribute('href'));
-        const resultRoot = element.closest('[class*="result"],[class*="quality"],[class*="resolution"],[class*="download-item"],article,li,tr');
+        const resultRoot = videoResultRoot(element);
         const resultText = text(resultRoot);
-        const descriptiveLabel = String(resultText || label).replace(/\\s+/g, ' ').trim().slice(0, 240);
+        const ownQuality = qualityScore(label);
+        const descriptiveLabel = String(ownQuality >= 0 ? label : (resultText || label)).replace(/\\s+/g, ' ').trim().slice(0, 240);
         const quality = qualityScore(descriptiveLabel);
         const parserAction = element.getAttribute('data-xuannian-parser-action') === 'true';
         const inertSamePageLink = element.tagName === 'A' && !!href && sameDocumentUrl(href);
@@ -166,16 +212,23 @@ function buildPortalScript({ mode, value = '', phase = '', timeoutMs = 30000, ca
         const nearbyInput = element.closest('form')?.querySelector('input,textarea')
           || element.parentElement?.querySelector?.('input,textarea');
         const repeatsSourceInput = !!sourceValue && String(nearbyInput?.value || '').trim() === sourceValue.trim();
-        const hasResultEvidence = !!mediaUrl(href)
+        const technicalResultEvidence = !!mediaUrl(href)
           || element.hasAttribute('download')
-          || !!resultRoot?.querySelector?.('video,audio,img,source')
+          || !!resultRoot?.querySelector?.('video,audio,source')
           || /(?:\d+(?:\.\d+)?\s*(?:gb|mb|kb)|\b(?:2160|1440|1080|720|480)\s*p?\b|原画|超清|高清|original|best|uhd|fhd|\bhd\b)/i.test(resultText);
+        const structuredResultContainer = !!element.closest('article,li,tr,[class*="result"],[class*="quality"],[class*="resolution"],[class*="download-item"],[class*="format"],[class*="option"],[class*="card"]');
+        const genericDownloadAction = /^(?:立即|开始|免费)?\s*(?:下载|download)\s*$/i.test(label);
+        const marketingCopy = /多平台视频.*(?:免费|下载)|只需粘贴链接|粘贴.{0,40}(?:即可|就能).{0,80}(?:下载|保存)|极速.*无水印|由\s*seekin\s*提供|free.{0,100}(?:without watermark|lossless video quality)|require.{0,40}sessdata/i.test(resultText);
+        const hasResultEvidence = technicalResultEvidence
+          || (!!resultRoot?.querySelector?.('img') && structuredResultContainer && !marketingCopy);
         const hasDownloadAction = /(?:下载|保存|download|save)/i.test(label);
         const disallowed = parserAction
           || inertSamePageLink
           || toolNavigationLink
           || mismatchedPlatformLink
           || repeatsSourceInput
+          || marketingCopy
+          || (genericDownloadAction && !technicalResultEvidence && !structuredResultContainer)
           || /(?:为什么|无法下载|下载失败|帮助|教程|常见问题|faq|how\s+to|support)/i.test(label)
           || /[?？]\s*$/.test(label);
         let score = quality >= 0 && (hasResultEvidence || hasDownloadAction) ? 100000 + quality : -1;
@@ -259,7 +312,17 @@ function buildPortalScript({ mode, value = '', phase = '', timeoutMs = 30000, ca
         if (Date.now() < deadline) pause(attemptVideoInput); else resolve({ ok: false, stage: 'input', reason: 'input-missing' });
         return;
       }
-      setInputValue(input);
+      if (input.getAttribute('data-xuannian-input-ready') !== sourceValue) {
+        setInputValue(input);
+        input.setAttribute('data-xuannian-input-ready', sourceValue);
+        pause(attemptVideoInput, 260);
+        return;
+      }
+      if (String(input.value || '').trim() !== sourceValue.trim()) {
+        input.removeAttribute('data-xuannian-input-ready');
+        pause(attemptVideoInput, 80);
+        return;
+      }
       const action = findAction(input);
       if (!action) {
         if (Date.now() < deadline) pause(attemptVideoInput); else resolve({ ok: false, stage: 'input', reason: 'parse-action-missing' });
