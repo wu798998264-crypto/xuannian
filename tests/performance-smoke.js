@@ -114,7 +114,7 @@ async function run() {
   assert(videoThumbnailSource.includes("canvas.toDataURL('image/jpeg', 0.82)"), 'video fallback must return a compressed still frame');
   assert(/function ensureMediaPortalView\([\s\S]*?new WebContentsView[\s\S]*?partition:\s*'persist:xuannian-media-portals'[\s\S]*?nodeIntegration:\s*false[\s\S]*?sandbox:\s*true/.test(mainSource), 'third-party media sites must run in an isolated sandboxed view');
   assert(mainSource.includes('classifyMediaPortalPopup(url, view.webContents.getURL())') && mainSource.includes('popupBlocked: true') && mainSource.includes("return { action: 'deny' }"), 'unexpected third-party popups must be denied without replacing the active parser page');
-  assert(mainSource.includes('view.setBounds({ x: 0, y: 0, width: 1280, height: 900 })'), 'hidden media workers need a real layout viewport so visible inputs and buttons can be detected');
+  assert(mainSource.includes('MEDIA_PORTAL_WORKER_WIDTH = 1280') && mainSource.includes('MEDIA_PORTAL_WORKER_HEIGHT = 900') && mainSource.includes('x: width + 8'), 'hidden media workers need a full off-screen layout viewport so lazy music results render without opening the eye control');
   assert(mainSource.includes("ipcMain.handle('file:showContextMenu'"), 'local file rows need a native open/reveal context menu');
   assert(mainSource.includes("ipcMain.handle('file:startDrag'") && mainSource.includes('event.sender.startDrag({ file: value'), 'local search and media rows need a native OS file drag bridge');
   assert(!mainSource.includes("ipcMain.handle('media:clearCache'"), 'media temporary files must not expose a destructive bulk cleanup action');

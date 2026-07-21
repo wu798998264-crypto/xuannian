@@ -172,6 +172,8 @@ const MEDIA_PORTAL_IDLE_DESTROY_MS = 3 * 60 * 1000;
 const MEDIA_PORTAL_HISTORY_LIMIT = 20;
 const MEDIA_PORTAL_CACHE_LIMIT_BYTES = 128 * 1024 * 1024;
 const MEDIA_PORTAL_CACHE_CHECK_INTERVAL_MS = 60 * 1000;
+const MEDIA_PORTAL_WORKER_WIDTH = 1280;
+const MEDIA_PORTAL_WORKER_HEIGHT = 900;
 const MEDIA_PREVIEW_CACHE_DIRECTORY = 'media-preview-cache';
 const MEDIA_PREVIEW_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const MEDIA_PREVIEW_DOWNLOAD_TIMEOUT_MS = 8 * 60 * 1000;
@@ -3808,8 +3810,12 @@ function keepMediaPortalWorkerVisible(view = mediaPortalView) {
   if (!view || view.webContents.isDestroyed()) return false;
   const content = mainWindow?.getContentBounds();
   const width = Math.max(1, Number(content?.width || 1));
-  const height = Math.max(1, Number(content?.height || 1));
-  view.setBounds({ x: width - 1, y: height - 1, width: 1, height: 1 });
+  view.setBounds({
+    x: width + 8,
+    y: 0,
+    width: MEDIA_PORTAL_WORKER_WIDTH,
+    height: MEDIA_PORTAL_WORKER_HEIGHT,
+  });
   view.setVisible(true);
   view.webContents.setAudioMuted(true);
   return true;
