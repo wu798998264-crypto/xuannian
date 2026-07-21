@@ -208,7 +208,9 @@ async function run() {
   assert(indexSource.includes('id="mediaView"'), 'main window must expose the media library view');
   assert(mainSource.includes('keepMediaPortalWorkerVisible') && mainSource.includes('visibilityRetryCount'), 'hidden media automation must emulate a visible page and retry delayed music results without a manual toggle');
   assert(mainSource.includes('mediaPortalPreviewCapture'), 'video parsing must capture same-session previews from provider download actions');
-  assert(mainSource.includes('scheduleMediaPortalVisibilityNudge') && mainSource.includes('正在唤醒后台页面并读取音乐结果'), 'music search must wake the hidden provider page after three seconds without user interaction');
+  assert(mainSource.includes('scheduleMediaPortalVisibilityNudge') && mainSource.includes('MEDIA_PORTAL_MUSIC_WAKE_MAX = 3') && mainSource.includes('view.webContents.capturePage'), 'first music search must visibly paint and wake the provider up to three times without user interaction');
+  assert(mainSource.includes('music verification visibility retry') && mainSource.includes('visibleMsOverride: 6500') && mainSource.includes('rerunAfterWake: true'), 'first-use Cloudflare verification must remain visible long enough to complete before retrying automatically');
+  assert(mainSource.includes('Number(state.visibilityRetryCount || 0) < 2'), 'music search must retry result extraction twice after the staged visibility wakeups');
   assert(indexSource.includes("addEventListener('dblclick',event=>") && indexSource.includes('.media-music-result[data-music-index]'), 'music search rows must support double-click preview playback');
   assert(mainSource.includes('MEDIA_PREVIEW_MAX_AGE_MS') && mainSource.includes('mediaPreviewCachePath') && mainSource.includes('setMediaPortalPresentationMode'), 'captured previews must use a one-day managed cache and render inside the media stage');
   assert(indexSource.includes("state.fileSearch.clickTimer=setTimeout(()=>performFileSearchAction('copy',index),220)"), 'single-clicking a full-disk result must copy the local file');

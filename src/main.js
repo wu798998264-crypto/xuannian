@@ -140,6 +140,7 @@ let videoThumbnailActive = 0;
 let mediaPortalView = null;
 let mediaPortalInputTimer = null;
 let mediaPortalVisibilityNudgeTimer = null;
+let mediaPortalVisibilityRestoreTimer = null;
 let mediaPortalIdleTimer = null;
 let mediaPortalCacheCheckAt = 0;
 let mediaPortalCacheCheckPromise = null;
@@ -182,6 +183,9 @@ const MEDIA_PORTAL_CACHE_LIMIT_BYTES = 128 * 1024 * 1024;
 const MEDIA_PORTAL_CACHE_CHECK_INTERVAL_MS = 60 * 1000;
 const MEDIA_PORTAL_WORKER_WIDTH = 1280;
 const MEDIA_PORTAL_WORKER_HEIGHT = 900;
+const MEDIA_PORTAL_MUSIC_WAKE_MAX = 3;
+const MEDIA_PORTAL_MUSIC_WAKE_DELAY_MS = 3000;
+const MEDIA_PORTAL_MUSIC_WAKE_VISIBLE_MS = 700;
 const MEDIA_PREVIEW_CACHE_DIRECTORY = 'media-preview-cache';
 const MEDIA_PREVIEW_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const MEDIA_PREVIEW_DOWNLOAD_TIMEOUT_MS = 8 * 60 * 1000;
@@ -3310,44 +3314,87 @@ function clearMediaPortalInputTimer() {
 function clearMediaPortalVisibilityNudgeTimer() {
   clearTimeout(mediaPortalVisibilityNudgeTimer);
   mediaPortalVisibilityNudgeTimer = null;
+  clearTimeout(mediaPortalVisibilityRestoreTimer);
+  mediaPortalVisibilityRestoreTimer = null;
 }
 
-function scheduleMediaPortalVisibilityNudge(state, view) {
-  if (state?.automationMode !== 'music-search' || state.visibilityNudgeScheduled) return;
-  state.visibilityNudgeScheduled = true;
-  clearMediaPortalVisibilityNudgeTimer();
+function scheduleMediaPortalVisibilityNudge(state, view, {
+  delayMsOverride = null,
+  visibleMsOverride = null,
+  rerunAfterWake = false,
+} = {}) {
+  if (state?.automationMode !== 'music-search'
+    || mediaPortalVisibilityNudgeTimer
+    || mediaPortalVisibilityRestoreTimer
+    || Number(state.visibilityNudgeCount || 0) >= MEDIA_PORTAL_MUSIC_WAKE_MAX) return;
+  const delayMs = Number.isFinite(delayMsOverride)
+    ? Math.max(0, Number(delayMsOverride))
+    : (Number(state.visibilityNudgeCount || 0) > 0
+      ? Math.max(1200, MEDIA_PORTAL_MUSIC_WAKE_DELAY_MS - MEDIA_PORTAL_MUSIC_WAKE_VISIBLE_MS)
+      : MEDIA_PORTAL_MUSIC_WAKE_DELAY_MS);
+  const visibleMs = Number.isFinite(visibleMsOverride)
+    ? Math.max(MEDIA_PORTAL_MUSIC_WAKE_VISIBLE_MS, Number(visibleMsOverride))
+    : MEDIA_PORTAL_MUSIC_WAKE_VISIBLE_MS;
   mediaPortalVisibilityNudgeTimer = setTimeout(async () => {
     mediaPortalVisibilityNudgeTimer = null;
     if (mediaPortalInputState !== state || state.requestId !== mediaPortalRequestId || !view || view.webContents.isDestroyed()) return;
     state.visibilityNudgeCount = Number(state.visibilityNudgeCount || 0) + 1;
     const content = mainWindow?.getContentBounds();
-    const width = Math.max(2, Number(content?.width || 2));
-    const height = Math.max(2, Number(content?.height || 2));
+    const width = Math.max(320, Number(content?.width || MEDIA_PORTAL_WORKER_WIDTH));
+    const height = Math.max(240, Number(content?.height || MEDIA_PORTAL_WORKER_HEIGHT));
+    const x = width >= 640 ? 64 : 0;
+    const y = height >= 480 ? 132 : 0;
+    const wakeWidth = Math.max(120, width - x);
+    const wakeHeight = Math.max(80, height - y);
+    const restoreMainFocus = !!mainWindow?.isFocused?.();
     view.setBounds({
-      x: Math.max(0, width - 2),
-      y: Math.max(0, height - 2),
-      width: MEDIA_PORTAL_WORKER_WIDTH,
-      height: MEDIA_PORTAL_WORKER_HEIGHT,
+      x,
+      y,
+      width: wakeWidth,
+      height: wakeHeight,
     });
     view.setVisible(true);
     view.webContents.setAudioMuted(true);
-    emitMediaPortalProgress(state, { percent: 70, message: '正在唤醒后台页面并读取音乐结果' });
+    try { view.webContents.focus(); } catch {}
+    runtimeLog(`music search visibility wake ${state.visibilityNudgeCount}/${MEDIA_PORTAL_MUSIC_WAKE_MAX}`);
+    emitMediaPortalProgress(state, {
+      percent: Math.min(76, 68 + state.visibilityNudgeCount * 2),
+      message: `正在激活音乐页面并读取结果（${state.visibilityNudgeCount}/${MEDIA_PORTAL_MUSIC_WAKE_MAX}）`,
+    });
     const visibilityScript = [
-      '(() => {',
+      '(async () => {',
       'window.dispatchEvent(new Event("focus"));',
       'window.dispatchEvent(new Event("resize"));',
       'document.dispatchEvent(new Event("visibilitychange"));',
+      'window.scrollBy(0, 1);',
+      'window.scrollBy(0, -1);',
       'document.querySelector("main,body")?.getBoundingClientRect();',
+      'await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));',
       'return document.visibilityState;',
       '})()',
     ].join('\n');
     try {
       await view.webContents.executeJavaScript(visibilityScript, true);
     } catch {}
-    setTimeout(() => {
-      if (mediaPortalInputState === state && state.requestId === mediaPortalRequestId) keepMediaPortalWorkerVisible(view);
-    }, 180);
-  }, 3000);
+    try {
+      await view.webContents.capturePage({
+        x: 0,
+        y: 0,
+        width: Math.min(640, wakeWidth),
+        height: Math.min(360, wakeHeight),
+      });
+    } catch {}
+    mediaPortalVisibilityRestoreTimer = setTimeout(() => {
+      mediaPortalVisibilityRestoreTimer = null;
+      if (mediaPortalInputState !== state || state.requestId !== mediaPortalRequestId || view.webContents.isDestroyed()) return;
+      keepMediaPortalWorkerVisible(view);
+      if (restoreMainFocus && mainWindow && !mainWindow.isDestroyed()) {
+        try { mainWindow.webContents.focus(); } catch {}
+      }
+      if (rerunAfterWake) scheduleMediaPortalInput();
+      else scheduleMediaPortalVisibilityNudge(state, view);
+    }, visibleMs);
+  }, delayMs);
 }
 
 function clearMediaPortalVerificationMonitor({ clearResume = true } = {}) {
@@ -3771,9 +3818,25 @@ async function completeMediaPortalAutomation(state, result = {}) {
   clearMediaPortalVisibilityNudgeTimer();
   const view = mediaPortalView;
   const mode = state.automationMode;
-  if (String(result.reason || '') === 'human-verification' && String(mode || '').startsWith('music-')) {
-    rememberMediaPortalVerificationResume(state);
+  const humanVerification = String(result.reason || '') === 'human-verification'
+    && String(mode || '').startsWith('music-');
+  if (humanVerification && mode === 'music-search'
+    && Number(state.verificationVisibilityRetryCount || 0) < MEDIA_PORTAL_MUSIC_WAKE_MAX
+    && Number(state.visibilityNudgeCount || 0) < MEDIA_PORTAL_MUSIC_WAKE_MAX) {
+    state.verificationVisibilityRetryCount = Number(state.verificationVisibilityRetryCount || 0) + 1;
+    runtimeLog(`music verification visibility retry ${state.verificationVisibilityRetryCount}/${MEDIA_PORTAL_MUSIC_WAKE_MAX}`);
+    emitMediaPortalProgress(state, {
+      percent: Math.min(78, 68 + state.verificationVisibilityRetryCount * 3),
+      message: `正在自动激活首次验证页面（${state.verificationVisibilityRetryCount}/${MEDIA_PORTAL_MUSIC_WAKE_MAX}）`,
+    });
+    scheduleMediaPortalVisibilityNudge(state, view, {
+      delayMsOverride: 0,
+      visibleMsOverride: 6500,
+      rerunAfterWake: true,
+    });
+    return;
   }
+  if (humanVerification) rememberMediaPortalVerificationResume(state);
   if (mode === 'video-parse') {
     const parsed = {
       requestId: state.requestId,
@@ -3829,9 +3892,11 @@ async function completeMediaPortalAutomation(state, result = {}) {
   } else if (mode === 'music-search') {
     const results = sanitizeMusicResults(result.results);
     const searchSucceeded = !!result.ok && results.length > 0;
-    if (!searchSucceeded && String(result.reason || '') === 'search-timeout' && Number(state.visibilityRetryCount || 0) < 1) {
+    if (!searchSucceeded && String(result.reason || '') === 'search-timeout' && Number(state.visibilityRetryCount || 0) < 2) {
       state.visibilityRetryCount = Number(state.visibilityRetryCount || 0) + 1;
+      state.visibilityNudgeCount = 0;
       state.progressStartedAt = Date.now();
+      runtimeLog(`music search extraction retry ${state.visibilityRetryCount}/2`);
       emitMediaPortalProgress(state, { percent: 72, message: '正在激活后台页面并重新读取音乐结果' });
       try {
         await mediaPortalView?.webContents.executeJavaScript(`(() => {
