@@ -114,6 +114,7 @@ async function run() {
   assert(videoThumbnailSource.includes("canvas.toDataURL('image/jpeg', 0.82)"), 'video fallback must return a compressed still frame');
   assert(/function ensureMediaPortalView\([\s\S]*?new WebContentsView[\s\S]*?partition:\s*'persist:xuannian-media-portals'[\s\S]*?nodeIntegration:\s*false[\s\S]*?sandbox:\s*true/.test(mainSource), 'third-party media sites must run in an isolated sandboxed view');
   assert(mainSource.includes('classifyMediaPortalPopup(url, view.webContents.getURL())') && mainSource.includes('popupBlocked: true') && mainSource.includes("return { action: 'deny' }"), 'unexpected third-party popups must be denied without replacing the active parser page');
+  assert(mainSource.includes('expectMediaPortalPopupDownload(view.webContents') && mainSource.includes('expectedDownload && isHttpUrl(url)'), 'an explicitly clicked result must capture extensionless CDN download popups without allowing unrelated popups');
   assert(mainSource.includes('MEDIA_PORTAL_WORKER_WIDTH = 1280') && mainSource.includes('MEDIA_PORTAL_WORKER_HEIGHT = 900') && mainSource.includes('x: width + 8'), 'hidden media workers need a full off-screen layout viewport so lazy music results render without opening the eye control');
   assert(mainSource.includes("ipcMain.handle('file:showContextMenu'"), 'local file rows need a native open/reveal context menu');
   assert(mainSource.includes("ipcMain.handle('file:startDrag'") && mainSource.includes('event.sender.startDrag({ file: value'), 'local search and media rows need a native OS file drag bridge');
@@ -127,9 +128,12 @@ async function run() {
   assert(mainSource.includes('showMediaDownloadNotification({ status: \'completed\'') && mainSource.includes("new Notification({ title, body, silent: false })"), 'completed downloads must trigger a native XuanNian notification from the real download completion event');
   assert(mainSource.includes("mode: 'video-download'") && mainSource.includes('downloadParsedMediaVideo'), 'video automation must parse before an explicit highest-quality download action');
   assert(mainSource.includes('reloadParsedVideoDownloadPage') && mainSource.includes("automationStage: 'video-download-reparse'"), 'a stale or preview-consumed result page must be reparsed before download fallback candidates are tried');
+  assert(mainSource.includes('promoteMediaPreviewToLibrary') && mainSource.includes('parsed.capturedLocalPath'), 'a completed temporary preview must become the tracked download fallback when higher qualities fail');
+  assert(mainSource.includes('media portal reused cached preview for repeated source'), 'repeated video links should reuse the valid preview cache instead of re-triggering a rate-limited parse');
   assert(mainSource.includes("mode === 'music-search'") && mainSource.includes('sanitizeMusicResults') && mainSource.includes('downloadMediaMusicResult'), 'music automation must return multiple results before downloading the selected version');
   assert(mainSource.includes('media:portalProgress') && mainSource.includes('waitForMediaPortalDownload'), 'media parsing and delayed music downloads must expose real progress states');
   assert(mainSource.includes('findInstalledMusicClient') && mainSource.includes('openHighQualityMusic'), 'high-quality music must prefer an installed cloud-drive client');
+  assert(mainSource.includes('resumeMediaPortalAfterVerification') && mainSource.includes('verificationPending: true'), 'music human verification must resume the interrupted task after the user completes the challenge');
   assert(mainSource.includes('preferredName') && mainSource.includes('displayName') && mainSource.includes('receivedFilename'), 'music downloads must use the selected page title instead of provider-generated code filenames');
   assert(mainSource.includes('activeMediaPortalDownloads') && mainSource.includes('backgroundThrottling: false'), 'hidden media workers must remain responsive while active and release after completion');
   assert(mainSource.includes('function destroyMediaPortalView('), 'embedded media browser must have an explicit destruction path');

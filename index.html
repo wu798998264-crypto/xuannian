@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>玄念8.1.9</title>
+  <title>玄念8.2.0</title>
   <link rel="icon" href="src/xuannian-logo-256.png" />
   <link rel="stylesheet" href="src/media-library.css" />
   <style>
@@ -1730,6 +1730,7 @@ function createBrowserFallbackAPI(){
     async getLocalMediaPlaybackUrl(filePath){ return String(filePath||''); },
     async openMediaPortal(url){ return this.openExternal(url); },
     async downloadParsedMediaVideo(){ return {ok:false,reason:'预览环境不支持媒体下载'}; },
+    async resumeMediaPortalAfterVerification(){ return {ok:false}; },
     async downloadMediaMusicResult(){ return false; },
     async previewMediaMusicResult(){ return false; },
     async openHighQualityMusic(){ return {ok:false,reason:'预览环境不支持打开本地音乐客户端'}; },
@@ -1856,6 +1857,7 @@ function createUnifiedAPI(nativeApi, fallback){
     deleteMediaDownloadHistoryItem: (taskId)=> nativeApi.deleteMediaDownloadHistoryItem ? nativeApi.deleteMediaDownloadHistoryItem(taskId) : fallback.deleteMediaDownloadHistoryItem(taskId),
     openMediaPortal: (url,downloadTarget,sourceText,autoSubmit,collection,qualityPreference,automationMode)=> nativeApi.openMediaPortal ? nativeApi.openMediaPortal(url,downloadTarget,sourceText,autoSubmit,collection,qualityPreference,automationMode) : fallback.openMediaPortal(url,downloadTarget,sourceText,autoSubmit,collection,qualityPreference,automationMode),
     downloadParsedMediaVideo: (downloadTarget,collection)=> nativeApi.downloadParsedMediaVideo ? nativeApi.downloadParsedMediaVideo(downloadTarget,collection) : Promise.resolve({ok:false,reason:'当前环境不支持媒体下载'}),
+    resumeMediaPortalAfterVerification: ()=> nativeApi.resumeMediaPortalAfterVerification ? nativeApi.resumeMediaPortalAfterVerification() : fallback.resumeMediaPortalAfterVerification(),
     downloadMediaMusicResult: (url,downloadTarget,collection,preferredName)=> nativeApi.downloadMediaMusicResult ? nativeApi.downloadMediaMusicResult(url,downloadTarget,collection,preferredName) : Promise.resolve(false),
     previewMediaMusicResult: (url)=> nativeApi.previewMediaMusicResult ? nativeApi.previewMediaMusicResult(url) : Promise.resolve(false),
     openHighQualityMusic: (query,downloadTarget,collection)=> nativeApi.openHighQualityMusic ? nativeApi.openHighQualityMusic(query,downloadTarget,collection) : fallback.openHighQualityMusic(query),
@@ -2034,6 +2036,7 @@ async function init(){
   });
   window.nativeAPI?.onMediaBrowserState?.((payload)=>{
     state.media.browser={...state.media.browser,...payload};
+    if(payload?.verificationCompleted) state.media.browserVisible=false;
     renderMediaBrowserState();
     if(payload?.autoActionMissing&&payload?.automationStage==='music-download'){
       void offerMediaManualPortal('audio',String(payload?.failureReason||'download-timeout'),String(payload?.url||state.media.browser.url||''));
@@ -2106,6 +2109,9 @@ async function init(){
       requestAnimationFrame(()=>$('#mediaMusicResults audio[data-music-preview-audio]')?.play().catch(()=>{}));
     }else{
       toast(mediaPortalFailureMessage(payload?.reason||'preview-unavailable','audio'));
+      if(payload?.reason==='human-verification'){
+        void offerMediaManualPortal('audio','human-verification',String(payload?.resultUrl||state.media.browser.url||'https://www.gequbao.com/'));
+      }
     }
   });
   window.nativeAPI?.onMainSuspend?.(()=>{
@@ -3441,7 +3447,7 @@ function resolveMediaVideoProviderFallback(value=''){
   const vpnFallback={url:dlpanda,label:'DLPanda',requiresVpn:true,finalFallback:true};
   if(matches(['douyin.com','iesdouyin.com'])) return {id:'douyin',label:'抖音',portalUrl:seekin,fallbackUrl:'https://www.hellotik.app/zh/douyin',sourceUrl,autoDownloadQuality:'highest',portals:[{url:seekin,label:'Seekin'},{url:'https://www.hellotik.app/zh/douyin',label:'HelloTik'},vpnFallback]};
   if(matches(['tiktok.com'])) return {id:'tiktok',label:'TikTok',portalUrl:seekin,fallbackUrl:dlpanda,sourceUrl,autoDownloadQuality:'highest',portals:[{url:seekin,label:'Seekin'},vpnFallback]};
-  if(matches(['bilibili.com','b23.tv'])) return {id:'bilibili',label:'哔哩哔哩',portalUrl:seekin,fallbackUrl:'https://www.seekin.ai/zh/bilibili-downloader/',sourceUrl,portals:[{url:seekin,label:'Seekin'},{url:'https://www.seekin.ai/zh/bilibili-downloader/',label:'Seekin Bilibili'},vpnFallback]};
+  if(matches(['bilibili.com','b23.tv'])) return {id:'bilibili',label:'哔哩哔哩',portalUrl:'https://www.seekin.ai/zh/bilibili-downloader/',fallbackUrl:seekin,sourceUrl,portals:[{url:'https://www.seekin.ai/zh/bilibili-downloader/',label:'Seekin Bilibili'},{url:seekin,label:'Seekin'},vpnFallback]};
   if(matches(['xiaohongshu.com','xhslink.com'])) return {id:'xiaohongshu',label:'小红书',portalUrl:seekin,fallbackUrl:'https://www.hellotik.app/zh/rednote',sourceUrl,portals:[{url:seekin,label:'Seekin'},{url:'https://www.hellotik.app/zh/rednote',label:'HelloTik'},{url:'https://www.xiaohongshua.com/',label:'Xiaohongshua'},vpnFallback]};
   if(matches(['kuaishou.com','gifshow.com','kwai.com'])) return {id:'kuaishou',label:'快手',portalUrl:seekin,fallbackUrl:'https://www.hellotik.app/zh/kuaishou',sourceUrl,portals:[{url:seekin,label:'Seekin'},{url:'https://www.hellotik.app/zh/kuaishou',label:'HelloTik'},vpnFallback]};
   if(matches(['youtube.com','youtu.be'])) return {id:'youtube',label:'YouTube',portalUrl:seekin,fallbackUrl:dlpanda,sourceUrl,portals:[{url:seekin,label:'Seekin'},vpnFallback]};
@@ -3747,14 +3753,21 @@ async function offerMediaManualPortal(kind='video',reason='automation-error',url
   state.media.manualPortal.prompting=true;
   const site=kind==='audio'?'歌曲宝':'当前下载站';
   const detail=mediaPortalFailureMessage(reason,kind).replace(/。请.*$/,'');
+  const verification=kind==='audio'&&reason==='human-verification';
   const confirmed=await showConfirmModal({
-    title:'需要手动处理',
-    message:`${detail}。是否在玄念内打开${site}手动完成？`,
-    confirmText:'打开原站',
+    title:verification?'需要真人验证':'需要手动处理',
+    message:verification?'歌曲宝首次使用可能要求真人验证。点击确认后将在玄念内打开验证页面；完成验证后会自动返回音乐结果页面。':`${detail}。是否在玄念内打开${site}手动完成？`,
+    confirmText:verification?'去验证':'打开原站',
     cancelText:'取消',
   });
   state.media.manualPortal.prompting=false;
-  if(confirmed) await toggleMediaManualPortal(kind,{forceOpen:true});
+  if(confirmed){
+    await toggleMediaManualPortal(kind,{forceOpen:true});
+    if(verification){
+      const resumed=await api.resumeMediaPortalAfterVerification();
+      if(!resumed?.ok) toast('验证页面状态已失效，请重新搜索音乐');
+    }
+  }
 }
 
 function handleMediaVideoParseFailure(reason='automation-error'){
@@ -3808,7 +3821,7 @@ function updateMediaVideoProvider({autoParse=false}={}){
   const label=$('#mediaVideoProvider');
   if(label) label.innerHTML=provider?`<span class="media-provider-pill">${escapeHtml(provider.label)} · ${escapeHtml(selectedRoute?.label||'下载站')}</span>`:'等待识别平台';
   const fallback=$('#mediaVideoFallback');
-  if(fallback) fallback.hidden=routes.length<2;
+  if(fallback) fallback.hidden=true;
   if(state.media.videoParse.sourceUrl&&state.media.videoParse.sourceUrl!==provider?.sourceUrl){
     state.media.videoParse={status:'idle',requestId:0,sourceUrl:'',previewUrl:'',embeddedPreview:false,title:'',qualityLabel:'',downloadReady:false,error:'',portalIndex:selectedIndex,portalUrl:selectedRoute?.url||''};
   }
@@ -3916,7 +3929,9 @@ async function downloadParsedVideo(favorite=false,options={}){
   }
   state.media.pendingVideoDownload=null;
   clearMediaManualPortal('video');
-  toast(favorite?'下载已开始，完成后自动进入收藏':'视频下载已开始');
+  toast(result.completed
+    ? (favorite?'可用预览视频已保存到收藏':'可用预览视频已保存到下载目录')
+    : (favorite?'下载已开始，完成后自动进入收藏':'视频下载已开始'));
 }
 
 async function searchMediaMusic(){
@@ -4030,6 +4045,11 @@ function renderMediaPortalWorkspace(){
     videoAddress.title=video.status==='error'?videoAddress.textContent:'';
   }
   if($('#mediaVideoRetry')) $('#mediaVideoRetry').hidden=video.status!=='error';
+  const fallback=$('#mediaVideoFallback');
+  if(fallback){
+    const remainingRoutes=mediaPortalRoutes(state.media.videoProvider).length-Number(video.portalIndex||0)-1;
+    fallback.hidden=video.status!=='error'||remainingRoutes<=0;
+  }
   const preview=$('#mediaVideoPreview');
   if(preview){
     const next=String(video.previewUrl||'');

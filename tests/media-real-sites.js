@@ -17,7 +17,7 @@ const CASES = [
   },
   {
     id: 'kuaishou',
-    source: 'https://www.kuaishou.com/f/X-2Yx2wKCy7jxLZb',
+    source: 'https://www.kuaishou.com/f/X-1NCQbuUPVIY1dm',
   },
 ];
 
@@ -164,6 +164,22 @@ async function parseOnce(webContents, provider) {
           const rect = element.getBoundingClientRect();
           return rect.width > 20 && rect.height > 10;
         }).slice(0, 80).map((element) => String(element.innerText || element.textContent || element.getAttribute('aria-label') || '').trim().slice(0, 240)),
+        downloadActions: [...document.querySelectorAll('button,a,[role="button"]')]
+          .filter((element) => /download|下载/i.test(String(element.innerText || element.textContent || '')))
+          .map((element) => ({
+            tag: element.tagName,
+            text: String(element.innerText || element.textContent || '').trim().slice(0, 300),
+            outerHTML: element.outerHTML.slice(0, 1600),
+            ancestors: Array.from({ length: 8 }, (_, index) => {
+              let current = element;
+              for (let depth = 0; current && depth <= index; depth += 1) current = current.parentElement;
+              return current ? {
+                tag: current.tagName,
+                className: String(current.className || '').slice(0, 300),
+                text: String(current.innerText || current.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 1000),
+              } : null;
+            }).filter(Boolean),
+          })).slice(0, 12),
       }))()`, true);
       console.log('real media debug ' + JSON.stringify(debug));
     }
@@ -237,7 +253,7 @@ async function run() {
       results.push({ id: testCase.id, attempt: 0, parsed: { ok: false, reason: 'provider-not-detected' } });
       continue;
     }
-    const attemptLimit = Math.max(1, Math.min(3, Number(process.env.REAL_MEDIA_ATTEMPTS || 2)));
+    const attemptLimit = Math.max(1, Math.min(3, Number(process.env.REAL_MEDIA_ATTEMPTS || 1)));
     for (let attempt = 1; attempt <= attemptLimit; attempt += 1) {
       let result;
       let usedPortal = '';

@@ -127,8 +127,21 @@ function buildPortalScript({ mode, value = '', phase = '', timeoutMs = 30000, ca
     const sourcePlatform = platformFor(sourceValue);
     const mediaUrl = (value) => {
       const url = httpUrl(value);
-      return /\\.(?:mp4|m4v|mov|webm|mkv|mp3|m4a|wav|flac|aac|ogg)(?:[?#]|$)/i.test(url) ? url : '';
+      if (!url) return '';
+      if (/\\.(?:mp4|m4v|mov|webm|mkv|mp3|m4a|wav|flac|aac|ogg)(?:[?#]|$)/i.test(url)) return url;
+      try {
+        const parsed = new URL(url);
+        const host = parsed.hostname.toLowerCase().replace(/^www\\./, '');
+        const mediaHost = ['douyinvod.com', 'douyinpic.com', 'bytev.com', 'bilivideo.com', 'hdslb.com', 'xhscdn.com', 'xhscdn.net', 'kwimgs.com', 'ksapisrv.com', 'googlevideo.com', 'fbcdn.net', 'cdninstagram.com', 'akamaized.net']
+          .some((domain) => host === domain || host.endsWith('.' + domain));
+        const mediaSignal = /(?:^|[?&])(?:mime_type|mime|format|type)=(?:video|audio)(?:_|%2f|\\/)/i.test(parsed.search)
+          || /\\/(?:video|audio)\\/(?:tos|play|download|stream)(?:\\/|$)/i.test(parsed.pathname);
+        return mediaHost && mediaSignal ? url : '';
+      } catch {
+        return '';
+      }
     };
+    const videoResultSignal = (value) => /(?:\\d+(?:\\.\\d+)?\\s*(?:gb|mb|kb)|\\b\\d{3,4}\\s*p\\b|原画|超清|高清|original|best|uhd|fhd|\\bhd\\b|(?:video|mp4)\\s*\\(?\\s*\\.?mp4\\s*\\)?|\\.mp4)/i.test(String(value || ''));
     const installPopupGuards = () => {
       try { window.alert = () => undefined; } catch {}
       try { window.confirm = () => false; } catch {}
@@ -185,14 +198,17 @@ function buildPortalScript({ mode, value = '', phase = '', timeoutMs = 30000, ca
     };
     const videoResultRoot = (element) => {
       let current = element?.parentElement;
-      for (let depth = 0; current && depth < 6; depth += 1, current = current.parentElement) {
+      let fallback = element?.parentElement || null;
+      for (let depth = 0; current && depth < 12 && current !== document.body; depth += 1, current = current.parentElement) {
         const value = text(current).replace(/\s+/g, ' ').trim();
         const actions = [...current.querySelectorAll('button,a,[role="button"]')]
           .filter(visible)
           .filter((item) => /(?:下载|download|保存|save)/i.test(text(item)));
-        if (actions.length <= 2 && /(?:\d+(?:\.\d+)?\s*(?:gb|mb|kb)|\b(?:2160|1440|1080|720|480)\s*p?\b|原画|超清|高清|original|best|uhd|fhd|\bhd\b|\.mp4)/i.test(value)) return current;
+        const mediaPreview = !!current.querySelector('img,video,source');
+        if (videoResultSignal(value) && actions.length > 0 && actions.length <= 4 && value.length <= 2000) return current;
+        if (mediaPreview && actions.length > 0 && actions.length <= 4 && value.length <= 1200) fallback = current;
       }
-      return element?.closest('article,li,tr,[class*="quality"],[class*="resolution"],[class*="download-item"],[class*="format"],[class*="option"],[class*="card"]') || element?.parentElement;
+      return element?.closest('article,li,tr,[class*="result"],[class*="quality"],[class*="resolution"],[class*="download-item"],[class*="format"],[class*="option"],[class*="card"]') || fallback;
     };
     const videoCandidates = () => [...document.querySelectorAll('button,[role="button"],a')]
       .filter(visible)
@@ -215,8 +231,9 @@ function buildPortalScript({ mode, value = '', phase = '', timeoutMs = 30000, ca
         const technicalResultEvidence = !!mediaUrl(href)
           || element.hasAttribute('download')
           || !!resultRoot?.querySelector?.('video,audio,source')
-          || /(?:\d+(?:\.\d+)?\s*(?:gb|mb|kb)|\b(?:2160|1440|1080|720|480)\s*p?\b|原画|超清|高清|original|best|uhd|fhd|\bhd\b)/i.test(resultText);
-        const structuredResultContainer = !!element.closest('article,li,tr,[class*="result"],[class*="quality"],[class*="resolution"],[class*="download-item"],[class*="format"],[class*="option"],[class*="card"]');
+          || videoResultSignal(resultText);
+        const structuredResultContainer = !!element.closest('article,li,tr,[class*="result"],[class*="quality"],[class*="resolution"],[class*="download-item"],[class*="format"],[class*="option"],[class*="card"]')
+          || (!!resultRoot && resultRoot !== element.parentElement && resultText.length <= 2000);
         const genericDownloadAction = /^(?:立即|开始|免费)?\s*(?:下载|download)\s*$/i.test(label);
         const marketingCopy = /多平台视频.*(?:免费|下载)|只需粘贴链接|粘贴.{0,40}(?:即可|就能).{0,80}(?:下载|保存)|极速.*无水印|由\s*seekin\s*提供|free.{0,100}(?:without watermark|lossless video quality)|require.{0,40}sessdata/i.test(resultText);
         const hasResultEvidence = technicalResultEvidence
@@ -389,7 +406,7 @@ function buildPortalScript({ mode, value = '', phase = '', timeoutMs = 30000, ca
       const candidates = videoCandidates();
       const candidate = candidates[requestedCandidateIndex];
       if (candidate) {
-        if (mediaUrl(candidate.href)) resolve({ ok: true, stage: 'download', href: candidate.href, label: candidate.label, clicked: false, candidateIndex: requestedCandidateIndex, candidateCount: candidates.length });
+        if (candidate.href && !sameDocumentUrl(candidate.href) && !portalToolNavigation(candidate.href)) resolve({ ok: true, stage: 'download', href: candidate.href, label: candidate.label, clicked: false, candidateIndex: requestedCandidateIndex, candidateCount: candidates.length });
         else { candidate.element.click(); resolve({ ok: true, stage: 'download', href: '', label: candidate.label, clicked: true, candidateIndex: requestedCandidateIndex, candidateCount: candidates.length }); }
         return;
       }

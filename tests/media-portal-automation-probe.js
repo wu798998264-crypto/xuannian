@@ -129,6 +129,24 @@ async function run() {
   assert.strictEqual(evidencedDownload.ok, true);
   assert.strictEqual(evidencedDownload.downloadActionReady, true);
 
+  await loadFixture(win, '<div class="download-results"><div><img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" style="width:160px;height:90px"><h3>快手视频</h3><div>144p</div><button id="seekin-low" style="width:120px;height:34px">Download</button></div></div>');
+  console.log('probe: accept Seekin 144p result');
+  const seekinLowResult = await win.webContents.executeJavaScript(buildPortalScript({
+    mode: 'video-parse', phase: 'result', value: 'https://www.kuaishou.com/f/example', timeoutMs: 1100,
+  }, scoreMediaDownloadQualityLabel), true);
+  assert.strictEqual(seekinLowResult.ok, true);
+  assert.strictEqual(seekinLowResult.candidateCount, 1);
+  assert(seekinLowResult.qualityLabel.includes('144p'));
+
+  await loadFixture(win, '<div><div><div><div><div><div><div><div><div><h3>Bilibili 视频</h3><span>Video (.MP4)</span><button id="seekin-bili" style="width:120px;height:34px">Download</button></div></div></div></div></div></div></div></div></div>');
+  console.log('probe: accept deeply nested Seekin Bilibili result');
+  const seekinBilibiliResult = await win.webContents.executeJavaScript(buildPortalScript({
+    mode: 'video-parse', phase: 'result', value: 'https://www.bilibili.com/video/example', timeoutMs: 1100,
+  }, scoreMediaDownloadQualityLabel), true);
+  assert.strictEqual(seekinBilibiliResult.ok, true);
+  assert.strictEqual(seekinBilibiliResult.candidateCount, 1);
+  assert(seekinBilibiliResult.qualityLabel.includes('Video (.MP4)'));
+
   await loadFixture(win, '<div id="results"></div>', `
     setTimeout(() => {
       document.querySelector('#results').innerHTML = '<a href="https://www.gequbao.com/music/101" style="display:block;width:320px;height:28px">测试歌曲 - 歌手甲</a><a href="https://www.gequbao.com/music/102" style="display:block;width:320px;height:28px">测试歌曲（现场版） - 歌手乙</a>';

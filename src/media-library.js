@@ -40,11 +40,11 @@ const VIDEO_PROVIDERS = [
     id: 'bilibili',
     label: '哔哩哔哩',
     hosts: ['bilibili.com', 'b23.tv'],
-    portalUrl: SEEKIN_UNIVERSAL_PORTAL,
-    fallbackUrl: 'https://www.seekin.ai/zh/bilibili-downloader/',
+    portalUrl: 'https://www.seekin.ai/zh/bilibili-downloader/',
+    fallbackUrl: SEEKIN_UNIVERSAL_PORTAL,
     portals: [
-      { url: SEEKIN_UNIVERSAL_PORTAL, label: 'Seekin' },
       { url: 'https://www.seekin.ai/zh/bilibili-downloader/', label: 'Seekin Bilibili' },
+      { url: SEEKIN_UNIVERSAL_PORTAL, label: 'Seekin' },
       { url: DLPANDA_PORTAL, label: 'DLPanda', requiresVpn: true, finalFallback: true },
     ],
   },
@@ -159,7 +159,7 @@ function detectVideoProvider(value) {
 function scoreMediaDownloadQualityLabel(value) {
   const label = String(value || '').trim().toLowerCase();
   if (!label || /(?:复制|copy)/i.test(label)) return -1;
-  if (!/(?:无水印|no\s*watermark|原画|original|最高|best|超清|高清|ultra\s*hd|uhd|full\s*hd|fhd|\bhd\b|(?:8|4|2)\s*k|\b(?:2160|1440|1080|720|480)\s*p?\b)/i.test(label)) return -1;
+  if (!/(?:无水印|no\s*watermark|原画|original|最高|best|超清|高清|ultra\s*hd|uhd|full\s*hd|fhd|\bhd\b|(?:8|4|2)\s*k|\b\d{3,4}\s*p\b)/i.test(label)) return -1;
 
   let score = 100;
   if (/(?:原画|original|最高|best)/i.test(label)) score = Math.max(score, 12000);

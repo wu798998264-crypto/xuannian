@@ -390,6 +390,9 @@ contextBridge.exposeInMainWorld('nativeAPI', {
   async downloadParsedMediaVideo(downloadTarget = 'download', collection = '') {
     return ipcRenderer.invoke('media:downloadParsedVideo', downloadTarget || 'download', collection || '');
   },
+  async resumeMediaPortalAfterVerification() {
+    return ipcRenderer.invoke('media:resumeAfterVerification');
+  },
   async downloadMediaMusicResult(url, downloadTarget = 'download', collection = '', preferredName = '') {
     return ipcRenderer.invoke('media:downloadMusicResult', url || '', downloadTarget || 'download', collection || '', preferredName || '');
   },

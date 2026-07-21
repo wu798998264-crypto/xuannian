@@ -35,13 +35,16 @@ async function run() {
   assert.strictEqual(tiktok.portals[0].requiresVpn, undefined);
   assert.strictEqual(tiktok.label, 'TikTok');
   assert.strictEqual(tiktok.autoDownloadQuality, undefined);
-  assert.strictEqual(detectVideoProvider('看看这个 https://www.bilibili.com/video/BV1xx').id, 'bilibili');
+  const bilibili = detectVideoProvider('看看这个 https://www.bilibili.com/video/BV1xx');
+  assert.strictEqual(bilibili.id, 'bilibili');
+  assert.strictEqual(bilibili.portalUrl, 'https://www.seekin.ai/zh/bilibili-downloader/');
+  assert.deepStrictEqual(bilibili.portals.map((route) => route.label), ['Seekin Bilibili', 'Seekin', 'DLPanda']);
   assert.strictEqual(detectVideoProvider('【凡人修仙传：第183话 慕兰之战07】 https://www.bilibili.com/bangumi/play/ep3854807/?share_source=copy_web').id, 'bilibili');
   assert.strictEqual(detectVideoProvider('https://xhslink.com/example').id, 'xiaohongshu');
   assert.deepStrictEqual(detectVideoProvider('https://xhslink.com/example').portals.map((route) => route.label), ['Seekin', 'HelloTik', 'Xiaohongshua', 'DLPanda']);
   assert.strictEqual(detectVideoProvider('34 【codex制作个人作品集网站】 https://www.xiaohongshu.com/discovery/item/6a4a67270000000006036794?source=webshare&xsec_token=test').id, 'xiaohongshu');
   assert.strictEqual(detectVideoProvider('https://v.kuaishou.com/example').id, 'kuaishou');
-  const kuaishou = detectVideoProvider('https://www.kuaishou.com/f/X-2Yx2wKCy7jxLZb');
+  const kuaishou = detectVideoProvider('https://www.kuaishou.com/f/X-1NCQbuUPVIY1dm');
   assert.strictEqual(kuaishou.id, 'kuaishou');
   assert.strictEqual(kuaishou.portalUrl, 'https://www.seekin.ai/zh/downloader/');
   assert.strictEqual(kuaishou.fallbackUrl, 'https://www.hellotik.app/zh/kuaishou');
@@ -62,6 +65,8 @@ async function run() {
   assert(scoreMediaDownloadQualityLabel('下载原画 65 MB') > scoreMediaDownloadQualityLabel('下载 4K 40 MB'));
   assert(scoreMediaDownloadQualityLabel('下载 4K 40 MB') > scoreMediaDownloadQualityLabel('下载 1080P 80 MB'));
   assert(scoreMediaDownloadQualityLabel('下载 1080P 80 MB') > scoreMediaDownloadQualityLabel('下载高清 100 MB'));
+  assert(scoreMediaDownloadQualityLabel('144p Download') >= 0);
+  assert(scoreMediaDownloadQualityLabel('下载 720P') > scoreMediaDownloadQualityLabel('144p Download'));
   assert(scoreMediaDownloadQualityLabel('下载无水印') >= 0);
   assert.strictEqual(scoreMediaDownloadQualityLabel('复制链接 4K'), -1);
   assert.strictEqual(scoreMediaDownloadQualityLabel('解析视频'), -1);
