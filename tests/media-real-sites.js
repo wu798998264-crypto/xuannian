@@ -184,12 +184,24 @@ async function run() {
     const attemptLimit = Math.max(1, Math.min(3, Number(process.env.REAL_MEDIA_ATTEMPTS || 2)));
     for (let attempt = 1; attempt <= attemptLimit; attempt += 1) {
       let result;
-      let usedFallback = false;
+      let usedPortal = '';
+      const routeResults = [];
       try {
-        result = await runPortalAttemptWithTimeout(window.webContents, () => parseOnce(window.webContents, provider));
-        if (!result.parsed?.ok && provider.fallbackUrl) {
-          usedFallback = true;
-          result = await runPortalAttemptWithTimeout(window.webContents, () => parseOnce(window.webContents, { ...provider, portalUrl: provider.fallbackUrl }));
+        const routes = Array.isArray(provider.portals) && provider.portals.length
+          ? provider.portals
+          : [{ url: provider.portalUrl, label: 'primary' }, ...(provider.fallbackUrl ? [{ url: provider.fallbackUrl, label: 'fallback' }] : [])];
+        for (const route of routes) {
+          usedPortal = route.label || route.url;
+          result = await runPortalAttemptWithTimeout(window.webContents, () => parseOnce(window.webContents, { ...provider, portalUrl: route.url }));
+          routeResults.push({
+            label: usedPortal,
+            parsed: !!result.parsed?.ok,
+            reason: result.parsed?.reason || '',
+            download: !!result.download?.ok,
+            downloadReason: result.download?.reason || '',
+          });
+          if (result.parsed?.ok && result.download?.ok) break;
+          if (['protected-or-private', 'provider-rejected'].includes(result.parsed?.reason)) break;
         }
       } catch (error) {
         result = { parsed: { ok: false, reason: String(error?.message || error) }, download: { ok: false } };
@@ -197,7 +209,8 @@ async function run() {
       results.push({
         id: testCase.id,
         attempt,
-        usedFallback,
+        usedPortal,
+        routeResults,
         parsed: {
           ok: !!result.parsed?.ok,
           reason: result.parsed?.reason || '',
@@ -227,6 +240,10 @@ async function run() {
     if (search?.ok && search.results?.length) {
       const selected = search.results[0];
       await loadUrlWithTimeout(window.webContents, selected.url);
+      const preview = await window.webContents.executeJavaScript(buildPortalScript({
+        mode: 'music-preview',
+        timeoutMs: 30000,
+      }, scoreMediaDownloadQualityLabel), true);
       const download = await waitForTriggeredDownload(window.webContents, () => window.webContents.executeJavaScript(buildPortalScript({
         mode: 'music-download',
         timeoutMs: 55000,
@@ -236,6 +253,8 @@ async function run() {
           ok: true,
           count: search.results.length,
           first: selected.label,
+          preview: !!preview?.ok,
+          previewReason: preview?.reason || '',
         },
         download,
       };

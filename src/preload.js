@@ -390,6 +390,9 @@ contextBridge.exposeInMainWorld('nativeAPI', {
   async downloadMediaMusicResult(url, downloadTarget = 'download', collection = '', preferredName = '') {
     return ipcRenderer.invoke('media:downloadMusicResult', url || '', downloadTarget || 'download', collection || '', preferredName || '');
   },
+  async previewMediaMusicResult(url) {
+    return ipcRenderer.invoke('media:previewMusicResult', url || '');
+  },
   async openHighQualityMusic(query = '', downloadTarget = 'download', collection = '') {
     return ipcRenderer.invoke('media:openHighQualityMusic', query || '', downloadTarget || 'download', collection || '');
   },
@@ -617,6 +620,9 @@ contextBridge.exposeInMainWorld('nativeAPI', {
   },
   onMediaMusicResults(callback) {
     ipcRenderer.on('media:musicResults', (_event, payload) => callback(payload || {}));
+  },
+  onMediaMusicPreviewReady(callback) {
+    ipcRenderer.on('media:musicPreviewReady', (_event, payload) => callback(payload || {}));
   },
   onMediaPortalProgress(callback) {
     ipcRenderer.on('media:portalProgress', (_event, payload) => callback(payload || {}));

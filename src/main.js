@@ -2895,6 +2895,11 @@ function mediaPortalProgressPayload(state, extra = {}) {
     operation = 'search';
     percent = Math.min(94, 6 + Math.round((elapsedMs / 30000) * 88));
     message = '正在读取歌曲名称、歌手和可下载版本';
+  } else if (mode === 'music-preview') {
+    kind = 'audio';
+    operation = 'preview';
+    percent = Math.min(94, 8 + Math.round((elapsedMs / 30000) * 86));
+    message = '正在准备所选版本的试听音频';
   } else if (mode === 'music-download') {
     kind = 'audio';
     operation = 'download';
@@ -2936,7 +2941,11 @@ function startMediaPortalProgress(state) {
 function finishMediaPortalProgress(state, ok, reason = '', message = '') {
   clearMediaPortalProgressTimer();
   const fallbackMessage = ok
-    ? (state?.automationMode === 'video-parse' ? '视频解析完成' : (state?.automationMode === 'music-search' ? '音乐版本读取完成' : '文件已开始下载'))
+    ? (state?.automationMode === 'video-parse'
+      ? '视频解析完成'
+      : (state?.automationMode === 'music-search'
+        ? '音乐版本读取完成'
+        : (state?.automationMode === 'music-preview' ? '试听已就绪' : '文件已开始下载')))
     : '自动处理未完成';
   emitMediaPortalProgress(state, {
     status: ok ? 'success' : 'error',
@@ -3174,6 +3183,23 @@ async function completeMediaPortalAutomation(state, result = {}) {
       musicResultsReady: results.length > 0,
       autoActionMissing: results.length === 0,
     });
+  } else if (mode === 'music-preview') {
+    mediaPortalInputState = null;
+    const previewUrl = sanitizeRemoteMediaUrl(result.previewUrl);
+    const previewSucceeded = !!result.ok && !!previewUrl;
+    sendMediaPortalEvent('media:musicPreviewReady', {
+      requestId: state.requestId,
+      ok: previewSucceeded,
+      resultUrl: state.portalUrl,
+      previewUrl,
+      reason: String(result.reason || (previewSucceeded ? '' : 'preview-unavailable')),
+    });
+    finishMediaPortalProgress(state, previewSucceeded, String(result.reason || ''));
+    notifyMediaBrowserState({
+      opening: false,
+      musicPreviewReady: previewSucceeded,
+      autoActionMissing: !previewSucceeded,
+    });
   } else if (mode === 'music-download') {
     mediaPortalInputState = null;
     const href = sanitizeRemoteMediaUrl(result.href);
@@ -3352,6 +3378,12 @@ function downloadMediaMusicResult(url, downloadTarget = 'download', collection =
   return opened;
 }
 
+function previewMediaMusicResult(url) {
+  const value = String(url || '').trim();
+  if (!isGequbaoMusicUrl(value)) return false;
+  return openMediaPortal(value, 'download', '', false, '', '', 'music-preview');
+}
+
 async function openHighQualityMusic(query = '', downloadTarget = 'download', collection = '') {
   const value = String(query || '').trim().slice(0, 240);
   if (!value) return { ok: false, reason: '缺少歌曲名称' };
@@ -3499,11 +3531,11 @@ function openMediaPortal(url, downloadTarget = 'download', sourceText = '', auto
     collection: String(collection || '').trim(),
   });
   const normalizedQualityPreference = qualityPreference === 'highest' ? 'highest' : '';
-  const normalizedAutomationMode = ['video-parse', 'music-search', 'music-download'].includes(automationMode)
+  const normalizedAutomationMode = ['video-parse', 'music-search', 'music-preview', 'music-download'].includes(automationMode)
     ? automationMode
     : 'video-parse';
   const automationValue = String(sourceText || '').trim();
-  mediaPortalInputState = automationValue || normalizedAutomationMode === 'music-search' || normalizedAutomationMode === 'music-download'
+  mediaPortalInputState = automationValue || normalizedAutomationMode === 'music-search' || normalizedAutomationMode === 'music-preview' || normalizedAutomationMode === 'music-download'
     ? {
       requestId: mediaPortalRequestId,
       value: automationValue,
@@ -6102,6 +6134,7 @@ ipcMain.handle('media:downloadParsedVideo', (_event, downloadTarget = 'download'
 ipcMain.handle('media:downloadMusicResult', (_event, url, downloadTarget = 'download', collection = '', preferredName = '') => (
   downloadMediaMusicResult(url, downloadTarget, collection, preferredName)
 ));
+ipcMain.handle('media:previewMusicResult', (_event, url) => previewMediaMusicResult(url));
 ipcMain.handle('media:openHighQualityMusic', (_event, query = '', downloadTarget = 'download', collection = '') => openHighQualityMusic(query, downloadTarget, collection));
 ipcMain.on('media:browserBounds', (event, bounds = {}, visible = false, mode = 'browser') => {
   if (!mainWindow || event.sender !== mainWindow.webContents) return;

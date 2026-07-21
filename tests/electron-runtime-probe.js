@@ -962,6 +962,7 @@ async function run() {
       const externalUrls=[];
       const downloadedVideos=[];
       const downloadedSongs=[];
+      const previewedSongs=[];
       const highQualityRequests=[];
       const openedDownloadHistory=[];
       const downloadHistoryContextMenus=[];
@@ -977,6 +978,7 @@ async function run() {
       api.getMediaMusicSearchUrl=async keyword=>'https://www.gequbao.com/s/'+encodeURIComponent(keyword);
       api.downloadParsedMediaVideo=async(target,collection)=>{ downloadedVideos.push({target,collection}); return {ok:true}; };
       api.downloadMediaMusicResult=async(url,target,collection,preferredName)=>{ downloadedSongs.push({url,target,collection,preferredName}); return true; };
+      api.previewMediaMusicResult=async url=>{ previewedSongs.push(url); return {ok:true,requestId:77}; };
       api.openHighQualityMusic=async query=>{ highQualityRequests.push(query); return {ok:true,target:'quark',message:'已打开夸克'}; };
       api.openPath=async filePath=>{ openedDownloadHistory.push(filePath); return true; };
       api.showFileContextMenu=async filePath=>{ downloadHistoryContextMenus.push(filePath); return true; };
@@ -1041,11 +1043,16 @@ async function run() {
         {url:'https://www.gequbao.com/music/102',title:'测试歌曲（现场版）',artist:'现场歌手',label:'测试歌曲（现场版） - 现场歌手'},
       ],error:''};
       renderMediaPortalWorkspace();
+      await previewMediaMusicVersion(0);
+      state.media.musicPreview={...state.media.musicPreview,status:'ready',previewUrl:'https://cdn.example.com/test-song.mp3'};
+      renderMediaPortalWorkspace();
       chooseMediaMusicFormat(0,false);
       const musicUi={
         rows:document.querySelectorAll('#mediaMusicResults .media-music-result').length,
         actions:[...document.querySelectorAll('#mediaMusicResults [data-music-action]')].map(button=>button.textContent.trim()),
         formatChoices:[...document.querySelectorAll('#mediaMusicResults [data-music-format-choice]')].map(button=>button.textContent.trim()),
+        previewButtons:document.querySelectorAll('#mediaMusicResults [data-music-preview]').length,
+        activeAudioControls:!!document.querySelector('#mediaMusicResults audio[data-music-preview-audio][controls]'),
         topFormatControls:!!document.querySelector('#mediaMusicFormats'),
       };
       await downloadMediaMusicVersion(0,'mp3',false);
@@ -1166,10 +1173,25 @@ async function run() {
       state.media.downloadTasks=[];
       state.media.downloadsExpanded=false;
       renderMediaDownloadBubble();
+      localStorage.removeItem(MEDIA_PORTAL_HEALTH_KEY);
+      const douyinRoutes=mediaPortalRoutes(douyinProvider);
+      recordMediaPortalFailure(douyinRoutes[0],'provider-rejected','https://v.douyin.com/content-one');
+      const contentFailureKeepsSite=nextHealthyMediaPortalIndex(douyinProvider,0)===0;
+      recordMediaPortalFailure(douyinRoutes[0],'parse-timeout','https://v.douyin.com/content-one');
+      const oneTimeoutKeepsSite=nextHealthyMediaPortalIndex(douyinProvider,0)===0;
+      recordMediaPortalFailure(douyinRoutes[0],'parse-timeout','https://v.douyin.com/content-two');
+      const twoSourcesTripSite=nextHealthyMediaPortalIndex(douyinProvider,0)===1;
+      const failureClassification={contentFailureKeepsSite,oneTimeoutKeepsSite,twoSourcesTripSite};
+      localStorage.removeItem(MEDIA_PORTAL_HEALTH_KEY);
+      markMediaPortalUnavailable(douyinRoutes[0],'quota-or-ad-required');
+      markMediaPortalUnavailable(douyinRoutes[1],'qr-code-required');
+      const dailyFallbackIndex=nextHealthyMediaPortalIndex(douyinProvider,0);
+      const dailyFallback={index:dailyFallbackIndex,route:douyinRoutes[dailyFallbackIndex],health:readMediaPortalHealth()};
+      localStorage.removeItem(MEDIA_PORTAL_HEALTH_KEY);
       return {
         openedPortals,portalTargets,portalInputs,externalUrls,copiedText,copiedFiles,draggedFiles,contextMenus,favoriteCollections,movedFavorites,deletedFavorites,
-        downloadedVideos,downloadedSongs,highQualityRequests,openedDownloadHistory,downloadHistoryContextMenus,deletedDownloadHistory,nativeMediaBridgeAvailableBeforeStub,videoUi,favoritePreviewModal,musicUi,backgroundPortal,browserTogglePersistence,
-        providerRouting:{douyinProvider,tiktokProvider},
+        downloadedVideos,downloadedSongs,previewedSongs,highQualityRequests,openedDownloadHistory,downloadHistoryContextMenus,deletedDownloadHistory,nativeMediaBridgeAvailableBeforeStub,videoUi,favoritePreviewModal,musicUi,backgroundPortal,browserTogglePersistence,
+        providerRouting:{douyinProvider,tiktokProvider,dailyFallback,failureClassification},
         activeView:document.querySelector('.view.active')?.id||'',
         activeNav:document.querySelector('.nav-btn.active')?.dataset.view||'',
         rows:document.querySelectorAll('#mediaDownloadsList [data-media-row]').length,
@@ -1205,12 +1227,20 @@ async function run() {
   assert.deepStrictEqual(mediaLibraryMetrics.downloadedSongs, [{url:'https://www.gequbao.com/music/101',target:'download',collection:'',preferredName:'测试歌曲 - 测试歌手'}]);
   assert.strictEqual(mediaLibraryMetrics.nativeMediaBridgeAvailableBeforeStub, true);
   assert.deepStrictEqual(mediaLibraryMetrics.videoUi, {previewSrc:'https://cdn.example.com/runtime.mp4',actions:['下载视频','下载并收藏'],topActions:false});
-  assert.deepStrictEqual(mediaLibraryMetrics.musicUi, {rows:2,actions:['下载','下载并收藏','下载','下载并收藏'],formatChoices:['普通音质','高清音质'],topFormatControls:false});
+  assert.deepStrictEqual(mediaLibraryMetrics.musicUi, {rows:2,actions:['下载','下载并收藏','下载','下载并收藏'],formatChoices:['普通音质','高清音质'],previewButtons:2,activeAudioControls:true,topFormatControls:false});
+  assert.deepStrictEqual(mediaLibraryMetrics.previewedSongs, ['https://www.gequbao.com/music/101']);
   assert.deepStrictEqual(mediaLibraryMetrics.backgroundPortal, {browserHidden:true,directVisible:true});
   assert.deepStrictEqual(mediaLibraryMetrics.browserTogglePersistence, {visible:true,parentClass:'media-portal-stage',browserVisible:true});
   assert.strictEqual(mediaLibraryMetrics.providerRouting.douyinProvider.id, 'douyin');
   assert.strictEqual(mediaLibraryMetrics.providerRouting.douyinProvider.portalUrl, 'https://www.hellotik.app/zh/douyin');
   assert.strictEqual(mediaLibraryMetrics.providerRouting.douyinProvider.autoDownloadQuality, 'highest');
+  assert.strictEqual(mediaLibraryMetrics.providerRouting.douyinProvider.portals.at(-1).url, 'https://dlpanda.com/zh-CN');
+  assert.strictEqual(mediaLibraryMetrics.providerRouting.douyinProvider.portals.at(-1).finalFallback, true);
+  assert.strictEqual(mediaLibraryMetrics.providerRouting.dailyFallback.index, 2);
+  assert.strictEqual(mediaLibraryMetrics.providerRouting.dailyFallback.route.label, 'DLPanda');
+  assert.strictEqual(mediaLibraryMetrics.providerRouting.dailyFallback.route.requiresVpn, true);
+  assert.strictEqual(Object.keys(mediaLibraryMetrics.providerRouting.dailyFallback.health.unavailable).length, 2);
+  assert.deepStrictEqual(mediaLibraryMetrics.providerRouting.failureClassification, {contentFailureKeepsSite:true,oneTimeoutKeepsSite:true,twoSourcesTripSite:true});
   assert.strictEqual(mediaLibraryMetrics.providerRouting.tiktokProvider.id, 'tiktok');
   assert.strictEqual(mediaLibraryMetrics.providerRouting.tiktokProvider.portalUrl, 'https://dlpanda.com/zh-CN');
   assert(mediaLibraryMetrics.providerRouting.tiktokProvider.label.includes('VPN'));
@@ -1314,6 +1344,24 @@ async function run() {
     await new Promise((resolve) => setTimeout(resolve, 160));
     const mediaImage = await window.webContents.capturePage();
     fs.writeFileSync(screenshotPath.replace(/(\.png)?$/i, '-media.png'), mediaImage.toPNG());
+    await window.webContents.executeJavaScript(`
+      (()=>{
+        setMediaKind('audio',{showPortal:true});
+        state.media.musicSearch={status:'ready',requestId:0,query:'唯一 邓紫棋',error:'',results:[
+          {url:'https://www.gequbao.com/music/101',title:'唯一',artist:'G.E.M. 邓紫棋',label:'唯一 - G.E.M. 邓紫棋'},
+          {url:'https://www.gequbao.com/music/102',title:'唯一（现场版）',artist:'G.E.M. 邓紫棋',label:'唯一（现场版） - G.E.M. 邓紫棋'},
+          {url:'https://www.gequbao.com/music/103',title:'唯一（伴奏）',artist:'纯音乐',label:'唯一（伴奏） - 纯音乐'}
+        ]};
+        state.media.musicPreview={status:'ready',requestId:0,index:0,resultUrl:'https://www.gequbao.com/music/101',previewUrl:'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQAAAAA=',error:''};
+        state.media.musicFormatChoice=null;
+        renderMediaPortalWorkspace();
+        renderMediaBrowserState();
+      })()
+    `, true);
+    await new Promise((resolve) => setTimeout(resolve, 160));
+    const mediaMusicImage = await window.webContents.capturePage();
+    fs.writeFileSync(screenshotPath.replace(/(\.png)?$/i, '-media-music.png'), mediaMusicImage.toPNG());
+    await window.webContents.executeJavaScript("setMediaTab('downloads')", true);
     await window.webContents.executeJavaScript(`
       (()=>{
         state.media.loading=true;

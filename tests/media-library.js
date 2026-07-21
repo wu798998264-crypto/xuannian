@@ -23,10 +23,15 @@ async function run() {
   assert.strictEqual(douyin.id, 'douyin');
   assert.strictEqual(douyin.portalUrl, 'https://www.hellotik.app/zh/douyin');
   assert.strictEqual(douyin.fallbackUrl, 'https://www.seekin.ai/zh/downloader/');
+  assert.deepStrictEqual(douyin.portals.map((route) => route.label), ['HelloTik', 'Seekin', 'DLPanda']);
+  assert.strictEqual(douyin.portals.at(-1).url, 'https://dlpanda.com/zh-CN');
+  assert.strictEqual(douyin.portals.at(-1).requiresVpn, true);
+  assert.strictEqual(douyin.portals.at(-1).finalFallback, true);
   assert.strictEqual(douyin.autoDownloadQuality, 'highest');
   const tiktok = detectVideoProvider('https://www.tiktok.com/@example/video/1');
   assert.strictEqual(tiktok.id, 'tiktok');
   assert.strictEqual(tiktok.portalUrl, 'https://dlpanda.com/zh-CN');
+  assert.strictEqual(tiktok.portals[0].requiresVpn, true);
   assert(tiktok.label.includes('VPN'));
   assert.strictEqual(tiktok.autoDownloadQuality, undefined);
   assert.strictEqual(detectVideoProvider('看看这个 https://www.bilibili.com/video/BV1xx').id, 'bilibili');

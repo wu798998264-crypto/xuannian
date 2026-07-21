@@ -75,6 +75,14 @@ async function run() {
   assert.strictEqual(previewFallback.previewUrl, 'https://cdn.example.com/preview-only.mp4');
   assert(!previewFallback.qualityLabel.includes('为什么'));
 
+  await loadFixture(win, '<a href="/about" style="display:block;width:500px;height:80px">方便使用，只需要视频链接，就能解析出原生纯正的无水印视频</a>');
+  console.log('probe: reject marketing copy as a quality result');
+  const marketingCopy = await win.webContents.executeJavaScript(buildPortalScript({
+    mode: 'video-parse', phase: 'result', timeoutMs: 1100,
+  }, scoreMediaDownloadQualityLabel), true);
+  assert.strictEqual(marketingCopy.ok, false);
+  assert.strictEqual(marketingCopy.reason, 'parse-timeout');
+
   await loadFixture(win, `
     <a href="https://www.seekin.ai/zh/download-instagram-reels/" style="display:block;width:220px;height:32px">Instagram Reels下载</a>
     <button style="display:block;width:160px;height:32px">立即下载</button>
@@ -104,6 +112,12 @@ async function run() {
   assert.strictEqual(musicResults.ok, true);
   assert.strictEqual(musicResults.results.length, 2);
   assert.deepStrictEqual(musicResults.results.map((item) => item.title), ['测试歌曲', '测试歌曲（现场版）']);
+
+  await loadFixture(win, '<audio src="https://cdn.example.com/test-song.mp3" style="width:320px;height:40px" controls></audio>');
+  console.log('probe: music preview source');
+  const musicPreview = await win.webContents.executeJavaScript(buildPortalScript({ mode: 'music-preview', timeoutMs: 2000 }, scoreMediaDownloadQualityLabel), true);
+  assert.strictEqual(musicPreview.ok, true);
+  assert.strictEqual(musicPreview.previewUrl, 'https://cdn.example.com/test-song.mp3');
 
   await loadFixture(win, '<div id="slot"></div>', `
     window.musicDownloaded = false;
@@ -136,6 +150,14 @@ async function run() {
   assert.strictEqual(verification.ok, false);
   assert.strictEqual(verification.reason, 'human-verification');
   assert(Date.now() - verificationStartedAt < 1000, 'human verification must stop polling immediately');
+
+  console.log('probe: QR gate detection');
+  await loadFixture(win, '<div role="dialog" style="display:block;width:360px;height:180px">请扫描二维码领取下载次数后继续下载</div>');
+  const qrGateStartedAt = Date.now();
+  const qrGate = await win.webContents.executeJavaScript(buildPortalScript({ mode: 'video-parse', phase: 'result', timeoutMs: 4000 }, scoreMediaDownloadQualityLabel), true);
+  assert.strictEqual(qrGate.ok, false);
+  assert.strictEqual(qrGate.reason, 'qr-code-required');
+  assert(Date.now() - qrGateStartedAt < 1000, 'QR gate must stop polling immediately');
 
   const popupWin = new BrowserWindow({ show: false, width: 600, height: 400 });
   const popupDecisions = [];

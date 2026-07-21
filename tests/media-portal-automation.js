@@ -29,6 +29,10 @@ function run() {
   assert(musicScript.includes('finalAction'));
   assert(musicScript.includes('directAudioUrl'));
   assert(musicScript.includes("label: '普通音质'"));
+  const previewScript = buildPortalScript({ mode: 'music-preview' }, scoreMediaDownloadQualityLabel);
+  assert(previewScript.includes('attemptMusicPreview'));
+  assert(previewScript.includes('preview-unavailable'));
+  assert(previewScript.includes('qr-code-required'));
   console.log('media portal automation tests passed');
 }
 

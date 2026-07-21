@@ -1428,10 +1428,11 @@ const state = {
     requestId:0,
     refreshTimer:null,
     videoProvider:null,
-    videoParse:{status:'idle',requestId:0,sourceUrl:'',previewUrl:'',embeddedPreview:false,title:'',qualityLabel:'',downloadReady:false,error:'',usingFallback:false,fallbackAttempted:false},
+    videoParse:{status:'idle',requestId:0,sourceUrl:'',previewUrl:'',embeddedPreview:false,title:'',qualityLabel:'',downloadReady:false,error:'',portalIndex:0,portalUrl:''},
     videoDownloadBusy:false,
     videoParseTimer:null,
     musicSearch:{status:'idle',requestId:0,query:'',results:[],error:''},
+    musicPreview:{status:'idle',requestId:0,index:-1,resultUrl:'',previewUrl:'',error:''},
     musicFormatChoice:null,
     portalProgress:{status:'idle',requestId:0,kind:'',operation:'',percent:0,message:'',reason:''},
     portalProgressHideTimer:null,
@@ -1709,6 +1710,7 @@ function createBrowserFallbackAPI(){
     async openMediaPortal(url){ return this.openExternal(url); },
     async downloadParsedMediaVideo(){ return {ok:false,reason:'预览环境不支持媒体下载'}; },
     async downloadMediaMusicResult(){ return false; },
+    async previewMediaMusicResult(){ return false; },
     async openHighQualityMusic(){ return {ok:false,reason:'预览环境不支持打开本地音乐客户端'}; },
     setMediaBrowserBounds(){ return false; },
     async getMediaBrowserState(){ return {ready:false,loading:false,url:'',title:'',canGoBack:false,canGoForward:false}; },
@@ -1834,6 +1836,7 @@ function createUnifiedAPI(nativeApi, fallback){
     openMediaPortal: (url,downloadTarget,sourceText,autoSubmit,collection,qualityPreference,automationMode)=> nativeApi.openMediaPortal ? nativeApi.openMediaPortal(url,downloadTarget,sourceText,autoSubmit,collection,qualityPreference,automationMode) : fallback.openMediaPortal(url,downloadTarget,sourceText,autoSubmit,collection,qualityPreference,automationMode),
     downloadParsedMediaVideo: (downloadTarget,collection)=> nativeApi.downloadParsedMediaVideo ? nativeApi.downloadParsedMediaVideo(downloadTarget,collection) : Promise.resolve({ok:false,reason:'当前环境不支持媒体下载'}),
     downloadMediaMusicResult: (url,downloadTarget,collection,preferredName)=> nativeApi.downloadMediaMusicResult ? nativeApi.downloadMediaMusicResult(url,downloadTarget,collection,preferredName) : Promise.resolve(false),
+    previewMediaMusicResult: (url)=> nativeApi.previewMediaMusicResult ? nativeApi.previewMediaMusicResult(url) : Promise.resolve(false),
     openHighQualityMusic: (query,downloadTarget,collection)=> nativeApi.openHighQualityMusic ? nativeApi.openHighQualityMusic(query,downloadTarget,collection) : fallback.openHighQualityMusic(query),
     setMediaBrowserBounds: (bounds,visible,mode)=> nativeApi.setMediaBrowserBounds ? nativeApi.setMediaBrowserBounds(bounds,visible,mode) : fallback.setMediaBrowserBounds(bounds,visible,mode),
     getMediaBrowserState: ()=> nativeApi.getMediaBrowserState ? nativeApi.getMediaBrowserState() : fallback.getMediaBrowserState(),
@@ -1993,7 +1996,7 @@ async function init(){
   });
   window.nativeAPI?.onMediaPortalProgress?.((payload)=>{
     const activeRequestId=payload?.operation==='download'?0:(payload?.kind==='audio'
-      ? Number(state.media.musicSearch.requestId||0)
+      ? Number(payload?.operation==='preview'?state.media.musicPreview.requestId:state.media.musicSearch.requestId||0)
       : Number(state.media.videoParse.requestId||0));
     if(activeRequestId&&payload?.requestId&&Number(payload.requestId)!==activeRequestId) return;
     state.media.portalProgress={
@@ -2015,7 +2018,8 @@ async function init(){
   window.nativeAPI?.onMediaVideoParsed?.((payload)=>{
     const activeRequestId=Number(state.media.videoParse.requestId||0);
     if(activeRequestId&&payload?.requestId&&Number(payload.requestId)!==activeRequestId) return;
-    const usingFallback=!!state.media.videoParse.usingFallback;
+    const portalIndex=Number(state.media.videoParse.portalIndex||0);
+    const portalUrl=String(state.media.videoParse.portalUrl||'');
     state.media.videoParse={
       status:payload?.ok?'ready':'error',
       requestId:Number(payload?.requestId||activeRequestId||0),
@@ -2026,17 +2030,12 @@ async function init(){
       qualityLabel:String(payload?.qualityLabel||''),
       downloadReady:!!payload?.downloadReady,
       error:String(payload?.reason||''),
-      usingFallback,
-      fallbackAttempted:usingFallback,
+      portalIndex,
+      portalUrl,
     };
     renderMediaPortalWorkspace();
     renderMediaBrowserState();
-    if(!payload?.ok&&state.media.videoProvider?.fallbackUrl&&!usingFallback){
-      toast('主下载站解析失败，正在自动切换备用站');
-      setTimeout(()=>parseMediaVideo(true,{force:true}),120);
-      return;
-    }
-    if(!payload?.ok) toast(mediaPortalFailureMessage(payload?.reason,'video'));
+    if(!payload?.ok) handleMediaVideoParseFailure(String(payload?.reason||'automation-error'));
   });
   window.nativeAPI?.onMediaMusicResults?.((payload)=>{
     const activeRequestId=Number(state.media.musicSearch.requestId||0);
@@ -2049,9 +2048,29 @@ async function init(){
       error:String(payload?.reason||''),
     };
     state.media.musicFormatChoice=null;
+    state.media.musicPreview={status:'idle',requestId:0,index:-1,resultUrl:'',previewUrl:'',error:''};
     renderMediaPortalWorkspace();
     renderMediaBrowserState();
     if(!payload?.ok) toast(mediaPortalFailureMessage(payload?.reason,'audio'));
+  });
+  window.nativeAPI?.onMediaMusicPreviewReady?.((payload)=>{
+    const activeRequestId=Number(state.media.musicPreview.requestId||0);
+    if(activeRequestId&&payload?.requestId&&Number(payload.requestId)!==activeRequestId) return;
+    if(state.media.musicPreview.resultUrl&&payload?.resultUrl&&String(payload.resultUrl)!==state.media.musicPreview.resultUrl) return;
+    state.media.musicPreview={
+      ...state.media.musicPreview,
+      status:payload?.ok?'ready':'error',
+      requestId:Number(payload?.requestId||activeRequestId||0),
+      resultUrl:String(payload?.resultUrl||state.media.musicPreview.resultUrl||''),
+      previewUrl:String(payload?.previewUrl||''),
+      error:String(payload?.reason||''),
+    };
+    renderMediaPortalWorkspace();
+    if(payload?.ok){
+      requestAnimationFrame(()=>$('#mediaMusicResults audio[data-music-preview-audio]')?.play().catch(()=>{}));
+    }else{
+      toast(mediaPortalFailureMessage(payload?.reason||'preview-unavailable','audio'));
+    }
   });
   window.nativeAPI?.onMainSuspend?.(()=>{
     exitManagementModes();
@@ -2267,8 +2286,8 @@ function bindEvents(){
       parseMediaVideo(false,{force:true});
     }
   });
-  $('#mediaVideoFallback')?.addEventListener('click',()=>parseMediaVideo(true,{force:true}));
-  $('#mediaVideoRetry')?.addEventListener('click',()=>parseMediaVideo(false,{force:true}));
+  $('#mediaVideoFallback')?.addEventListener('click',()=>parseMediaVideo(Number(state.media.videoParse.portalIndex||0)+1,{force:true}));
+  $('#mediaVideoRetry')?.addEventListener('click',()=>parseMediaVideo(Number(state.media.videoParse.portalIndex||0),{force:true}));
   $('#mediaDownloadVideo')?.addEventListener('click',()=>downloadParsedVideo(false));
   $('#mediaDownloadFavoriteVideo')?.addEventListener('click',()=>downloadParsedVideo(true));
   $('#mediaMusicInput')?.addEventListener('keydown',event=>{
@@ -2279,6 +2298,11 @@ function bindEvents(){
   });
   $('#mediaSearchMusic')?.addEventListener('click',searchMediaMusic);
   $('#mediaMusicResults')?.addEventListener('click',event=>{
+    const preview=event.target.closest('[data-music-preview]');
+    if(preview){
+      previewMediaMusicVersion(Number(preview.dataset.musicPreview));
+      return;
+    }
     const action=event.target.closest('[data-music-action]');
     if(action){
       chooseMediaMusicFormat(Number(action.dataset.musicIndex),action.dataset.musicAction==='favorite');
@@ -3343,16 +3367,94 @@ function resolveMediaVideoProviderFallback(value=''){
   try{ host=new URL(sourceUrl).hostname.toLowerCase().replace(/^www\./,''); }catch{return null;}
   const matches=(domains)=>domains.some(domain=>host===domain||host.endsWith(`.${domain}`));
   const seekin='https://www.seekin.ai/zh/downloader/';
-  if(matches(['douyin.com','iesdouyin.com'])) return {id:'douyin',label:'抖音',portalUrl:'https://www.hellotik.app/zh/douyin',fallbackUrl:seekin,sourceUrl,autoDownloadQuality:'highest'};
-  if(matches(['tiktok.com'])) return {id:'tiktok',label:'TikTok（需开启 VPN）',portalUrl:'https://dlpanda.com/zh-CN',fallbackUrl:seekin,sourceUrl,autoDownloadQuality:''};
-  if(matches(['bilibili.com','b23.tv'])) return {id:'bilibili',label:'哔哩哔哩',portalUrl:'https://www.seekin.ai/zh/bilibili-downloader/',fallbackUrl:seekin,sourceUrl};
-  if(matches(['xiaohongshu.com','xhslink.com'])) return {id:'xiaohongshu',label:'小红书',portalUrl:'https://www.xiaohongshua.com/',fallbackUrl:seekin,sourceUrl};
-  if(matches(['kuaishou.com','gifshow.com','kwai.com'])) return {id:'kuaishou',label:'快手',portalUrl:'https://www.hellotik.app/zh/kuaishou',fallbackUrl:seekin,sourceUrl};
-  if(matches(['youtube.com','youtu.be'])) return {id:'youtube',label:'YouTube（需开启 VPN）',portalUrl:seekin,fallbackUrl:'',sourceUrl};
-  if(matches(['instagram.com'])) return {id:'instagram',label:'Instagram（需开启 VPN）',portalUrl:seekin,fallbackUrl:'',sourceUrl};
-  if(matches(['twitter.com','x.com'])) return {id:'twitter',label:'Twitter / X（需开启 VPN）',portalUrl:seekin,fallbackUrl:'',sourceUrl};
-  if(matches(['facebook.com','fb.watch'])) return {id:'facebook',label:'Facebook（需开启 VPN）',portalUrl:seekin,fallbackUrl:'',sourceUrl};
+  const dlpanda='https://dlpanda.com/zh-CN';
+  if(matches(['douyin.com','iesdouyin.com'])) return {id:'douyin',label:'抖音',portalUrl:'https://www.hellotik.app/zh/douyin',fallbackUrl:seekin,sourceUrl,autoDownloadQuality:'highest',portals:[{url:'https://www.hellotik.app/zh/douyin',label:'HelloTik'},{url:seekin,label:'Seekin',requiresVpn:true},{url:dlpanda,label:'DLPanda',requiresVpn:true,finalFallback:true}]};
+  if(matches(['tiktok.com'])) return {id:'tiktok',label:'TikTok（需开启 VPN）',portalUrl:dlpanda,fallbackUrl:seekin,sourceUrl,autoDownloadQuality:'',portals:[{url:dlpanda,label:'DLPanda',requiresVpn:true},{url:seekin,label:'Seekin',requiresVpn:true}]};
+  if(matches(['bilibili.com','b23.tv'])) return {id:'bilibili',label:'哔哩哔哩',portalUrl:'https://www.seekin.ai/zh/bilibili-downloader/',fallbackUrl:seekin,sourceUrl,portals:[{url:'https://www.seekin.ai/zh/bilibili-downloader/',label:'Seekin 哔哩哔哩',requiresVpn:true},{url:seekin,label:'Seekin 通用',requiresVpn:true}]};
+  if(matches(['xiaohongshu.com','xhslink.com'])) return {id:'xiaohongshu',label:'小红书',portalUrl:'https://www.xiaohongshua.com/',fallbackUrl:seekin,sourceUrl,portals:[{url:'https://www.xiaohongshua.com/',label:'小红书下载站'},{url:seekin,label:'Seekin',requiresVpn:true}]};
+  if(matches(['kuaishou.com','gifshow.com','kwai.com'])) return {id:'kuaishou',label:'快手',portalUrl:'https://www.hellotik.app/zh/kuaishou',fallbackUrl:seekin,sourceUrl,portals:[{url:'https://www.hellotik.app/zh/kuaishou',label:'HelloTik'},{url:seekin,label:'Seekin',requiresVpn:true}]};
+  if(matches(['youtube.com','youtu.be'])) return {id:'youtube',label:'YouTube（需开启 VPN）',portalUrl:seekin,fallbackUrl:'',sourceUrl,portals:[{url:seekin,label:'Seekin',requiresVpn:true}]};
+  if(matches(['instagram.com'])) return {id:'instagram',label:'Instagram（需开启 VPN）',portalUrl:seekin,fallbackUrl:'',sourceUrl,portals:[{url:seekin,label:'Seekin',requiresVpn:true}]};
+  if(matches(['twitter.com','x.com'])) return {id:'twitter',label:'Twitter / X（需开启 VPN）',portalUrl:seekin,fallbackUrl:'',sourceUrl,portals:[{url:seekin,label:'Seekin',requiresVpn:true}]};
+  if(matches(['facebook.com','fb.watch'])) return {id:'facebook',label:'Facebook（需开启 VPN）',portalUrl:seekin,fallbackUrl:'',sourceUrl,portals:[{url:seekin,label:'Seekin',requiresVpn:true}]};
   return null;
+}
+
+const MEDIA_PORTAL_HEALTH_KEY='xuannian-media-portal-health-v1';
+const MEDIA_PORTAL_SWITCH_FAILURES=new Set(['human-verification','input-missing','parse-action-missing','parse-timeout','provider-rejected','quota-or-ad-required','qr-code-required','load-error','automation-error']);
+const MEDIA_PORTAL_IMMEDIATE_DAILY_FAILURES=new Set(['human-verification','input-missing','parse-action-missing','quota-or-ad-required','qr-code-required','load-error','automation-error']);
+
+function mediaPortalRoutes(provider){
+  if(!provider) return [];
+  const configured=Array.isArray(provider.portals)?provider.portals:[];
+  const legacy=[provider.portalUrl,provider.fallbackUrl].filter(Boolean).map((url,index)=>({url,label:index?'备用站':'主站'}));
+  const source=configured.length?configured:legacy;
+  const seen=new Set();
+  return source.filter(route=>{
+    const url=String(route?.url||'').trim();
+    if(!url||seen.has(url)) return false;
+    seen.add(url);
+    return true;
+  }).map(route=>({...route,url:String(route.url),label:String(route.label||'下载站')}));
+}
+
+function mediaPortalDayKey(date=new Date()){
+  return `${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
+}
+
+function readMediaPortalHealth(){
+  const date=mediaPortalDayKey();
+  try{
+    const stored=JSON.parse(localStorage.getItem(MEDIA_PORTAL_HEALTH_KEY)||'{}');
+    if(stored?.date===date&&stored.unavailable&&typeof stored.unavailable==='object') return stored;
+  }catch{}
+  return {date,unavailable:{}};
+}
+
+function writeMediaPortalHealth(value){
+  try{ localStorage.setItem(MEDIA_PORTAL_HEALTH_KEY,JSON.stringify(value)); }catch{}
+}
+
+function markMediaPortalUnavailable(route,reason){
+  if(!route?.url) return;
+  const health=readMediaPortalHealth();
+  health.unavailable[route.url]={reason:String(reason||'automation-error'),at:Date.now()};
+  writeMediaPortalHealth(health);
+}
+
+function mediaPortalSourceFingerprint(value=''){
+  let hash=2166136261;
+  for(const character of String(value||'')){
+    hash^=character.charCodeAt(0);
+    hash=Math.imul(hash,16777619);
+  }
+  return (hash>>>0).toString(36);
+}
+
+function recordMediaPortalFailure(route,reason,sourceUrl=''){
+  if(!route?.url) return false;
+  const health=readMediaPortalHealth();
+  health.failures=health.failures&&typeof health.failures==='object'?health.failures:{};
+  const previous=health.failures[route.url]||{sources:[]};
+  const sourceKey=mediaPortalSourceFingerprint(sourceUrl);
+  const sources=[...new Set([...(Array.isArray(previous.sources)?previous.sources:[]),sourceKey].filter(Boolean))].slice(-3);
+  health.failures[route.url]={reason:String(reason||'automation-error'),sources,at:Date.now()};
+  const unavailable=MEDIA_PORTAL_IMMEDIATE_DAILY_FAILURES.has(reason)||(reason==='parse-timeout'&&sources.length>=2);
+  if(unavailable) health.unavailable[route.url]={reason:String(reason||'automation-error'),at:Date.now()};
+  writeMediaPortalHealth(health);
+  return unavailable;
+}
+
+function mediaPortalIsUnavailable(route){
+  return !!route?.url&&!!readMediaPortalHealth().unavailable[route.url];
+}
+
+function nextHealthyMediaPortalIndex(provider,startIndex=0){
+  const routes=mediaPortalRoutes(provider);
+  for(let index=Math.max(0,Number(startIndex)||0);index<routes.length;index+=1){
+    if(!mediaPortalIsUnavailable(routes[index])) return index;
+  }
+  return -1;
 }
 
 function mediaMusicSearchUrlFallback(keyword=''){
@@ -3498,11 +3600,55 @@ function mediaPortalFailureMessage(reason='',kind='video'){
     'protected-or-private':'该内容可能受版权、登录或私密访问限制，下载站拒绝处理',
     'provider-rejected':'下载站判定链接无效或暂不支持该内容',
     'quota-or-ad-required':'当前下载站需要观看广告领取免费次数，玄念不会代替用户播放或点击广告，已尝试切换备用站',
+    'qr-code-required':'当前下载站要求扫码，玄念已跳过并尝试切换备用站',
+    'vpn-required':'前面的下载站今日不可用，当前备用站需要 VPN；请开启 VPN 后点击重新解析',
+    'daily-portals-unavailable':'今天可用的下载站都已验证失败，请打开原下载站手动处理或明天重试',
+    'preview-unavailable':'这个音乐版本没有提供可用试听地址',
     'load-error':'下载站页面加载失败，请检查网络或 VPN',
     'automation-error':'下载站页面结构发生变化，自动处理未完成',
   };
   const fallback=kind==='audio'?'没有找到可下载的音乐版本':'视频解析未完成';
   return (messages[String(reason||'')]||fallback)+'。请点击右上角眼睛图标打开原下载站手动处理';
+}
+
+function handleMediaVideoParseFailure(reason='automation-error'){
+  const provider=state.media.videoProvider;
+  const routes=mediaPortalRoutes(provider);
+  const currentIndex=Math.max(0,Number(state.media.videoParse.portalIndex||0));
+  const current=routes[currentIndex];
+  if(!current){
+    toast(mediaPortalFailureMessage(reason,'video'));
+    return;
+  }
+  if(current.requiresVpn&&reason==='load-error'){
+    state.media.videoParse={...state.media.videoParse,status:'error',error:'vpn-required'};
+    renderMediaPortalWorkspace();
+    toast('当前下载站需要 VPN，请开启 VPN 后点击重新解析');
+    return;
+  }
+  if(!MEDIA_PORTAL_SWITCH_FAILURES.has(reason)){
+    toast(mediaPortalFailureMessage(reason,'video'));
+    return;
+  }
+  recordMediaPortalFailure(current,reason,state.media.videoParse.sourceUrl);
+  const nextIndex=nextHealthyMediaPortalIndex(provider,currentIndex+1);
+  if(nextIndex<0){
+    state.media.videoParse={...state.media.videoParse,status:'error',error:reason};
+    renderMediaPortalWorkspace();
+    toast(mediaPortalFailureMessage(reason,'video'));
+    return;
+  }
+  const next=routes[nextIndex];
+  if(next.requiresVpn){
+    state.media.videoParse={...state.media.videoParse,status:'error',error:'vpn-required',portalIndex:nextIndex,portalUrl:next.url};
+    state.media.browser={...state.media.browser,ready:true,loading:false,opening:false,url:next.url,autoActionMissing:true};
+    renderMediaPortalWorkspace();
+    renderMediaBrowserState();
+    toast(next.finalFallback?'前面的抖音下载站今日不可用，已切换到 DLPanda；请开启 VPN 后点击重新解析':'当前站点不可用，下一备用站需要 VPN；请开启 VPN 后点击重新解析');
+    return;
+  }
+  toast(`${current.label} 今日不可用，正在切换到 ${next.label}`);
+  setTimeout(()=>parseMediaVideo(nextIndex,{force:true}),120);
 }
 
 function renderMediaAutomationProgress(){
@@ -3524,12 +3670,15 @@ function updateMediaVideoProvider({autoParse=false}={}){
   const value=String($('#mediaVideoInput')?.value||'').trim();
   const provider=resolveMediaVideoProviderFallback(value);
   state.media.videoProvider=provider;
+  const routes=mediaPortalRoutes(provider);
+  const selectedIndex=provider?Math.max(0,nextHealthyMediaPortalIndex(provider,0)):0;
+  const selectedRoute=routes[selectedIndex];
   const label=$('#mediaVideoProvider');
-  if(label) label.innerHTML=provider?`<span class="media-provider-pill">${escapeHtml(provider.label)}</span>`:'等待识别平台';
+  if(label) label.innerHTML=provider?`<span class="media-provider-pill">${escapeHtml(provider.label)} · ${escapeHtml(selectedRoute?.label||'下载站')}</span>`:'等待识别平台';
   const fallback=$('#mediaVideoFallback');
-  if(fallback) fallback.hidden=!provider?.fallbackUrl;
+  if(fallback) fallback.hidden=routes.length<2;
   if(state.media.videoParse.sourceUrl&&state.media.videoParse.sourceUrl!==provider?.sourceUrl){
-    state.media.videoParse={status:'idle',requestId:0,sourceUrl:'',previewUrl:'',embeddedPreview:false,title:'',qualityLabel:'',downloadReady:false,error:'',usingFallback:false,fallbackAttempted:false};
+    state.media.videoParse={status:'idle',requestId:0,sourceUrl:'',previewUrl:'',embeddedPreview:false,title:'',qualityLabel:'',downloadReady:false,error:'',portalIndex:selectedIndex,portalUrl:selectedRoute?.url||''};
   }
   renderMediaPortalWorkspace();
   if(autoParse&&provider){
@@ -3537,12 +3686,12 @@ function updateMediaVideoProvider({autoParse=false}={}){
     state.media.videoParseTimer=setTimeout(()=>{
       state.media.videoParseTimer=null;
       const current=resolveMediaVideoProviderFallback($('#mediaVideoInput')?.value||'');
-      if(current?.sourceUrl===expected) parseMediaVideo(false);
+      if(current?.sourceUrl===expected) parseMediaVideo(null);
     },650);
   }
 }
 
-async function parseMediaVideo(useFallback=false,{force=false}={}){
+async function parseMediaVideo(routeSelection=null,{force=false}={}){
   clearTimeout(state.media.videoParseTimer);
   state.media.videoParseTimer=null;
   const value=$('#mediaVideoInput')?.value||'';
@@ -3551,11 +3700,29 @@ async function parseMediaVideo(useFallback=false,{force=false}={}){
     toast('暂不支持这个链接');
     return;
   }
-  if(!force&&!useFallback&&state.media.videoParse.status==='parsing'&&state.media.videoParse.sourceUrl===provider.sourceUrl) return;
+  if(!force&&state.media.videoParse.status==='parsing'&&state.media.videoParse.sourceUrl===provider.sourceUrl) return;
   state.media.videoProvider=provider;
   updateMediaVideoProvider();
-  const url=useFallback&&provider.fallbackUrl?provider.fallbackUrl:provider.portalUrl;
-  state.media.videoParse={status:'parsing',requestId:0,sourceUrl:provider.sourceUrl,previewUrl:'',embeddedPreview:false,title:'',qualityLabel:'',downloadReady:false,error:'',usingFallback:!!useFallback,fallbackAttempted:!!useFallback};
+  const routes=mediaPortalRoutes(provider);
+  let portalIndex=Number.isInteger(routeSelection)?routeSelection:nextHealthyMediaPortalIndex(provider,0);
+  if(portalIndex<0||portalIndex>=routes.length){
+    state.media.videoParse={...state.media.videoParse,status:'error',sourceUrl:provider.sourceUrl,error:'daily-portals-unavailable'};
+    renderMediaPortalWorkspace();
+    toast(mediaPortalFailureMessage('daily-portals-unavailable','video'));
+    return;
+  }
+  const route=routes[portalIndex];
+  const skippedEarlier=portalIndex>0&&routes.slice(0,portalIndex).some(mediaPortalIsUnavailable);
+  if(route.requiresVpn&&skippedEarlier&&!force){
+    state.media.videoParse={status:'error',requestId:0,sourceUrl:provider.sourceUrl,previewUrl:'',embeddedPreview:false,title:'',qualityLabel:'',downloadReady:false,error:'vpn-required',portalIndex,portalUrl:route.url};
+    state.media.browser={...state.media.browser,ready:true,loading:false,opening:false,url:route.url,autoActionMissing:true};
+    renderMediaPortalWorkspace();
+    renderMediaBrowserState();
+    toast(route.finalFallback?'前面的抖音下载站今日不可用，请开启 VPN 后重新解析 DLPanda':'前面的下载站今日不可用，下一备用站需要 VPN');
+    return;
+  }
+  const url=route.url;
+  state.media.videoParse={status:'parsing',requestId:0,sourceUrl:provider.sourceUrl,previewUrl:'',embeddedPreview:false,title:'',qualityLabel:'',downloadReady:false,error:'',portalIndex,portalUrl:url};
   state.media.browserVisible=false;
   state.media.browser={...state.media.browser,ready:true,loading:true,opening:true,url,autoActionMissing:false,qualityLabel:'',externalOpened:false};
   renderMediaPortalWorkspace();
@@ -3564,13 +3731,13 @@ async function parseMediaVideo(useFallback=false,{force=false}={}){
   if(!opened||opened?.ok===false){
     state.media.videoParse={...state.media.videoParse,status:'error',error:'load-error'};
     renderMediaPortalWorkspace();
-    toast(mediaPortalFailureMessage('load-error','video'));
+    handleMediaVideoParseFailure('load-error');
     return;
   }
   if(state.media.videoParse.status==='parsing'&&state.media.videoParse.sourceUrl===provider.sourceUrl){
     state.media.videoParse.requestId=Number(opened?.requestId||0);
   }
-  toast(useFallback?'正在通过备用站解析视频':'正在解析视频，完成后会显示预览');
+  toast(`${portalIndex?'正在通过 '+route.label+' 解析视频':'正在解析视频'}${route.requiresVpn?'（需要 VPN）':''}`);
 }
 
 async function downloadParsedVideo(favorite=false){
@@ -3616,7 +3783,9 @@ async function searchMediaMusic(){
     return;
   }
   const url=await api.getMediaMusicSearchUrl(keyword);
+  $('#mediaMusicResults audio')?.pause();
   state.media.musicSearch={status:'searching',requestId:0,query:keyword,results:[],error:''};
+  state.media.musicPreview={status:'idle',requestId:0,index:-1,resultUrl:'',previewUrl:'',error:''};
   state.media.musicFormatChoice=null;
   state.media.browserVisible=false;
   state.media.browser={...state.media.browser,ready:true,loading:true,opening:true,url,autoActionMissing:false,externalOpened:false};
@@ -3631,6 +3800,34 @@ async function searchMediaMusic(){
   }
   if(state.media.musicSearch.status==='searching'&&state.media.musicSearch.query===keyword){
     state.media.musicSearch.requestId=Number(opened?.requestId||0);
+  }
+}
+
+async function previewMediaMusicVersion(index){
+  const result=state.media.musicSearch.results[index];
+  if(!result) return;
+  const current=state.media.musicPreview||{};
+  if(current.index===index&&current.status==='ready'){
+    const audio=$('#mediaMusicResults audio[data-music-preview-audio]');
+    if(!audio) return;
+    if(audio.paused) audio.play().catch(()=>toast('试听播放失败，请检查网络')); else audio.pause();
+    return;
+  }
+  $$('#mediaMusicResults audio').forEach(audio=>audio.pause());
+  state.media.musicPreview={status:'loading',requestId:0,index,resultUrl:String(result.url||''),previewUrl:'',error:''};
+  state.media.browserVisible=false;
+  state.media.browser={...state.media.browser,ready:true,loading:true,opening:true,url:result.url,autoActionMissing:false};
+  renderMediaPortalWorkspace();
+  renderMediaBrowserState();
+  const opened=await api.previewMediaMusicResult(result.url);
+  if(!opened||opened?.ok===false){
+    state.media.musicPreview={...state.media.musicPreview,status:'error',error:'load-error'};
+    renderMediaPortalWorkspace();
+    toast(mediaPortalFailureMessage('load-error','audio'));
+    return;
+  }
+  if(state.media.musicPreview.index===index&&state.media.musicPreview.status==='loading'){
+    state.media.musicPreview.requestId=Number(opened?.requestId||0);
   }
 }
 
@@ -3732,12 +3929,15 @@ function renderMediaPortalWorkspace(){
     musicResults.innerHTML=results.map((item,index)=>{
       const choice=state.media.musicFormatChoice?.index===index?state.media.musicFormatChoice:null;
       const favorite=!!choice?.favorite;
+      const preview=state.media.musicPreview?.index===index?state.media.musicPreview:null;
       return `<div class="media-music-result">
         <div class="media-music-result-main"><strong>${escapeHtml(item.title||item.label||'未命名歌曲')}</strong><span>${escapeHtml(item.artist||'未知歌手')}</span></div>
         <div class="media-music-result-actions">
+          <button class="media-music-preview-button${preview?' active':''}" type="button" data-music-preview="${index}" title="${preview?.status==='ready'?'播放或暂停试听':'试听'}" aria-label="试听"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"></path></svg></button>
           <button class="ghost-btn" type="button" data-music-action="download" data-music-index="${index}">下载</button>
           <button class="black-btn" type="button" data-music-action="favorite" data-music-index="${index}">下载并收藏</button>
         </div>
+        ${preview?`<div class="media-music-preview${preview.status==='error'?' error':''}">${preview.status==='ready'&&preview.previewUrl?`<audio data-music-preview-audio controls controlslist="nodownload noremoteplayback" preload="metadata" src="${escapeHtml(preview.previewUrl)}"></audio>`:`<span>${preview.status==='loading'?'正在准备试听…':escapeHtml(mediaPortalFailureMessage(preview.error||'preview-unavailable','audio'))}</span>`}</div>`:''}
         ${choice?`<div class="media-music-format-choices"><span>选择音质</span><button type="button" data-music-format-choice="mp3" data-music-index="${index}" data-music-favorite="${favorite}">普通音质</button><button type="button" data-music-format-choice="wav" data-music-index="${index}" data-music-favorite="${favorite}">高清音质</button></div>`:''}
       </div>`;
     }).join('');

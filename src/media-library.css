@@ -60,6 +60,13 @@ body.dark .media-tab.active{background:#3d3e42;box-shadow:none}
 .media-music-result-main span{color:var(--muted)}
 .media-music-result-actions{display:flex;align-items:center;gap:7px}
 .media-music-result-actions .black-btn,.media-music-result-actions .ghost-btn{height:34px;padding:0 12px;font-size:11px;white-space:nowrap}
+.media-music-preview-button{width:34px;height:34px;display:grid;place-items:center;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--muted)}
+.media-music-preview-button:hover,.media-music-preview-button.active{background:var(--panel-soft);color:var(--text);border-color:#aab1ba}
+.media-music-preview-button svg{width:16px;height:16px;fill:currentColor;stroke:none}
+.media-music-preview{grid-column:1/-1;min-width:0;display:flex;align-items:center;padding-top:8px;border-top:1px dashed var(--line)}
+.media-music-preview audio{display:block;width:100%;height:34px;min-width:180px;color-scheme:light dark}
+.media-music-preview span{color:var(--muted);font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.media-music-preview.error span{color:var(--danger)}
 .media-music-format-choices{grid-column:1/-1;display:flex;align-items:center;justify-content:flex-end;gap:6px;padding-top:8px;border-top:1px dashed var(--line)}
 .media-music-format-choices span{margin-right:4px;color:var(--muted);font-weight:700}
 .media-music-format-choices button{height:30px;min-width:54px;padding:0 12px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--text);font-size:11px;font-weight:800}

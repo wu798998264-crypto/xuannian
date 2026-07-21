@@ -142,7 +142,8 @@ async function run() {
   assert(mediaLibrarySource.includes('async function listManagedMediaFiles'), 'media scanning must enumerate only supported media files');
   assert(mediaLibrarySource.includes('async function deleteMediaCollection'), 'media collections need a file-preserving delete path');
   assert(mediaLibrarySource.includes("portalUrl: 'https://www.hellotik.app/zh/douyin'") && mediaLibrarySource.includes("autoDownloadQuality: 'highest'"), 'Douyin must default to HelloTik with highest-quality automation');
-  assert(mediaLibrarySource.includes("id: 'tiktok'") && mediaLibrarySource.includes("portalUrl: 'https://dlpanda.com/zh-CN'"), 'TikTok must keep the VPN-oriented DLPanda route');
+  assert(mediaLibrarySource.includes("id: 'tiktok'") && mediaLibrarySource.includes('portalUrl: DLPANDA_PORTAL'), 'TikTok must keep the VPN-oriented DLPanda route');
+  assert(mediaLibrarySource.includes('finalFallback: true') && mediaLibrarySource.includes("label: 'DLPanda'"), 'Douyin must keep DLPanda as its final VPN fallback');
   assert(mediaLibrarySource.includes('function scoreMediaDownloadQualityLabel('), 'highest-quality download selection must use a deterministic quality scorer');
   assert(!mediaLibrarySource.includes('fetch('), 'media library must not call third-party private download APIs');
 
@@ -159,6 +160,8 @@ async function run() {
   assert(mainSource.includes("ipcMain.handle('media:deleteDownloadHistoryItem'"), 'completed download records must support deleting their local files');
   assert(!indexSource.includes('id="mediaMusicFormats"') && indexSource.includes('id="mediaMusicResults"'), 'music formats must be selected per result instead of globally');
   assert(indexSource.includes('data-music-action="download"') && indexSource.includes('data-music-action="favorite"') && indexSource.includes('data-music-format-choice="mp3"') && indexSource.includes('data-music-format-choice="wav"'), 'each music result must expose download and favorite-download actions with ordinary/high-quality choices');
+  assert(indexSource.includes('data-music-preview=') && indexSource.includes('data-music-preview-audio') && indexSource.includes('previewMediaMusicVersion'), 'each music result must support inline playback with a seekable native audio control');
+  assert(indexSource.includes('MEDIA_PORTAL_HEALTH_KEY') && indexSource.includes('recordMediaPortalFailure') && indexSource.includes('MEDIA_PORTAL_IMMEDIATE_DAILY_FAILURES') && indexSource.includes('nextHealthyMediaPortalIndex'), 'verified site failures must be skipped for the rest of the local day without treating one content failure as a site outage');
   assert(indexSource.includes('普通音质') && indexSource.includes('高清音质') && indexSource.includes("api.openHighQualityMusic(displayName,favorite?'favorite':'download',collection)"), 'music quality choices must use user-facing labels and pass the selected library destination to the native high-quality client bridge');
   assert(mainSource.includes('startMediaExternalAudioTracker') && mainSource.includes('等待云盘客户端下载') && mainSource.includes('importExternalAudioTracker'), 'external cloud-drive audio downloads must be tracked and imported without recursive disk scanning');
   assert(/class="media-portal-stage"[\s\S]*?id="mediaToggleBrowser"[\s\S]*?id="mediaDirectShell"[\s\S]*?id="mediaBrowserShell"/.test(indexSource), 'the original-site toggle must stay above both native and browser views');
