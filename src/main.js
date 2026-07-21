@@ -826,12 +826,13 @@ async function pollMediaExternalAudioTrackers() {
   }
 }
 
-async function startMediaExternalAudioTracker(displayName, downloadTarget = 'download', collection = '') {
+async function startMediaExternalAudioTracker(displayName, downloadTarget = 'download', collection = '', providerLabel = '云盘客户端') {
   if (!['win32', 'darwin'].includes(process.platform)) return null;
   const id = `external-media-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
   const tracker = {
     id,
     displayName: String(displayName || '').trim(),
+    providerLabel: String(providerLabel || '云盘客户端').trim().slice(0, 40),
     query: externalAudioSearchQuery(displayName),
     location: downloadTarget === 'favorite' ? 'favorites' : 'downloads',
     collection: String(collection || '').trim(),
@@ -847,7 +848,7 @@ async function startMediaExternalAudioTracker(displayName, downloadTarget = 'dow
   }
   tracker.task = {
     id,
-    name: `${tracker.displayName || '高清音质'}（等待云盘客户端下载）`,
+    name: `${tracker.displayName || '高清音质'}（等待${tracker.providerLabel}下载）`,
     path: '',
     location: tracker.location,
     status: 'external',
@@ -2638,6 +2639,39 @@ function notifyMediaDownloadProgress(payload = {}) {
   mainWindow.webContents.send('media:downloadProgress', payload || {});
 }
 
+function mediaPortalPendingTask(target = {}, status = 'preparing', extra = {}) {
+  const id = String(target.taskId || '').trim();
+  if (!id) return null;
+  return {
+    id,
+    name: String(target.taskName || target.preferredName || '音乐下载').trim().slice(0, 260),
+    path: '',
+    location: target.location === 'favorite' ? 'favorites' : 'downloads',
+    status,
+    receivedBytes: 0,
+    totalBytes: 0,
+    percent: 0,
+    updatedAt: Date.now(),
+    ...extra,
+  };
+}
+
+function failMediaPortalPendingTask(webContents, status = 'error') {
+  if (!webContents || webContents.isDestroyed()) return;
+  const target = mediaPortalDownloadTargets.get(webContents) || {};
+  const task = mediaPortalPendingTask(target, status);
+  if (!task) return;
+  target.taskId = '';
+  notifyMediaDownloadProgress(task);
+}
+
+function claimMediaPortalTaskId(target = {}, fallbackPrefix = 'media') {
+  const taskId = String(target.taskId || '').trim()
+    || `${fallbackPrefix}-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+  target.taskId = '';
+  return taskId;
+}
+
 async function runMediaFileOperation(label, operation) {
   try {
     return await operation();
@@ -3042,7 +3076,8 @@ async function startDirectTrackedMediaDownload(webContents, url, referer) {
   const kind = mediaKindForPath(filename) || 'video';
   const downloadPath = mediaCollectionDirectory(rootPath, kind, target.collection || '');
   const destination = uniqueMediaDownloadPath(downloadPath, filename);
-  const taskId = `media-direct-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+  const taskId = String(target.taskId || '').trim()
+    || `media-direct-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
   let started = false;
   let receivedBytes = 0;
   let totalBytes = 0;
@@ -3063,6 +3098,7 @@ async function startDirectTrackedMediaDownload(webContents, url, referer) {
       referer,
       onStarted: (details) => {
         started = true;
+        if (target.taskId === taskId) target.taskId = '';
         totalBytes = Number(details.totalBytes || 0);
         activeMediaPortalDownloads += 1;
         cancelMediaPortalIdleDestroy();
@@ -3224,7 +3260,7 @@ function configureMediaDownloadSession(electronSession) {
     item.setSavePath(destination);
     activeMediaPortalDownloads += 1;
     cancelMediaPortalIdleDestroy();
-    const taskId = `media-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+    const taskId = claimMediaPortalTaskId(target, 'media');
     let lastProgressAt = 0;
     const progressPayload = (status) => {
       const receivedBytes = Math.max(0, Number(item.getReceivedBytes() || 0));
@@ -3616,7 +3652,9 @@ function waitForMediaPortalDownload(state) {
     webContents: mediaPortalView?.webContents || null,
     timeout: setTimeout(() => {
       if (!mediaPortalPendingDownload || mediaPortalPendingDownload.requestId !== state.requestId) return;
+      const webContents = mediaPortalPendingDownload.webContents;
       clearMediaPortalPendingDownload();
+      failMediaPortalPendingTask(webContents);
       finishMediaPortalProgress(state, false, 'download-timeout', '下载站没有返回文件，请重新尝试该版本');
       notifyMediaBrowserState({ opening: false, autoActionMissing: true, automationStage: 'music-download', failureReason: 'download-timeout' });
     }, 30000),
@@ -3998,6 +4036,7 @@ async function completeMediaPortalAutomation(state, result = {}) {
     mediaPortalInputState = null;
     const href = sanitizeRemoteMediaUrl(result.href);
     if (!result.ok) {
+      failMediaPortalPendingTask(view?.webContents);
       finishMediaPortalProgress(state, false, String(result.reason || 'download-action-missing'));
     } else if (state.downloadObserved) {
       finishMediaPortalProgress(state, true, '', '普通音质文件已开始下载');
@@ -4371,11 +4410,15 @@ function downloadMediaMusicResult(url, downloadTarget = 'download', collection =
   if (!isGequbaoMusicUrl(value)) return false;
   const opened = openMediaPortal(value, downloadTarget, '', false, collection, '', 'music-download');
   if (opened && mediaPortalView && !mediaPortalView.webContents.isDestroyed()) {
-    mediaPortalDownloadTargets.set(mediaPortalView.webContents, {
+    const target = {
       location: downloadTarget === 'favorite' ? 'favorite' : 'download',
       collection: String(collection || '').trim(),
       preferredName: String(preferredName || '').trim().slice(0, 160),
-    });
+      taskId: `music-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+      taskName: `${String(preferredName || '普通音质音乐').trim().slice(0, 180)}（准备下载）`,
+    };
+    mediaPortalDownloadTargets.set(mediaPortalView.webContents, target);
+    notifyMediaDownloadProgress(mediaPortalPendingTask(target));
   }
   return opened;
 }
@@ -4389,7 +4432,9 @@ function previewMediaMusicResult(url) {
 async function openHighQualityMusic(query = '', downloadTarget = 'download', collection = '') {
   const value = String(query || '').trim().slice(0, 240);
   if (!value) return { ok: false, reason: '缺少歌曲名称' };
-  const tracker = await startMediaExternalAudioTracker(value, downloadTarget, collection);
+  const client = process.platform === 'win32' ? findInstalledMusicClient() : null;
+  const providerLabel = client?.label || '阿里云盘网页';
+  const tracker = await startMediaExternalAudioTracker(value, downloadTarget, collection, providerLabel);
   const failTracker = () => {
     if (!tracker) return;
     mediaExternalAudioTrackers.delete(tracker.id);
@@ -4397,7 +4442,6 @@ async function openHighQualityMusic(query = '', downloadTarget = 'download', col
     stopMediaExternalAudioMonitorIfIdle();
   };
   clipboard.writeText(value);
-  const client = process.platform === 'win32' ? findInstalledMusicClient() : null;
   if (client?.executablePath) {
     try {
       const args = client.id === 'quark' ? [client.url] : [];
@@ -4546,6 +4590,7 @@ function openMediaPortal(url, downloadTarget = 'download', sourceText = '', auto
   if (!isAllowedPortalUrl(value)) return false;
   const view = ensureMediaPortalView();
   if (!view) return false;
+  failMediaPortalPendingTask(view.webContents, 'cancelled');
   if (automationMode) clearMediaPortalVerificationMonitor();
   mediaPortalRequestId += 1;
   const normalizedQualityPreference = qualityPreference === 'highest' ? 'highest' : '';

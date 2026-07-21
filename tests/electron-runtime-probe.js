@@ -1177,6 +1177,16 @@ async function run() {
         ringSize:[downloadRingRect.width,downloadRingRect.height],
         ringAligned:Math.abs(downloadToggleRect.left-downloadRingRect.left)<0.1&&Math.abs(downloadToggleRect.top-downloadRingRect.top)<0.1,
       };
+      updateMediaDownloadTask({id:'runtime-music-preparing',name:'测试歌曲（准备下载）',status:'preparing',receivedBytes:0,totalBytes:0,percent:0});
+      updateMediaDownloadTask({id:'runtime-quark-external',name:'高清歌曲（等待夸克下载）',status:'external',receivedBytes:0,totalBytes:0,percent:0});
+      const musicDownloadStates={
+        active:document.querySelector('#mediaDownloadBubble').classList.contains('active'),
+        names:[...document.querySelectorAll('#mediaDownloadTaskList .media-download-task-name')].map(item=>item.textContent.trim()),
+        statuses:[...document.querySelectorAll('#mediaDownloadTaskList .media-download-task-status')].map(item=>item.textContent.trim()),
+        summary:document.querySelector('#mediaDownloadSummary').textContent.trim(),
+      };
+      state.media.downloadTasks=state.media.downloadTasks.filter(task=>!['runtime-music-preparing','runtime-quark-external'].includes(task.id));
+      renderMediaDownloadBubble();
       for(let index=0;index<12;index+=1){
         updateMediaDownloadTask({
           id:'runtime-completed-'+index,
@@ -1262,7 +1272,7 @@ async function run() {
         openedPortals,portalTargets,portalInputs,externalUrls,copiedText,copiedFiles,draggedFiles,contextMenus,favoriteCollections,movedFavorites,deletedFavorites,
         downloadedVideos,downloadedSongs,previewedSongs,highQualityRequests,openedDownloadHistory,downloadHistoryContextMenus,deletedDownloadHistory,localPlaybackRequests,nativeMediaBridgeAvailableBeforeStub,videoUi,favoritePreviewModal,musicUi,backgroundPortal,browserTogglePersistence,localAudioPlayer,manualPortalInitiallyVisible,
         providerRouting:{douyinProvider,tiktokProvider,dailyFallback,failureClassification},
-        verificationFlow,
+        verificationFlow,musicDownloadStates,
         activeView:document.querySelector('.view.active')?.id||'',
         activeNav:document.querySelector('.nav-btn.active')?.dataset.view||'',
         rows:document.querySelectorAll('#mediaDownloadsList [data-media-row]').length,
@@ -1355,6 +1365,12 @@ async function run() {
   assert.strictEqual(mediaLibraryMetrics.copyActions, 0);
   assert.strictEqual(mediaLibraryMetrics.deleteActions, mediaLibraryMetrics.rows);
   assert.deepStrictEqual(mediaLibraryMetrics.downloadBubble, {active:true,open:true,ring:'50 100',tasks:1,toggleSize:[40,40],ringSize:[40,40],ringAligned:true});
+  assert.strictEqual(mediaLibraryMetrics.musicDownloadStates.active, true);
+  assert(mediaLibraryMetrics.musicDownloadStates.names.includes('测试歌曲（准备下载）'));
+  assert(mediaLibraryMetrics.musicDownloadStates.names.includes('高清歌曲（等待夸克下载）'));
+  assert(mediaLibraryMetrics.musicDownloadStates.statuses.includes('正在准备音乐文件'));
+  assert(mediaLibraryMetrics.musicDownloadStates.statuses.includes('等待云盘客户端下载'));
+  assert(mediaLibraryMetrics.musicDownloadStates.summary.includes('3 项进行中'));
   assert.strictEqual(mediaLibraryMetrics.completedHistory.count, 10);
   assert.strictEqual(mediaLibraryMetrics.completedHistory.rendered, 11, 'active task plus ten completed records should be visible');
   assert.strictEqual(mediaLibraryMetrics.completedHistory.deleteButtons, 10, 'every completed download record with a file must expose a delete button');

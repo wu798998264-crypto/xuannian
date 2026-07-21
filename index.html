@@ -3547,6 +3547,7 @@ function mediaMusicSearchUrlFallback(keyword=''){
 
 function mediaDownloadStatusLabel(status){
   if(status==='completed') return '已完成';
+  if(status==='preparing') return '正在准备音乐文件';
   if(status==='external') return '等待云盘客户端下载';
   if(status==='paused') return '已暂停';
   if(status==='interrupted') return '等待重试';
@@ -3572,7 +3573,7 @@ function normalizeMediaDownloadHistory(items=[]){
 
 function renderMediaDownloadBubble(){
   const tasks=state.media.downloadTasks||[];
-  const active=tasks.filter(task=>['downloading','paused','interrupted','external'].includes(task.status));
+  const active=tasks.filter(task=>['preparing','downloading','paused','interrupted','external'].includes(task.status));
   const external=active.filter(task=>task.status==='external');
   const completed=tasks.filter(task=>task.status==='completed');
   const bubble=$('#mediaDownloadBubble');
