@@ -1080,11 +1080,13 @@
       <div class="media-nav" id="mediaNav">
         <div class="media-nav-left">
           <div class="media-kind-select" id="mediaKindTabs">
-            <button class="media-kind-toggle" id="mediaKindToggle" type="button" aria-haspopup="listbox" aria-expanded="false">
-              <span class="media-kind-toggle-icon" id="mediaKindToggleIcon"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="m10 9 5 3-5 3Z"></path></svg></span>
-              <span id="mediaKindLabel">视频</span>
-              <svg class="media-kind-chevron" viewBox="0 0 24 24"><path d="m7 9 5 5 5-5"></path></svg>
-            </button>
+            <div class="media-kind-control">
+              <button class="media-kind-home" id="mediaKindHome" type="button" title="打开视频下载页">
+                <span class="media-kind-toggle-icon" id="mediaKindToggleIcon"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="m10 9 5 3-5 3Z"></path></svg></span>
+                <span id="mediaKindLabel">视频</span>
+              </button>
+              <button class="media-kind-toggle" id="mediaKindToggle" type="button" aria-label="切换媒体类型" aria-haspopup="listbox" aria-expanded="false"><svg class="media-kind-chevron" viewBox="0 0 24 24"><path d="m7 9 5 5 5-5"></path></svg></button>
+            </div>
             <div class="media-kind-menu" id="mediaKindMenu" role="listbox" aria-label="媒体类型" hidden>
               <button class="media-kind-option active" data-media-kind="video" type="button" role="option" aria-selected="true"><span><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="m10 9 5 3-5 3Z"></path></svg></span>视频</button>
               <button class="media-kind-option" data-media-kind="audio" type="button" role="option" aria-selected="false"><span><svg viewBox="0 0 24 24"><path d="M9 18V5l10-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="16" cy="16" r="3"></circle></svg></span>音乐</button>
@@ -2291,6 +2293,10 @@ function bindEvents(){
   $('#mediaNav')?.addEventListener('click',event=>{
     const button=event.target.closest('[data-media-tab]');
     if(button) setMediaTab(button.dataset.mediaTab);
+  });
+  $('#mediaKindHome')?.addEventListener('click',()=>{
+    setMediaKindMenuExpanded(false);
+    setMediaTab('portal');
   });
   $('#mediaKindToggle')?.addEventListener('click',event=>{
     event.stopPropagation();
@@ -4184,8 +4190,10 @@ function renderMediaKindSelector(){
   const audio=state.media.kind==='audio';
   const label=$('#mediaKindLabel');
   const icon=$('#mediaKindToggleIcon');
+  const home=$('#mediaKindHome');
   if(label) label.textContent=audio?'音乐':'视频';
   if(icon) icon.innerHTML=mediaKindIcon(audio?'audio':'video');
+  if(home) home.title=audio?'打开音乐下载页':'打开视频下载页';
   $$('#mediaKindMenu [data-media-kind]').forEach(button=>{
     const active=button.dataset.mediaKind===state.media.kind;
     button.classList.toggle('active',active);

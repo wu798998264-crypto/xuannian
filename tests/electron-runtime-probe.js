@@ -1117,6 +1117,9 @@ async function run() {
       document.querySelector('#mediaKindTabs [data-media-kind="audio"]').click();
       const kindDropdownKeepsFavorites={kind:state.media.kind,tab:state.media.tab,label:document.querySelector('#mediaKindLabel').textContent.trim(),menuHidden:document.querySelector('#mediaKindMenu').hidden};
       document.querySelector('#mediaKindTabs [data-media-kind="video"]').click();
+      document.querySelector('#mediaKindHome').click();
+      const kindHomeOpensPortal={kind:state.media.kind,tab:state.media.tab};
+      setMediaTab('favorites');
       await new Promise(resolve=>setTimeout(resolve,30));
       const favoriteRow=document.querySelector('#mediaFavoritesList [data-media-row="0"]');
       favoriteRow.dispatchEvent(new Event('dragstart',{bubbles:true,cancelable:true}));
@@ -1226,7 +1229,7 @@ async function run() {
         activeNav:document.querySelector('.nav-btn.active')?.dataset.view||'',
         rows:document.querySelectorAll('#mediaDownloadsList [data-media-row]').length,
         typeOptions:[...document.querySelectorAll('#mediaKindTabs [data-media-kind]')].map(button=>button.textContent.trim()),
-        audioPortalSelected,videoDownloadModeSelected,downloadKindLabel,kindMenuOpened,kindDropdownKeepsFavorites,favoriteOrder,videoProviderHiddenOnAudio,matchingSearchRows,missingSearchRows,
+        audioPortalSelected,videoDownloadModeSelected,downloadKindLabel,kindMenuOpened,kindDropdownKeepsFavorites,kindHomeOpensPortal,favoriteOrder,videoProviderHiddenOnAudio,matchingSearchRows,missingSearchRows,
         allDownloadedCount,initialVirtualRows,maxVirtualRows,reachedLastDownload,
         mediaRowsDraggable:[first.draggable,favoriteRow.draggable],
         hasDownloadTab:!!document.querySelector('#mediaTabs [data-media-tab="portal"]'),
@@ -1293,6 +1296,7 @@ async function run() {
   assert.strictEqual(mediaLibraryMetrics.downloadKindLabel, '视频');
   assert.strictEqual(mediaLibraryMetrics.kindMenuOpened, true);
   assert.deepStrictEqual(mediaLibraryMetrics.kindDropdownKeepsFavorites, {kind:'audio',tab:'favorites',label:'音乐',menuHidden:true});
+  assert.deepStrictEqual(mediaLibraryMetrics.kindHomeOpensPortal, {kind:'video',tab:'portal'});
   assert.deepStrictEqual(mediaLibraryMetrics.favoriteOrder, {changed:true,names:['second.mp4','first.mp4'],persisted:['second.mp4','first.mp4']});
   assert.strictEqual(mediaLibraryMetrics.videoProviderHiddenOnAudio, true);
   assert.strictEqual(mediaLibraryMetrics.matchingSearchRows, 1);
