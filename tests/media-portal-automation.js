@@ -20,6 +20,11 @@ function run() {
   assert(parseScript.includes('mismatchedPlatformLink'));
   assert(parseScript.includes('hasResultEvidence'));
   assert(parseScript.includes('repeatsSourceInput'));
+  assert(parseScript.includes('candidateCount'));
+  assert(parseScript.includes('qualityOptions'));
+  const secondCandidateScript = buildPortalScript({ mode: 'video-download', candidateIndex: 1 }, scoreMediaDownloadQualityLabel);
+  assert(secondCandidateScript.includes('const requestedCandidateIndex = 1'));
+  assert(secondCandidateScript.includes('candidates[requestedCandidateIndex]'));
 
   const musicScript = buildPortalScript({ mode: 'music-search', value: '测试歌曲' }, scoreMediaDownloadQualityLabel);
   assert(musicScript.includes('parseMusicResults'));

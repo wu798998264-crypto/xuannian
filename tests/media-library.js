@@ -21,18 +21,19 @@ const {
 async function run() {
   const douyin = detectVideoProvider('https://v.douyin.com/example');
   assert.strictEqual(douyin.id, 'douyin');
-  assert.strictEqual(douyin.portalUrl, 'https://www.hellotik.app/zh/douyin');
-  assert.strictEqual(douyin.fallbackUrl, 'https://www.seekin.ai/zh/downloader/');
-  assert.deepStrictEqual(douyin.portals.map((route) => route.label), ['HelloTik', 'Seekin', 'DLPanda']);
+  assert.strictEqual(douyin.portalUrl, 'https://www.seekin.ai/zh/downloader/');
+  assert.strictEqual(douyin.fallbackUrl, 'https://www.hellotik.app/zh/douyin');
+  assert.deepStrictEqual(douyin.portals.map((route) => route.label), ['Seekin', 'HelloTik', 'DLPanda']);
+  assert.strictEqual(douyin.portals[0].requiresVpn, undefined);
   assert.strictEqual(douyin.portals.at(-1).url, 'https://dlpanda.com/zh-CN');
   assert.strictEqual(douyin.portals.at(-1).requiresVpn, true);
   assert.strictEqual(douyin.portals.at(-1).finalFallback, true);
   assert.strictEqual(douyin.autoDownloadQuality, 'highest');
   const tiktok = detectVideoProvider('https://www.tiktok.com/@example/video/1');
   assert.strictEqual(tiktok.id, 'tiktok');
-  assert.strictEqual(tiktok.portalUrl, 'https://dlpanda.com/zh-CN');
-  assert.strictEqual(tiktok.portals[0].requiresVpn, true);
-  assert(tiktok.label.includes('VPN'));
+  assert.strictEqual(tiktok.portalUrl, 'https://www.seekin.ai/zh/downloader/');
+  assert.strictEqual(tiktok.portals[0].requiresVpn, undefined);
+  assert.strictEqual(tiktok.label, 'TikTok');
   assert.strictEqual(tiktok.autoDownloadQuality, undefined);
   assert.strictEqual(detectVideoProvider('看看这个 https://www.bilibili.com/video/BV1xx').id, 'bilibili');
   assert.strictEqual(detectVideoProvider('【凡人修仙传：第183话 慕兰之战07】 https://www.bilibili.com/bangumi/play/ep3854807/?share_source=copy_web').id, 'bilibili');
@@ -41,7 +42,8 @@ async function run() {
   assert.strictEqual(detectVideoProvider('https://v.kuaishou.com/example').id, 'kuaishou');
   const kuaishou = detectVideoProvider('https://www.kuaishou.com/f/X-2Yx2wKCy7jxLZb');
   assert.strictEqual(kuaishou.id, 'kuaishou');
-  assert.strictEqual(kuaishou.fallbackUrl, 'https://www.seekin.ai/zh/downloader/');
+  assert.strictEqual(kuaishou.portalUrl, 'https://www.seekin.ai/zh/downloader/');
+  assert.strictEqual(kuaishou.fallbackUrl, 'https://www.hellotik.app/zh/kuaishou');
   assert.strictEqual(detectVideoProvider('https://youtu.be/example').id, 'youtube');
   assert.strictEqual(detectVideoProvider('https://www.instagram.com/reel/example').id, 'instagram');
   assert.strictEqual(detectVideoProvider('https://x.com/example/status/1').id, 'twitter');

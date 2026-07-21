@@ -133,6 +133,19 @@ async function parseOnce(webContents, provider) {
     inputResult = { ok: true, continueAutomation: true, nextPhase: 'result' };
   }
   if (!inputResult?.continueAutomation) return { parsed: inputResult, download: { ok: false, reason: 'input-stage-failed' } };
+  if (process.env.REAL_MEDIA_DEBUG === 'input') {
+    const debug = await webContents.executeJavaScript(`(() => {
+      const input = document.querySelector('input[placeholder*="链接"],input[type="text"],textarea');
+      return {
+        input: input?.outerHTML || '',
+        value: input?.value || '',
+        parent: input?.parentElement?.outerHTML?.slice(0, 5000) || '',
+        form: input?.closest('form')?.outerHTML?.slice(0, 8000) || '',
+      };
+    })()`, true);
+    console.log('real media input debug ' + JSON.stringify({ inputResult, debug }));
+    return { parsed: { ok: false, reason: 'debug-input-only' }, download: { ok: false, reason: 'debug-input-only' } };
+  }
   await wait(1000);
   const parsed = await webContents.executeJavaScript(buildPortalScript({
     mode: 'video-parse',
@@ -140,7 +153,22 @@ async function parseOnce(webContents, provider) {
     value: provider.sourceUrl,
     timeoutMs: 45000,
   }, scoreMediaDownloadQualityLabel), true);
-  if (!parsed?.ok) return { parsed, download: { ok: false, reason: parsed?.reason || 'parse-failed' } };
+  if (!parsed?.ok) {
+    if (process.env.REAL_MEDIA_DEBUG === '1') {
+      const debug = await webContents.executeJavaScript(`(() => ({
+        url: location.href,
+        title: document.title,
+        body: String(document.body?.innerText || '').slice(0, 5000),
+        inputs: [...document.querySelectorAll('input,textarea')].map((element) => ({ type: element.type, value: element.value, placeholder: element.placeholder })),
+        buttons: [...document.querySelectorAll('button,a,[role="button"]')].filter((element) => {
+          const rect = element.getBoundingClientRect();
+          return rect.width > 20 && rect.height > 10;
+        }).slice(0, 80).map((element) => String(element.innerText || element.textContent || element.getAttribute('aria-label') || '').trim().slice(0, 240)),
+      }))()`, true);
+      console.log('real media debug ' + JSON.stringify(debug));
+    }
+    return { parsed, download: { ok: false, reason: parsed?.reason || 'parse-failed' } };
+  }
   const directUrl = parsed.qualityHref && isMediaUrl(parsed.qualityHref)
     ? parsed.qualityHref
     : parsed.previewUrl;
@@ -149,11 +177,18 @@ async function parseOnce(webContents, provider) {
     if (directProbe.ok || !parsed.downloadActionReady) return { parsed, download: directProbe };
   }
   if (!parsed.downloadActionReady) return { parsed, download: { ok: false, reason: 'no-download-source' } };
-  const download = await waitForTriggeredDownload(webContents, () => webContents.executeJavaScript(buildPortalScript({
-    mode: 'video-download',
-    value: provider.sourceUrl,
-    timeoutMs: 20000,
-  }, scoreMediaDownloadQualityLabel), true));
+  let download = { ok: false, reason: 'download-not-triggered' };
+  const candidateCount = Math.max(1, Math.min(8, Number(parsed.candidateCount || 1)));
+  for (let candidateIndex = 0; candidateIndex < candidateCount; candidateIndex += 1) {
+    download = await waitForTriggeredDownload(webContents, () => webContents.executeJavaScript(buildPortalScript({
+      mode: 'video-download',
+      value: provider.sourceUrl,
+      timeoutMs: 20000,
+      candidateIndex,
+    }, scoreMediaDownloadQualityLabel), true));
+    download.candidateIndex = candidateIndex;
+    if (download.ok) break;
+  }
   return { parsed, download };
 }
 
@@ -174,7 +209,10 @@ async function run() {
   window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   const results = [];
   const caseFilter = String(process.env.REAL_MEDIA_FILTER || '').trim().toLowerCase();
-  const activeCases = caseFilter === 'music' ? [] : CASES.filter((testCase) => !caseFilter || testCase.id === caseFilter);
+  const sourceOverride = String(process.env.REAL_MEDIA_SOURCE || '').trim();
+  const activeCases = caseFilter === 'music' ? [] : CASES
+    .filter((testCase) => !caseFilter || testCase.id === caseFilter)
+    .map((testCase) => sourceOverride ? { ...testCase, source: sourceOverride } : testCase);
   for (const testCase of activeCases) {
     const provider = detectVideoProvider(testCase.source);
     if (!provider) {
@@ -187,9 +225,12 @@ async function run() {
       let usedPortal = '';
       const routeResults = [];
       try {
-        const routes = Array.isArray(provider.portals) && provider.portals.length
+        let routes = Array.isArray(provider.portals) && provider.portals.length
           ? provider.portals
           : [{ url: provider.portalUrl, label: 'primary' }, ...(provider.fallbackUrl ? [{ url: provider.fallbackUrl, label: 'fallback' }] : [])];
+        const portalFilter = String(process.env.REAL_MEDIA_PORTAL || '').trim().toLowerCase();
+        if (portalFilter) routes = routes.filter((route) => `${route.label || ''} ${route.url || ''}`.toLowerCase().includes(portalFilter));
+        if (!routes.length) throw new Error(`portal-filter-not-found:${portalFilter}`);
         for (const route of routes) {
           usedPortal = route.label || route.url;
           result = await runPortalAttemptWithTimeout(window.webContents, () => parseOnce(window.webContents, { ...provider, portalUrl: route.url }));
@@ -219,6 +260,7 @@ async function run() {
           quality: result.parsed?.qualityLabel || '',
           qualityHref: String(result.parsed?.qualityHref || '').slice(0, 500),
           action: !!result.parsed?.downloadActionReady,
+          candidateCount: Number(result.parsed?.candidateCount || 0),
         },
         download: result.download,
       });

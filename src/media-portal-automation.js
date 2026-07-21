@@ -34,7 +34,7 @@ function classifyMediaPortalPopup(value, currentUrl = '') {
   return 'block';
 }
 
-function buildPortalScript({ mode, value = '', phase = '', timeoutMs = 30000 } = {}, qualityScorer = () => -1) {
+function buildPortalScript({ mode, value = '', phase = '', timeoutMs = 30000, candidateIndex = 0 } = {}, qualityScorer = () => -1) {
   const normalizedMode = String(mode || '');
   const normalizedPhase = String(phase || '');
   const deadlineMs = Math.max(1000, Math.min(60000, Number(timeoutMs) || 30000));
@@ -45,6 +45,7 @@ function buildPortalScript({ mode, value = '', phase = '', timeoutMs = 30000 } =
     const sourceValue = ${safeJson(String(value || ''))};
     const qualityScore = ${qualityScorerSource};
     const deadline = Date.now() + ${deadlineMs};
+    const requestedCandidateIndex = ${Math.max(0, Math.floor(Number(candidateIndex) || 0))};
     const previewFallbackWaitMs = 2500;
     let previewFirstSeenAt = 0;
     const pause = (fn, delay = 220) => setTimeout(fn, delay);
@@ -153,7 +154,10 @@ function buildPortalScript({ mode, value = '', phase = '', timeoutMs = 30000 } =
       .map((element, index) => {
         const label = text(element);
         const href = httpUrl(element.href || element.getAttribute('href'));
-        const quality = qualityScore(label);
+        const resultRoot = element.closest('[class*="result"],[class*="quality"],[class*="resolution"],[class*="download-item"],article,li,tr');
+        const resultText = text(resultRoot);
+        const descriptiveLabel = String(resultText || label).replace(/\\s+/g, ' ').trim().slice(0, 240);
+        const quality = qualityScore(descriptiveLabel);
         const parserAction = element.getAttribute('data-xuannian-parser-action') === 'true';
         const inertSamePageLink = element.tagName === 'A' && !!href && sameDocumentUrl(href);
         const toolNavigationLink = element.tagName === 'A' && !!href && portalToolNavigation(href);
@@ -162,8 +166,6 @@ function buildPortalScript({ mode, value = '', phase = '', timeoutMs = 30000 } =
         const nearbyInput = element.closest('form')?.querySelector('input,textarea')
           || element.parentElement?.querySelector?.('input,textarea');
         const repeatsSourceInput = !!sourceValue && String(nearbyInput?.value || '').trim() === sourceValue.trim();
-        const resultRoot = element.closest('[class*="result"],[class*="quality"],[class*="resolution"],[class*="download-item"],article,li,tr');
-        const resultText = text(resultRoot);
         const hasResultEvidence = !!mediaUrl(href)
           || element.hasAttribute('download')
           || !!resultRoot?.querySelector?.('video,audio,img,source')
@@ -180,7 +182,7 @@ function buildPortalScript({ mode, value = '', phase = '', timeoutMs = 30000 } =
         if (disallowed) score = -1;
         if (!disallowed && hasResultEvidence && score < 0 && !/(?:复制|copy|解析|parse|搜索|search|应用|app)/i.test(label) && /(?:下载|download|保存|save)/i.test(label)) score = 20;
         if (!disallowed && score < 0 && (element.hasAttribute('download') || mediaUrl(href))) score = 10;
-        return { element, index, label, href, score };
+        return { element, index, label: descriptiveLabel || label, href, score };
       })
       .filter((candidate) => candidate.score >= 0)
       .sort((left, right) => right.score - left.score || left.index - right.index);
@@ -275,7 +277,18 @@ function buildPortalScript({ mode, value = '', phase = '', timeoutMs = 30000 } =
       const preview = previewUrl();
       if (candidates.length) {
         const best = candidates[0];
-        resolve({ ok: true, stage: 'result', previewUrl: preview, title: videoTitle(), downloadReady: true, downloadActionReady: true, qualityLabel: String(best.label || ''), qualityHref: String(best.href || '') });
+        resolve({
+          ok: true,
+          stage: 'result',
+          previewUrl: preview,
+          title: videoTitle(),
+          downloadReady: true,
+          downloadActionReady: true,
+          qualityLabel: String(best.label || ''),
+          qualityHref: String(best.href || ''),
+          candidateCount: candidates.length,
+          qualityOptions: candidates.slice(0, 8).map((candidate) => ({ label: String(candidate.label || ''), href: String(candidate.href || '') })),
+        });
         return;
       }
       if (preview) {
@@ -310,10 +323,11 @@ function buildPortalScript({ mode, value = '', phase = '', timeoutMs = 30000 } =
     };
     const attemptVideoDownload = () => {
       if (humanVerificationRequired()) { resolve({ ok: false, stage: 'download', reason: 'human-verification' }); return; }
-      const candidate = videoCandidates()[0];
+      const candidates = videoCandidates();
+      const candidate = candidates[requestedCandidateIndex];
       if (candidate) {
-        if (mediaUrl(candidate.href)) resolve({ ok: true, stage: 'download', href: candidate.href, label: candidate.label, clicked: false });
-        else { candidate.element.click(); resolve({ ok: true, stage: 'download', href: '', label: candidate.label, clicked: true }); }
+        if (mediaUrl(candidate.href)) resolve({ ok: true, stage: 'download', href: candidate.href, label: candidate.label, clicked: false, candidateIndex: requestedCandidateIndex, candidateCount: candidates.length });
+        else { candidate.element.click(); resolve({ ok: true, stage: 'download', href: '', label: candidate.label, clicked: true, candidateIndex: requestedCandidateIndex, candidateCount: candidates.length }); }
         return;
       }
       if (Date.now() < deadline) pause(attemptVideoDownload, 240); else resolve({ ok: false, stage: 'download', reason: 'download-action-missing' });

@@ -141,8 +141,8 @@ async function run() {
   assert(mediaLibrarySource.includes('async function scanMediaDirectory'), 'local media files must be derived from the selected folders');
   assert(mediaLibrarySource.includes('async function listManagedMediaFiles'), 'media scanning must enumerate only supported media files');
   assert(mediaLibrarySource.includes('async function deleteMediaCollection'), 'media collections need a file-preserving delete path');
-  assert(mediaLibrarySource.includes("portalUrl: 'https://www.hellotik.app/zh/douyin'") && mediaLibrarySource.includes("autoDownloadQuality: 'highest'"), 'Douyin must default to HelloTik with highest-quality automation');
-  assert(mediaLibrarySource.includes("id: 'tiktok'") && mediaLibrarySource.includes('portalUrl: DLPANDA_PORTAL'), 'TikTok must keep the VPN-oriented DLPanda route');
+  assert(mediaLibrarySource.includes('portalUrl: SEEKIN_UNIVERSAL_PORTAL') && mediaLibrarySource.includes("autoDownloadQuality: 'highest'"), 'video providers must default to Seekin with highest-quality automation');
+  assert(mediaLibrarySource.includes("id: 'tiktok'") && mediaLibrarySource.includes("{ url: SEEKIN_UNIVERSAL_PORTAL, label: 'Seekin' }"), 'TikTok must use Seekin before its VPN fallback');
   assert(mediaLibrarySource.includes('finalFallback: true') && mediaLibrarySource.includes("label: 'DLPanda'"), 'Douyin must keep DLPanda as its final VPN fallback');
   assert(mediaLibrarySource.includes('function scoreMediaDownloadQualityLabel('), 'highest-quality download selection must use a deterministic quality scorer');
   assert(!mediaLibrarySource.includes('fetch('), 'media library must not call third-party private download APIs');
@@ -164,7 +164,7 @@ async function run() {
   assert(indexSource.includes('MEDIA_PORTAL_HEALTH_KEY') && indexSource.includes('recordMediaPortalFailure') && indexSource.includes('MEDIA_PORTAL_IMMEDIATE_DAILY_FAILURES') && indexSource.includes('nextHealthyMediaPortalIndex'), 'verified site failures must be skipped for the rest of the local day without treating one content failure as a site outage');
   assert(indexSource.includes('普通音质') && indexSource.includes('高清音质') && indexSource.includes("api.openHighQualityMusic(displayName,favorite?'favorite':'download',collection)"), 'music quality choices must use user-facing labels and pass the selected library destination to the native high-quality client bridge');
   assert(mainSource.includes('startMediaExternalAudioTracker') && mainSource.includes('等待云盘客户端下载') && mainSource.includes('importExternalAudioTracker'), 'external cloud-drive audio downloads must be tracked and imported without recursive disk scanning');
-  assert(/class="media-portal-stage"[\s\S]*?id="mediaToggleBrowser"[\s\S]*?id="mediaDirectShell"[\s\S]*?id="mediaBrowserShell"/.test(indexSource), 'the original-site toggle must stay above both native and browser views');
+  assert(!indexSource.includes('id="mediaToggleBrowser"') && indexSource.includes('id="mediaVideoProvider"') && indexSource.includes('id="mediaMusicProvider"'), 'media pages must keep provider labels without exposing an original-site eye toggle');
   assert(indexSource.includes('id="mediaAutomationProgress"') && indexSource.includes('onMediaPortalProgress'), 'native media pages must display parser and countdown progress');
   assert(/id="mediaDirectShell"[\s\S]*?id="mediaAutomationProgress"/.test(indexSource) && indexSource.includes("const visible=progress.status==='running'"), 'media progress must stay in the content area and disappear immediately after success or failure');
   assert(indexSource.includes('id="mediaDownloadBubble"'), 'download progress must remain visible in the main window');
@@ -194,9 +194,9 @@ async function run() {
   assert(indexSource.includes('<svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="5.5"></circle><path d="m15 15 5 5"></path></svg>'), 'full-disk search navigation must use a plain magnifying-glass icon');
   assert(!indexSource.includes('<path d="M4 4h5"></path><path d="M4 4v5"></path>'), 'full-disk search navigation must not include the old corner mark');
   assert(indexSource.includes('id="mediaView"'), 'main window must expose the media library view');
-  assert(indexSource.includes('id="mediaToggleBrowser"'), 'the native media page must keep an original-site toggle available');
+  assert(mainSource.includes('keepMediaPortalWorkerVisible') && mainSource.includes('visibilityRetryCount'), 'hidden media automation must emulate a visible page and retry delayed music results without a manual toggle');
   assert(mainSource.includes('mediaPortalPreviewCapture'), 'video parsing must capture same-session previews from provider download actions');
-  assert(mainSource.includes('event.preventDefault();') && mainSource.includes('setMediaPortalPresentationMode'), 'captured previews must avoid saving a duplicate and render inside the media stage');
+  assert(mainSource.includes('MEDIA_PREVIEW_MAX_AGE_MS') && mainSource.includes('mediaPreviewCachePath') && mainSource.includes('setMediaPortalPresentationMode'), 'captured previews must use a one-day managed cache and render inside the media stage');
   assert(indexSource.includes("state.fileSearch.clickTimer=setTimeout(()=>performFileSearchAction('copy',index),220)"), 'single-clicking a full-disk result must copy the local file');
   assert(indexSource.includes("api.showFileContextMenu(item.path)"), 'full-disk results must expose the local file context menu');
   assert(indexSource.includes('data-file-index="${index}" draggable="true"'), 'full-disk result rows must be draggable');

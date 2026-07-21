@@ -59,10 +59,13 @@ async function run() {
   assert.strictEqual(parsed.downloadReady, true);
   assert.strictEqual(parsed.downloadActionReady, true);
   assert(parsed.qualityLabel.includes('1080P'));
+  assert.strictEqual(parsed.candidateCount, 2);
   assert.deepStrictEqual(flowPopupDecisions, ['block']);
   console.log('probe: highest-quality download selection');
   const videoDownload = await win.webContents.executeJavaScript(buildPortalScript({ mode: 'video-download', timeoutMs: 2000 }, scoreMediaDownloadQualityLabel), true);
   assert.strictEqual(videoDownload.href, 'https://cdn.example.com/video-1080.mp4');
+  const previewDownload = await win.webContents.executeJavaScript(buildPortalScript({ mode: 'video-download', timeoutMs: 2000, candidateIndex: 1 }, scoreMediaDownloadQualityLabel), true);
+  assert.strictEqual(previewDownload.href, 'https://cdn.example.com/video-720.mp4');
 
   await loadFixture(win, '<video src="https://cdn.example.com/preview-only.mp4" style="width:480px;height:270px"></video><a href="/help" style="display:block;width:180px;height:32px">为什么无法下载视频？</a><a href="/sound-help" style="display:block;width:180px;height:32px">下载的视频有声音吗？</a>');
   console.log('probe: preview-only direct-download fallback');
