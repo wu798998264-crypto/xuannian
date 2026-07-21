@@ -24,6 +24,9 @@ function run() {
   assert(parseScript.includes('repeatsSourceInput'));
   assert(parseScript.includes('candidateCount'));
   assert(parseScript.includes('qualityOptions'));
+  assert(parseScript.includes('imageOnlyDownload'));
+  assert(parseScript.includes('audioOnlyDownload'));
+  assert(parseScript.includes('content-not-video'));
   const secondCandidateScript = buildPortalScript({ mode: 'video-download', candidateIndex: 1 }, scoreMediaDownloadQualityLabel);
   assert(secondCandidateScript.includes('const requestedCandidateIndex = 1'));
   assert(secondCandidateScript.includes('candidates[requestedCandidateIndex]'));

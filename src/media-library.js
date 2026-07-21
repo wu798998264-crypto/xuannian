@@ -20,6 +20,7 @@ const VIDEO_PROVIDERS = [
     fallbackUrl: 'https://www.hellotik.app/zh/douyin',
     portals: [
       { url: SEEKIN_UNIVERSAL_PORTAL, label: 'Seekin' },
+      { url: 'https://www.seekin.ai/zh/douyin-downloader/', label: 'Seekin 抖音' },
       { url: 'https://www.hellotik.app/zh/douyin', label: 'HelloTik' },
       { url: DLPANDA_PORTAL, label: 'DLPanda', requiresVpn: true, finalFallback: true },
     ],
@@ -33,6 +34,7 @@ const VIDEO_PROVIDERS = [
     fallbackUrl: DLPANDA_PORTAL,
     portals: [
       { url: SEEKIN_UNIVERSAL_PORTAL, label: 'Seekin' },
+      { url: 'https://www.seekin.ai/zh/download-tiktok-no-watermark/', label: 'Seekin TikTok' },
       { url: DLPANDA_PORTAL, label: 'DLPanda', requiresVpn: true, finalFallback: true },
     ],
   },
@@ -40,11 +42,11 @@ const VIDEO_PROVIDERS = [
     id: 'bilibili',
     label: '哔哩哔哩',
     hosts: ['bilibili.com', 'b23.tv'],
-    portalUrl: 'https://www.seekin.ai/zh/bilibili-downloader/',
-    fallbackUrl: SEEKIN_UNIVERSAL_PORTAL,
+    portalUrl: SEEKIN_UNIVERSAL_PORTAL,
+    fallbackUrl: 'https://www.seekin.ai/zh/bilibili-downloader/',
     portals: [
-      { url: 'https://www.seekin.ai/zh/bilibili-downloader/', label: 'Seekin Bilibili' },
       { url: SEEKIN_UNIVERSAL_PORTAL, label: 'Seekin' },
+      { url: 'https://www.seekin.ai/zh/bilibili-downloader/', label: 'Seekin Bilibili' },
       { url: DLPANDA_PORTAL, label: 'DLPanda', requiresVpn: true, finalFallback: true },
     ],
   },
@@ -56,6 +58,7 @@ const VIDEO_PROVIDERS = [
     fallbackUrl: 'https://www.xiaohongshua.com/',
     portals: [
       { url: SEEKIN_UNIVERSAL_PORTAL, label: 'Seekin' },
+      { url: 'https://www.seekin.ai/zh/xiaohongshu-video-downloader/', label: 'Seekin 小红书' },
       { url: 'https://www.hellotik.app/zh/rednote', label: 'HelloTik' },
       { url: 'https://www.xiaohongshua.com/', label: 'Xiaohongshua' },
       { url: DLPANDA_PORTAL, label: 'DLPanda', requiresVpn: true, finalFallback: true },
@@ -69,6 +72,8 @@ const VIDEO_PROVIDERS = [
     fallbackUrl: 'https://www.hellotik.app/zh/kuaishou',
     portals: [
       { url: SEEKIN_UNIVERSAL_PORTAL, label: 'Seekin' },
+      { url: 'https://www.seekin.ai/zh/kuaishou-video-downloader/', label: 'Seekin 快手' },
+      { url: 'https://www.seekin.ai/zh/kwai-video-downloader/', label: 'Seekin Kwai' },
       { url: 'https://www.hellotik.app/zh/kuaishou', label: 'HelloTik' },
       { url: DLPANDA_PORTAL, label: 'DLPanda', requiresVpn: true, finalFallback: true },
     ],
@@ -80,6 +85,7 @@ const VIDEO_PROVIDERS = [
     portalUrl: SEEKIN_UNIVERSAL_PORTAL,
     portals: [
       { url: SEEKIN_UNIVERSAL_PORTAL, label: 'Seekin' },
+      { url: 'https://www.seekin.ai/zh/youtube-video-downloader/', label: 'Seekin YouTube' },
       { url: DLPANDA_PORTAL, label: 'DLPanda', requiresVpn: true, finalFallback: true },
     ],
   },
@@ -90,6 +96,7 @@ const VIDEO_PROVIDERS = [
     portalUrl: SEEKIN_UNIVERSAL_PORTAL,
     portals: [
       { url: SEEKIN_UNIVERSAL_PORTAL, label: 'Seekin' },
+      { url: 'https://www.seekin.ai/zh/download-instagram-reels/', label: 'Seekin Instagram' },
       { url: DLPANDA_PORTAL, label: 'DLPanda', requiresVpn: true, finalFallback: true },
     ],
   },
@@ -100,6 +107,7 @@ const VIDEO_PROVIDERS = [
     portalUrl: SEEKIN_UNIVERSAL_PORTAL,
     portals: [
       { url: SEEKIN_UNIVERSAL_PORTAL, label: 'Seekin' },
+      { url: 'https://www.seekin.ai/zh/x-video-downloader/', label: 'Seekin X' },
       { url: DLPANDA_PORTAL, label: 'DLPanda', requiresVpn: true, finalFallback: true },
     ],
   },
@@ -110,6 +118,7 @@ const VIDEO_PROVIDERS = [
     portalUrl: SEEKIN_UNIVERSAL_PORTAL,
     portals: [
       { url: SEEKIN_UNIVERSAL_PORTAL, label: 'Seekin' },
+      { url: 'https://www.seekin.ai/zh/facebook-video-downloader/', label: 'Seekin Facebook' },
       { url: DLPANDA_PORTAL, label: 'DLPanda', requiresVpn: true, finalFallback: true },
     ],
   },
@@ -184,6 +193,36 @@ function scoreMediaDownloadQualityLabel(value) {
     if (Number.isFinite(megabytes)) score += Math.min(0.99, megabytes / 100000);
   }
   return score;
+}
+
+function sanitizeMediaVideoTitle(value, sourceValue = '') {
+  const clean = (input) => String(input || '')
+    .normalize('NFKC')
+    .replace(/https?:\/\/[^\s<>"']+/gi, ' ')
+    .replace(/(?:复制此链接|复制链接|打开(?:抖音|Dou音|小红书|快手|哔哩哔哩|B站|TikTok|X|Twitter)[^。！？!?\n]{0,80}|直接观看视频)[。！？!?\s]*$/gi, ' ')
+    .replace(/\b(?:download|original|best|video|mp4|m4v|mov|webm|mkv)\b/gi, ' ')
+    .replace(/(?:下载视频|立即下载|无水印下载|原画下载|最高画质|超清|高清)/g, ' ')
+    .replace(/\b\d{3,4}\s*p\b/gi, ' ')
+    .replace(/\b\d+(?:\.\d+)?\s*(?:gb|mb|kb)\b/gi, ' ')
+    .replace(/[\u0000-\u001f\u007f-\u009f\uFFFD]/g, ' ')
+    .replace(/[^\p{L}\p{N}\s，。！？、；：,.!?;:（）()《》【】「」『』—_-]/gu, ' ')
+    .replace(/([，。！？、；：,.!?;:])\1+/g, '$1')
+    .replace(/\s+/g, ' ')
+    .replace(/^[\s，。！？、；：,.!?;:_-]+|[\s，。！？、；：,.!?;:_-]+$/g, '')
+    .trim();
+  const genericTitle = /^(?:免费的?社交媒体视频下载|视频下载|社交媒体视频|seekin|download|已解析视频)$/i;
+  let title = clean(value);
+  if (!title || genericTitle.test(title)) title = clean(String(sourceValue || '').replace(extractHttpUrl(sourceValue), ' '));
+  if (!title || genericTitle.test(title)) {
+    const provider = detectVideoProvider(sourceValue);
+    let token = '';
+    try {
+      const url = new URL(provider?.sourceUrl || extractHttpUrl(sourceValue));
+      token = url.pathname.split('/').filter(Boolean).pop() || '';
+    } catch {}
+    title = [provider?.label || '视频', clean(token).slice(0, 32)].filter(Boolean).join('-');
+  }
+  return Array.from(title || '视频').slice(0, 100).join('').trim();
 }
 
 function musicSearchUrl(keyword) {
@@ -518,6 +557,7 @@ module.exports = {
   moveMediaToCollection,
   musicSearchUrl,
   renameMediaCollection,
+  sanitizeMediaVideoTitle,
   sanitizeCollectionName,
   scanMediaDirectory,
   scoreMediaDownloadQualityLabel,

@@ -1024,7 +1024,12 @@ async function run() {
         fallbackHidden:document.querySelector('#mediaVideoFallback').hidden,
       };
       const readyVideoParse={...state.media.videoParse};
-      state.media.videoParse={...readyVideoParse,status:'error',error:'parse-timeout',portalIndex:2};
+      state.media.videoParse={
+        ...readyVideoParse,
+        status:'error',
+        error:'parse-timeout',
+        portalIndex:Math.max(0,mediaPortalRoutes(state.media.videoProvider).length-1),
+      };
       renderMediaPortalWorkspace();
       videoUi.exhaustedFallbackHidden=document.querySelector('#mediaVideoFallback').hidden;
       state.media.videoParse=readyVideoParse;
@@ -1055,6 +1060,8 @@ async function run() {
         {url:'https://www.gequbao.com/music/102',title:'测试歌曲（现场版）',artist:'现场歌手',label:'测试歌曲（现场版） - 现场歌手'},
       ],error:''};
       renderMediaPortalWorkspace();
+      document.querySelectorAll('#mediaMusicResults .media-music-result')[1].dispatchEvent(new MouseEvent('dblclick',{bubbles:true,detail:2}));
+      await new Promise(resolve=>setTimeout(resolve,20));
       await previewMediaMusicVersion(0);
       state.media.musicPreview={...state.media.musicPreview,status:'ready',previewUrl:'https://cdn.example.com/test-song.mp3'};
       renderMediaPortalWorkspace();
@@ -1243,6 +1250,7 @@ async function run() {
       localStorage.removeItem(MEDIA_PORTAL_HEALTH_KEY);
       markMediaPortalUnavailable(douyinRoutes[0],'quota-or-ad-required');
       markMediaPortalUnavailable(douyinRoutes[1],'qr-code-required');
+      markMediaPortalUnavailable(douyinRoutes[2],'automation-error');
       const dailyFallbackIndex=nextHealthyMediaPortalIndex(douyinProvider,0);
       const dailyFallback={index:dailyFallbackIndex,route:douyinRoutes[dailyFallbackIndex],health:readMediaPortalHealth()};
       localStorage.removeItem(MEDIA_PORTAL_HEALTH_KEY);
@@ -1273,7 +1281,7 @@ async function run() {
     })()
   `, true);
   console.log(`media library runtime metrics ${JSON.stringify(mediaLibraryMetrics)}`);
-  assert.deepStrictEqual(mediaLibraryMetrics.openedPortals, ['https://www.seekin.ai/zh/downloader/','https://www.seekin.ai/zh/bilibili-downloader/','https://www.gequbao.com/s/%E6%B5%8B%E8%AF%95%E6%AD%8C%E6%9B%B2%20%E6%B5%8B%E8%AF%95%E6%AD%8C%E6%89%8B']);
+  assert.deepStrictEqual(mediaLibraryMetrics.openedPortals, ['https://www.seekin.ai/zh/downloader/','https://www.seekin.ai/zh/downloader/','https://www.gequbao.com/s/%E6%B5%8B%E8%AF%95%E6%AD%8C%E6%9B%B2%20%E6%B5%8B%E8%AF%95%E6%AD%8C%E6%89%8B']);
   assert.deepStrictEqual(mediaLibraryMetrics.portalTargets, ['download','download','download']);
   assert.deepStrictEqual(mediaLibraryMetrics.portalInputs.map((item) => item.autoSubmit), [true,true,false]);
   assert.deepStrictEqual(mediaLibraryMetrics.portalInputs.map((item) => item.collection), ['', '', '']);
@@ -1288,7 +1296,7 @@ async function run() {
   assert.strictEqual(mediaLibraryMetrics.nativeMediaBridgeAvailableBeforeStub, true);
   assert.deepStrictEqual(mediaLibraryMetrics.videoUi, {previewSrc:'https://cdn.example.com/runtime.mp4',actions:['下载视频','下载并收藏'],topActions:false,fallbackHidden:true,exhaustedFallbackHidden:true});
   assert.deepStrictEqual(mediaLibraryMetrics.musicUi, {rows:2,actions:['下载','下载并收藏','下载','下载并收藏'],formatChoices:['普通音质','高清音质'],previewButtons:2,activeAudioControls:true,topFormatControls:false});
-  assert.deepStrictEqual(mediaLibraryMetrics.previewedSongs, ['https://www.gequbao.com/music/101']);
+  assert.deepStrictEqual(mediaLibraryMetrics.previewedSongs, ['https://www.gequbao.com/music/102','https://www.gequbao.com/music/101']);
   assert.deepStrictEqual(mediaLibraryMetrics.backgroundPortal, {browserHidden:true,directVisible:true});
   assert.strictEqual(mediaLibraryMetrics.manualPortalInitiallyVisible, true, 'manual-site controls must remain visible at the right edge before and after automatic routes run');
   assert.strictEqual(mediaLibraryMetrics.verificationFlow.title, '需要真人验证');
@@ -1304,10 +1312,10 @@ async function run() {
   assert.strictEqual(mediaLibraryMetrics.providerRouting.douyinProvider.autoDownloadQuality, 'highest');
   assert.strictEqual(mediaLibraryMetrics.providerRouting.douyinProvider.portals.at(-1).url, 'https://dlpanda.com/zh-CN');
   assert.strictEqual(mediaLibraryMetrics.providerRouting.douyinProvider.portals.at(-1).finalFallback, true);
-  assert.strictEqual(mediaLibraryMetrics.providerRouting.dailyFallback.index, 2);
+  assert.strictEqual(mediaLibraryMetrics.providerRouting.dailyFallback.index, 3);
   assert.strictEqual(mediaLibraryMetrics.providerRouting.dailyFallback.route.label, 'DLPanda');
   assert.strictEqual(mediaLibraryMetrics.providerRouting.dailyFallback.route.requiresVpn, true);
-  assert.strictEqual(Object.keys(mediaLibraryMetrics.providerRouting.dailyFallback.health.unavailable).length, 2);
+  assert.strictEqual(Object.keys(mediaLibraryMetrics.providerRouting.dailyFallback.health.unavailable).length, 3);
   assert.deepStrictEqual(mediaLibraryMetrics.providerRouting.failureClassification, {contentFailureKeepsSite:true,oneTimeoutKeepsSite:true,twoSourcesTripSite:true});
   assert.strictEqual(mediaLibraryMetrics.providerRouting.tiktokProvider.id, 'tiktok');
   assert.strictEqual(mediaLibraryMetrics.providerRouting.tiktokProvider.portalUrl, 'https://www.seekin.ai/zh/downloader/');

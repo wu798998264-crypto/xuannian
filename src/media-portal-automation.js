@@ -72,6 +72,7 @@ function buildPortalScript({ mode, value = '', phase = '', timeoutMs = 30000, ca
     const requestedCandidateIndex = ${Math.max(0, Math.floor(Number(candidateIndex) || 0))};
     const previewFallbackWaitMs = 2500;
     let previewFirstSeenAt = 0;
+    let imageOnlyFirstSeenAt = 0;
     const pause = (fn, delay = 220) => setTimeout(fn, delay);
     const text = (element) => String(element?.innerText || element?.textContent || element?.value || element?.getAttribute?.('aria-label') || '').trim();
     const visible = (element) => {
@@ -142,6 +143,10 @@ function buildPortalScript({ mode, value = '', phase = '', timeoutMs = 30000, ca
       }
     };
     const videoResultSignal = (value) => /(?:\\d+(?:\\.\\d+)?\\s*(?:gb|mb|kb)|\\b\\d{3,4}\\s*p\\b|原画|超清|高清|original|best|uhd|fhd|\\bhd\\b|(?:video|mp4)\\s*\\(?\\s*\\.?mp4\\s*\\)?|\\.mp4)/i.test(String(value || ''));
+    const imageDownloadSignal = (value) => /(?:^|[^a-z0-9])(?:jpe?g|png|webp|gif|bmp|tiff?|avif)(?:[^a-z0-9]|$)|图片|封面|缩略图|image|thumbnail/i.test(String(value || ''));
+    const audioDownloadSignal = (value) => /(?:^|[^a-z0-9])(?:mp3|m4a|weba|wav|flac|aac|ogg|opus)(?:[^a-z0-9]|$)|音频|音轨|audio/i.test(String(value || ''));
+    const videoFormatSignal = (value) => /(?:^|[^a-z0-9])(?:mp4|m4v|mov|webm|mkv)(?:[^a-z0-9]|$)|视频|video/i.test(String(value || ''));
+    const explicitVideoSignal = (value) => /(?:^|[^a-z0-9])(?:mp4|m4v|mov|webm|mkv)(?:[^a-z0-9]|$)|\\b\\d{3,4}\\s*p\\b|原画|超清|高清|original|best|uhd|fhd|\\bhd\\b|视频|video/i.test(String(value || ''));
     const installPopupGuards = () => {
       try { window.alert = () => undefined; } catch {}
       try { window.confirm = () => false; } catch {}
@@ -160,8 +165,9 @@ function buildPortalScript({ mode, value = '', phase = '', timeoutMs = 30000, ca
         .slice(0, 3000);
       if (/(?:扫码|扫描).{0,18}(?:继续|下载|领取|验证)|(?:二维码|qr\\s*code).{0,18}(?:下载|继续|领取|验证)|scan.{0,18}(?:qr|code)/i.test(value)) return 'qr-code-required';
       if (/观看.{0,12}广告|广告.{0,12}(?:免费|次数|额度)|免费次数.{0,12}(?:用完|不足)|watch.{0,12}ad|free.{0,12}(?:quota|limit)/i.test(value)) return 'quota-or-ad-required';
-      if (/受版权保护|私密内容|private content|copyright protected/i.test(value)) return 'protected-or-private';
-      if (/链接无效|视频不存在|不支持.*链接|无法解析|解析失败|invalid link|not supported|failed to parse/i.test(value)) return 'provider-rejected';
+      if (/受版权保护|私密内容|仅自己可见|禁止下载|private content|copyright protected|download prohibited/i.test(value)) return 'protected-or-private';
+      if (/链接无效|视频不存在|内容不存在|视频已删除|invalid link|video unavailable|content unavailable|not found|has been removed/i.test(value)) return 'content-unavailable';
+      if (/不支持.*链接|无法解析|解析失败|not supported|failed to parse/i.test(value)) return 'provider-rejected';
       return '';
     };
     const scoreInput = (input) => {
@@ -197,6 +203,8 @@ function buildPortalScript({ mode, value = '', phase = '', timeoutMs = 30000, ca
         || [...document.querySelectorAll('button,input[type="submit"],[role="button"]')].filter(visible).find((element) => matcher.test(text(element)));
     };
     const videoResultRoot = (element) => {
+      const explicitCard = element?.closest('.media-item,article,li,tr,[class*="result-card"],[class*="quality-item"],[class*="resolution-item"],[class*="download-item"],[class*="format-item"],[class*="option-item"]');
+      if (explicitCard) return explicitCard;
       let current = element?.parentElement;
       let fallback = element?.parentElement || null;
       for (let depth = 0; current && depth < 12 && current !== document.body; depth += 1, current = current.parentElement) {
@@ -210,6 +218,25 @@ function buildPortalScript({ mode, value = '', phase = '', timeoutMs = 30000, ca
       }
       return element?.closest('article,li,tr,[class*="result"],[class*="quality"],[class*="resolution"],[class*="download-item"],[class*="format"],[class*="option"],[class*="card"]') || fallback;
     };
+    const cleanVideoTitle = (value) => String(value || '')
+      .normalize('NFKC')
+      .replace(/https?:\\/\\/\\S+/gi, ' ')
+      .replace(/(?:download|下载|保存)\\s*/gi, ' ')
+      .replace(/(?:\\b\\d{3,4}\\s*p\\b|\\b(?:original|best|uhd|fhd|hd)\\b|\\b\\d+(?:\\.\\d+)?\\s*(?:gb|mb|kb)\\b|\\[\\s*\\.?(?:mp4|mov|m4v|webm|mkv)\\s*\\])/gi, ' ')
+      .replace(/\\s+/g, ' ')
+      .trim()
+      .slice(0, 180);
+    const videoResultTitle = (root) => {
+      if (!root) return '';
+      const preferred = [...root.querySelectorAll('[class*="title"],[class*="caption"],[class*="description"],h1,h2,h3,p')]
+        .filter(visible)
+        .map((element) => cleanVideoTitle(text(element)))
+        .find((value) => value.length > 2 && !/^(?:视频|video|mp4|立即|免费|原画|高清|超清)/i.test(value));
+      if (preferred) return preferred;
+      const clone = root.cloneNode(true);
+      clone.querySelectorAll('button,a,svg,video,audio,source,img,[class*="actions"],[class*="quality"],[class*="format"],[class*="resolution"],[class*="size"]').forEach((element) => element.remove());
+      return cleanVideoTitle(clone.textContent);
+    };
     const videoCandidates = () => [...document.querySelectorAll('button,[role="button"],a')]
       .filter(visible)
       .map((element, index) => {
@@ -218,7 +245,8 @@ function buildPortalScript({ mode, value = '', phase = '', timeoutMs = 30000, ca
         const resultRoot = videoResultRoot(element);
         const resultText = text(resultRoot);
         const ownQuality = qualityScore(label);
-        const descriptiveLabel = String(ownQuality >= 0 ? label : (resultText || label)).replace(/\\s+/g, ' ').trim().slice(0, 240);
+        const actionContext = text(element.parentElement).replace(/\\s+/g, ' ').trim().slice(0, 120);
+        const descriptiveLabel = String(ownQuality >= 0 ? label : ([actionContext, resultText, label].filter(Boolean).join(' '))).replace(/\\s+/g, ' ').trim().slice(0, 240);
         const quality = qualityScore(descriptiveLabel);
         const parserAction = element.getAttribute('data-xuannian-parser-action') === 'true';
         const inertSamePageLink = element.tagName === 'A' && !!href && sameDocumentUrl(href);
@@ -230,21 +258,34 @@ function buildPortalScript({ mode, value = '', phase = '', timeoutMs = 30000, ca
         const repeatsSourceInput = !!sourceValue && String(nearbyInput?.value || '').trim() === sourceValue.trim();
         const technicalResultEvidence = !!mediaUrl(href)
           || element.hasAttribute('download')
-          || !!resultRoot?.querySelector?.('video,audio,source')
+          || !!resultRoot?.querySelector?.('video,audio,video source,audio source')
           || videoResultSignal(resultText);
         const structuredResultContainer = !!element.closest('article,li,tr,[class*="result"],[class*="quality"],[class*="resolution"],[class*="download-item"],[class*="format"],[class*="option"],[class*="card"]')
           || (!!resultRoot && resultRoot !== element.parentElement && resultText.length <= 2000);
         const genericDownloadAction = /^(?:立即|开始|免费)?\s*(?:下载|download)\s*$/i.test(label);
-        const marketingCopy = /多平台视频.*(?:免费|下载)|只需粘贴链接|粘贴.{0,40}(?:即可|就能).{0,80}(?:下载|保存)|极速.*无水印|由\s*seekin\s*提供|free.{0,100}(?:without watermark|lossless video quality)|require.{0,40}sessdata/i.test(resultText);
+        const marketingCopy = /多平台视频.*(?:免费|下载)|只需粘贴链接|粘贴.{0,40}(?:即可|就能).{0,80}(?:下载|保存)|极速.*无水印|一键保存精彩\\s*(?:reels?|视频)|使用\\s*seekin\\s*免费(?:下载|保存).{0,100}(?:立即开始|快速便捷)|由\\s*seekin\\s*提供|free.{0,100}(?:without watermark|lossless video quality)|require.{0,40}sessdata/i.test(resultText);
         const hasResultEvidence = technicalResultEvidence
           || (!!resultRoot?.querySelector?.('img') && structuredResultContainer && !marketingCopy);
         const hasDownloadAction = /(?:下载|保存|download|save)/i.test(label);
+        const ownDownloadDescriptor = label + ' ' + actionContext + ' ' + href;
+        const explicitImageDownload = imageDownloadSignal(ownDownloadDescriptor)
+          && !explicitVideoSignal(ownDownloadDescriptor);
+        const imageOnlyDownload = imageDownloadSignal(descriptiveLabel)
+          && !explicitVideoSignal(descriptiveLabel)
+          && !mediaUrl(href)
+          && !resultRoot?.querySelector?.('video,video source');
+        const audioOnlyDownload = audioDownloadSignal(descriptiveLabel)
+          && !videoFormatSignal(descriptiveLabel)
+          && !resultRoot?.querySelector?.('video,video source');
         const disallowed = parserAction
           || inertSamePageLink
           || toolNavigationLink
           || mismatchedPlatformLink
           || repeatsSourceInput
           || marketingCopy
+          || explicitImageDownload
+          || imageOnlyDownload
+          || audioOnlyDownload
           || (genericDownloadAction && !technicalResultEvidence && !structuredResultContainer)
           || /(?:为什么|无法下载|下载失败|帮助|教程|常见问题|faq|how\s+to|support)/i.test(label)
           || /[?？]\s*$/.test(label);
@@ -252,10 +293,22 @@ function buildPortalScript({ mode, value = '', phase = '', timeoutMs = 30000, ca
         if (disallowed) score = -1;
         if (!disallowed && hasResultEvidence && score < 0 && !/(?:复制|copy|解析|parse|搜索|search|应用|app)/i.test(label) && /(?:下载|download|保存|save)/i.test(label)) score = 20;
         if (!disallowed && score < 0 && (element.hasAttribute('download') || mediaUrl(href))) score = 10;
-        return { element, index, label: descriptiveLabel || label, href, score };
+        return { element, index, label: descriptiveLabel || label, href, score, title: videoResultTitle(resultRoot) };
       })
       .filter((candidate) => candidate.score >= 0)
       .sort((left, right) => right.score - left.score || left.index - right.index);
+    const imageOnlyDownloadPresent = () => [...document.querySelectorAll('button,[role="button"],a')]
+      .filter(visible)
+      .some((element) => {
+        const label = text(element);
+        if (!/(?:下载|保存|download|save)/i.test(label)) return false;
+        const root = videoResultRoot(element);
+        const description = (label + ' ' + text(root)).replace(/\s+/g, ' ').trim();
+        return imageDownloadSignal(description)
+          && !explicitVideoSignal(description)
+          && !!root?.querySelector?.('img')
+          && !root?.querySelector?.('video,video source');
+      });
     const previewUrl = () => {
       const video = [...document.querySelectorAll('video')].find(visible) || document.querySelector('video');
       const sources = [
@@ -274,7 +327,7 @@ function buildPortalScript({ mode, value = '', phase = '', timeoutMs = 30000, ca
     };
     const videoTitle = () => {
       const heading = [...document.querySelectorAll('h1,h2,h3')].filter(visible).map(text).find((value) => value.length > 1 && value.length < 160);
-      return heading || String(document.title || '').trim().slice(0, 160);
+      return cleanVideoTitle(heading || document.title);
     };
     const parseMusicResults = () => {
       const unique = new Map();
@@ -361,7 +414,7 @@ function buildPortalScript({ mode, value = '', phase = '', timeoutMs = 30000, ca
           ok: true,
           stage: 'result',
           previewUrl: preview,
-          title: videoTitle(),
+          title: best.title || videoTitle(),
           downloadReady: true,
           downloadActionReady: true,
           qualityLabel: String(best.label || ''),
@@ -377,6 +430,15 @@ function buildPortalScript({ mode, value = '', phase = '', timeoutMs = 30000, ca
           resolve({ ok: true, stage: 'result', previewUrl: preview, title: videoTitle(), downloadReady: true, downloadActionReady: false, qualityLabel: '可直接下载当前预览', qualityHref: '' });
           return;
         }
+      }
+      if (imageOnlyDownloadPresent()) {
+        if (!imageOnlyFirstSeenAt) imageOnlyFirstSeenAt = Date.now();
+        if (Date.now() - imageOnlyFirstSeenAt >= 1500 || Date.now() >= deadline) {
+          resolve({ ok: false, stage: 'result', reason: 'content-not-video' });
+          return;
+        }
+      } else {
+        imageOnlyFirstSeenAt = 0;
       }
       if (Date.now() < deadline) pause(attemptVideoResult, 260); else resolve({ ok: false, stage: 'result', reason: 'parse-timeout' });
     };

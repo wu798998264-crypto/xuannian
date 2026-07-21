@@ -67,6 +67,39 @@ async function run() {
   const previewDownload = await win.webContents.executeJavaScript(buildPortalScript({ mode: 'video-download', timeoutMs: 2000, candidateIndex: 1 }, scoreMediaDownloadQualityLabel), true);
   assert.strictEqual(previewDownload.href, 'https://cdn.example.com/video-720.mp4');
 
+  await loadFixture(win, '<article class="result-card"><img src="data:image/gif;base64,R0lGODlhAQABAAAAACw="><div>Tweet image JPG</div><a href="https://cdn.example.com/poster.jpg" style="display:block;width:160px;height:32px">JPG Download</a></article><article class="result-card"><video src="https://cdn.example.com/x-preview.mp4" style="width:320px;height:180px"></video><div>Video MP4</div><a href="https://cdn.example.com/x-video.mp4" style="display:block;width:160px;height:32px">MP4 Download</a></article>');
+  console.log('probe: exclude image downloads from mixed social results');
+  const mixedSocialResult = await win.webContents.executeJavaScript(buildPortalScript({
+    mode: 'video-parse', phase: 'result', value: 'https://x.com/example/status/1', timeoutMs: 2000,
+  }, scoreMediaDownloadQualityLabel), true);
+  assert.strictEqual(mixedSocialResult.ok, true);
+  assert.strictEqual(mixedSocialResult.candidateCount, 1);
+  assert(mixedSocialResult.qualityLabel.includes('MP4'));
+  const mixedSocialDownload = await win.webContents.executeJavaScript(buildPortalScript({
+    mode: 'video-download', value: 'https://x.com/example/status/1', timeoutMs: 2000,
+  }, scoreMediaDownloadQualityLabel), true);
+  assert.strictEqual(mixedSocialDownload.href, 'https://cdn.example.com/x-video.mp4');
+
+  await loadFixture(win, '<article class="result-card"><div>1080p Audio M4A</div><a href="https://cdn.example.com/track.m4a" style="display:block;width:160px;height:32px">1080p M4A Download</a></article><article class="result-card"><div>Video 360p MP4</div><a href="https://cdn.example.com/video-360.mp4" style="display:block;width:160px;height:32px">360p MP4 Download</a></article>');
+  console.log('probe: exclude audio downloads from video candidates');
+  const mixedMediaResult = await win.webContents.executeJavaScript(buildPortalScript({
+    mode: 'video-parse', phase: 'result', value: 'https://www.youtube.com/watch?v=example', timeoutMs: 2000,
+  }, scoreMediaDownloadQualityLabel), true);
+  assert.strictEqual(mixedMediaResult.ok, true);
+  assert.strictEqual(mixedMediaResult.candidateCount, 1);
+  const mixedMediaDownload = await win.webContents.executeJavaScript(buildPortalScript({
+    mode: 'video-download', value: 'https://www.youtube.com/watch?v=example', timeoutMs: 2000,
+  }, scoreMediaDownloadQualityLabel), true);
+  assert.strictEqual(mixedMediaDownload.href, 'https://cdn.example.com/video-360.mp4');
+
+  await loadFixture(win, '<article class="result-card"><img src="data:image/gif;base64,R0lGODlhAQABAAAAACw="><div>Photo post JPG</div><a href="https://cdn.example.com/photo.jpg" style="display:block;width:160px;height:32px">JPG Download</a></article>');
+  console.log('probe: report image-only social result');
+  const imageOnlySocialResult = await win.webContents.executeJavaScript(buildPortalScript({
+    mode: 'video-parse', phase: 'result', value: 'https://x.com/example/status/2', timeoutMs: 2200,
+  }, scoreMediaDownloadQualityLabel), true);
+  assert.strictEqual(imageOnlySocialResult.ok, false);
+  assert.strictEqual(imageOnlySocialResult.reason, 'content-not-video');
+
   await loadFixture(win, '<video src="https://cdn.example.com/preview-only.mp4" style="width:480px;height:270px"></video><a href="/help" style="display:block;width:180px;height:32px">为什么无法下载视频？</a><a href="/sound-help" style="display:block;width:180px;height:32px">下载的视频有声音吗？</a>');
   console.log('probe: preview-only direct-download fallback');
   const previewFallback = await win.webContents.executeJavaScript(buildPortalScript({
@@ -109,6 +142,14 @@ async function run() {
   }, scoreMediaDownloadQualityLabel), true);
   assert.strictEqual(vpnProviderLanding.ok, false);
   assert.strictEqual(vpnProviderLanding.reason, 'parse-timeout');
+
+  await loadFixture(win, '<article class="download-item"><img src="data:image/gif;base64,R0lGODlhAQABAAAAACw="><h2>一键保存精彩 Reels</h2><p>使用 Seekin 免费下载 Instagram Reels，高清无水印，无需注册，快速便捷，立即开始吧！</p><button style="display:block;width:160px;height:32px">下载</button></article>');
+  console.log('probe: reject specialized provider marketing card');
+  const specializedProviderLanding = await win.webContents.executeJavaScript(buildPortalScript({
+    mode: 'video-parse', phase: 'result', timeoutMs: 1100,
+  }, scoreMediaDownloadQualityLabel), true);
+  assert.strictEqual(specializedProviderLanding.ok, false);
+  assert.strictEqual(specializedProviderLanding.reason, 'parse-timeout');
 
   await loadFixture(win, `
     <a href="https://www.seekin.ai/zh/download-instagram-reels/" style="display:block;width:220px;height:32px">Instagram Reels下载</a>

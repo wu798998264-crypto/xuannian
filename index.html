@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>玄念8.2.1</title>
+  <title>玄念8.2.2</title>
   <link rel="icon" href="src/xuannian-logo-256.png" />
   <link rel="stylesheet" href="src/media-library.css" />
   <style>
@@ -2381,6 +2381,11 @@ function bindEvents(){
     const format=event.target.closest('[data-music-format-choice]');
     if(format) downloadMediaMusicVersion(Number(format.dataset.musicIndex),format.dataset.musicFormatChoice,format.dataset.musicFavorite==='true');
   });
+  $('#mediaMusicResults')?.addEventListener('dblclick',event=>{
+    if(event.target.closest('button,audio,input,select')) return;
+    const row=event.target.closest('.media-music-result[data-music-index]');
+    if(row) previewMediaMusicVersion(Number(row.dataset.musicIndex));
+  });
   $('#mediaLocalPlayerClose')?.addEventListener('click',closeMediaLocalPlayer);
   $('#mediaDownloadsSearch')?.addEventListener('input',()=>{ resetMediaListViewport('downloads'); renderMediaList('downloads',{force:true}); });
   $('#mediaFavoritesSearch')?.addEventListener('input',()=>{ resetMediaListViewport('favorites'); renderMediaList('favorites',{force:true}); });
@@ -3435,6 +3440,9 @@ function selectFileSearchResult(index,{ensureVisible=false}={}){
   nextRow.classList.add('selected');
 }
 
+const MEDIA_VIDEO_PRIMARY_PORTAL='https://www.seekin.ai/zh/downloader/';
+const MEDIA_PORTAL_CONTENT_FAILURES=new Set(['protected-or-private','content-unavailable','content-not-video']);
+
 function resolveMediaVideoProviderFallback(value=''){
   const match=String(value||'').trim().match(/https?:\/\/[^\s<>"']+/i);
   if(!match) return null;
@@ -3442,23 +3450,23 @@ function resolveMediaVideoProviderFallback(value=''){
   let host='';
   try{ host=new URL(sourceUrl).hostname.toLowerCase().replace(/^www\./,''); }catch{return null;}
   const matches=(domains)=>domains.some(domain=>host===domain||host.endsWith(`.${domain}`));
-  const seekin='https://www.seekin.ai/zh/downloader/';
+  const seekin=MEDIA_VIDEO_PRIMARY_PORTAL;
   const dlpanda='https://dlpanda.com/zh-CN';
   const vpnFallback={url:dlpanda,label:'DLPanda',requiresVpn:true,finalFallback:true};
-  if(matches(['douyin.com','iesdouyin.com'])) return {id:'douyin',label:'抖音',portalUrl:seekin,fallbackUrl:'https://www.hellotik.app/zh/douyin',sourceUrl,autoDownloadQuality:'highest',portals:[{url:seekin,label:'Seekin'},{url:'https://www.hellotik.app/zh/douyin',label:'HelloTik'},vpnFallback]};
-  if(matches(['tiktok.com'])) return {id:'tiktok',label:'TikTok',portalUrl:seekin,fallbackUrl:dlpanda,sourceUrl,autoDownloadQuality:'highest',portals:[{url:seekin,label:'Seekin'},vpnFallback]};
-  if(matches(['bilibili.com','b23.tv'])) return {id:'bilibili',label:'哔哩哔哩',portalUrl:'https://www.seekin.ai/zh/bilibili-downloader/',fallbackUrl:seekin,sourceUrl,portals:[{url:'https://www.seekin.ai/zh/bilibili-downloader/',label:'Seekin Bilibili'},{url:seekin,label:'Seekin'},vpnFallback]};
-  if(matches(['xiaohongshu.com','xhslink.com'])) return {id:'xiaohongshu',label:'小红书',portalUrl:seekin,fallbackUrl:'https://www.hellotik.app/zh/rednote',sourceUrl,portals:[{url:seekin,label:'Seekin'},{url:'https://www.hellotik.app/zh/rednote',label:'HelloTik'},{url:'https://www.xiaohongshua.com/',label:'Xiaohongshua'},vpnFallback]};
-  if(matches(['kuaishou.com','gifshow.com','kwai.com'])) return {id:'kuaishou',label:'快手',portalUrl:seekin,fallbackUrl:'https://www.hellotik.app/zh/kuaishou',sourceUrl,portals:[{url:seekin,label:'Seekin'},{url:'https://www.hellotik.app/zh/kuaishou',label:'HelloTik'},vpnFallback]};
-  if(matches(['youtube.com','youtu.be'])) return {id:'youtube',label:'YouTube',portalUrl:seekin,fallbackUrl:dlpanda,sourceUrl,portals:[{url:seekin,label:'Seekin'},vpnFallback]};
-  if(matches(['instagram.com'])) return {id:'instagram',label:'Instagram',portalUrl:seekin,fallbackUrl:dlpanda,sourceUrl,portals:[{url:seekin,label:'Seekin'},vpnFallback]};
-  if(matches(['twitter.com','x.com'])) return {id:'twitter',label:'Twitter / X',portalUrl:seekin,fallbackUrl:dlpanda,sourceUrl,portals:[{url:seekin,label:'Seekin'},vpnFallback]};
-  if(matches(['facebook.com','fb.watch'])) return {id:'facebook',label:'Facebook',portalUrl:seekin,fallbackUrl:dlpanda,sourceUrl,portals:[{url:seekin,label:'Seekin'},vpnFallback]};
+  if(matches(['douyin.com','iesdouyin.com'])) return {id:'douyin',label:'抖音',portalUrl:seekin,fallbackUrl:'https://www.hellotik.app/zh/douyin',sourceUrl,autoDownloadQuality:'highest',portals:[{url:seekin,label:'Seekin'},{url:'https://www.seekin.ai/zh/douyin-downloader/',label:'Seekin 抖音'},{url:'https://www.hellotik.app/zh/douyin',label:'HelloTik'},vpnFallback]};
+  if(matches(['tiktok.com'])) return {id:'tiktok',label:'TikTok',portalUrl:seekin,fallbackUrl:dlpanda,sourceUrl,autoDownloadQuality:'highest',portals:[{url:seekin,label:'Seekin'},{url:'https://www.seekin.ai/zh/download-tiktok-no-watermark/',label:'Seekin TikTok'},vpnFallback]};
+  if(matches(['bilibili.com','b23.tv'])) return {id:'bilibili',label:'哔哩哔哩',portalUrl:seekin,fallbackUrl:'https://www.seekin.ai/zh/bilibili-downloader/',sourceUrl,portals:[{url:seekin,label:'Seekin'},{url:'https://www.seekin.ai/zh/bilibili-downloader/',label:'Seekin Bilibili'},vpnFallback]};
+  if(matches(['xiaohongshu.com','xhslink.com'])) return {id:'xiaohongshu',label:'小红书',portalUrl:seekin,fallbackUrl:'https://www.hellotik.app/zh/rednote',sourceUrl,portals:[{url:seekin,label:'Seekin'},{url:'https://www.seekin.ai/zh/xiaohongshu-video-downloader/',label:'Seekin 小红书'},{url:'https://www.hellotik.app/zh/rednote',label:'HelloTik'},{url:'https://www.xiaohongshua.com/',label:'Xiaohongshua'},vpnFallback]};
+  if(matches(['kuaishou.com','gifshow.com','kwai.com'])) return {id:'kuaishou',label:'快手',portalUrl:seekin,fallbackUrl:'https://www.hellotik.app/zh/kuaishou',sourceUrl,portals:[{url:seekin,label:'Seekin'},{url:'https://www.seekin.ai/zh/kuaishou-video-downloader/',label:'Seekin 快手'},{url:'https://www.seekin.ai/zh/kwai-video-downloader/',label:'Seekin Kwai'},{url:'https://www.hellotik.app/zh/kuaishou',label:'HelloTik'},vpnFallback]};
+  if(matches(['youtube.com','youtu.be'])) return {id:'youtube',label:'YouTube',portalUrl:seekin,fallbackUrl:dlpanda,sourceUrl,portals:[{url:seekin,label:'Seekin'},{url:'https://www.seekin.ai/zh/youtube-video-downloader/',label:'Seekin YouTube'},vpnFallback]};
+  if(matches(['instagram.com'])) return {id:'instagram',label:'Instagram',portalUrl:seekin,fallbackUrl:dlpanda,sourceUrl,portals:[{url:seekin,label:'Seekin'},{url:'https://www.seekin.ai/zh/download-instagram-reels/',label:'Seekin Instagram'},vpnFallback]};
+  if(matches(['twitter.com','x.com'])) return {id:'twitter',label:'Twitter / X',portalUrl:seekin,fallbackUrl:dlpanda,sourceUrl,portals:[{url:seekin,label:'Seekin'},{url:'https://www.seekin.ai/zh/x-video-downloader/',label:'Seekin X'},vpnFallback]};
+  if(matches(['facebook.com','fb.watch'])) return {id:'facebook',label:'Facebook',portalUrl:seekin,fallbackUrl:dlpanda,sourceUrl,portals:[{url:seekin,label:'Seekin'},{url:'https://www.seekin.ai/zh/facebook-video-downloader/',label:'Seekin Facebook'},vpnFallback]};
   return null;
 }
 
 const MEDIA_PORTAL_HEALTH_KEY='xuannian-media-portal-health-v2';
-const MEDIA_PORTAL_SWITCH_FAILURES=new Set(['human-verification','input-missing','parse-action-missing','parse-timeout','provider-rejected','protected-or-private','quota-or-ad-required','qr-code-required','load-error','automation-error','download-action-missing','download-timeout','download-page-unavailable']);
+const MEDIA_PORTAL_SWITCH_FAILURES=new Set(['human-verification','input-missing','parse-action-missing','parse-timeout','provider-rejected','quota-or-ad-required','qr-code-required','load-error','automation-error','download-action-missing','download-timeout','download-page-unavailable']);
 const MEDIA_PORTAL_IMMEDIATE_DAILY_FAILURES=new Set(['human-verification','input-missing','parse-action-missing','quota-or-ad-required','qr-code-required','load-error','automation-error']);
 
 function mediaPortalRoutes(provider){
@@ -3675,6 +3683,8 @@ function mediaPortalFailureMessage(reason='',kind='video'){
     'download-action-missing':'下载站没有提供可用下载按钮',
     'download-timeout':'下载站没有返回文件',
     'protected-or-private':'该内容可能受版权、登录或私密访问限制，下载站拒绝处理',
+    'content-unavailable':'原视频链接无效、内容已删除或已不可访问',
+    'content-not-video':'原内容没有可下载的视频，下载站只返回了图片',
     'provider-rejected':'下载站判定链接无效或暂不支持该内容',
     'quota-or-ad-required':'当前下载站需要观看广告领取免费次数，玄念不会代替用户播放或点击广告，已尝试切换备用站',
     'qr-code-required':'当前下载站要求扫码，玄念已跳过并尝试切换备用站',
@@ -3686,7 +3696,8 @@ function mediaPortalFailureMessage(reason='',kind='video'){
   };
   const fallback=kind==='audio'?'没有找到可下载的音乐版本':'视频解析未完成';
   const message=messages[String(reason||'')]||fallback;
-  return kind==='audio'?message+'。请检查关键词后重试':message+'。请重新解析或切换备用站';
+  if(kind==='audio') return message+'。请检查关键词后重试';
+  return MEDIA_PORTAL_CONTENT_FAILURES.has(String(reason||''))?message+'。请检查原视频状态':message+'。请重新解析或切换备用站';
 }
 
 function renderMediaManualPortal(){
@@ -3727,7 +3738,7 @@ async function toggleMediaManualPortal(kind=state.media.kind,{forceOpen=false}={
   const activeRoute=providerRoutes[Math.max(0,Number(state.media.videoParse.portalIndex||0))];
   const url=String(
     (manual.kind===kind&&manual.url)
-    ||(kind==='audio'?'https://www.gequbao.com/':(state.media.videoParse.portalUrl||activeRoute?.url||'https://www.seekin.ai/zh/downloader/'))
+    ||(kind==='audio'?'https://www.gequbao.com/':(state.media.videoParse.portalUrl||activeRoute?.url||MEDIA_VIDEO_PRIMARY_PORTAL))
   );
   if(!url) return;
   state.media.manualPortal={available:true,kind,url,reason:String(manual.kind===kind?manual.reason||'':''),prompting:false};
@@ -3747,11 +3758,12 @@ async function toggleMediaManualPortal(kind=state.media.kind,{forceOpen=false}={
 
 async function offerMediaManualPortal(kind='video',reason='automation-error',url=''){
   const current=state.media.manualPortal||{};
-  state.media.manualPortal={available:true,kind,url:String(url||state.media.browser.url||''),reason,prompting:!!current.prompting};
+  const targetUrl=kind==='video'?MEDIA_VIDEO_PRIMARY_PORTAL:String(url||state.media.browser.url||'');
+  state.media.manualPortal={available:true,kind,url:targetUrl,reason,prompting:!!current.prompting};
   renderMediaManualPortal();
   if(current.prompting) return;
   state.media.manualPortal.prompting=true;
-  const site=kind==='audio'?'歌曲宝':'当前下载站';
+  const site=kind==='audio'?'歌曲宝':'Seekin';
   const detail=mediaPortalFailureMessage(reason,kind).replace(/。请.*$/,'');
   const verification=kind==='audio'&&reason==='human-verification';
   const confirmed=await showConfirmModal({
@@ -3775,6 +3787,13 @@ function handleMediaVideoParseFailure(reason='automation-error'){
   const routes=mediaPortalRoutes(provider);
   const currentIndex=Math.max(0,Number(state.media.videoParse.portalIndex||0));
   const current=routes[currentIndex];
+  if(MEDIA_PORTAL_CONTENT_FAILURES.has(reason)){
+    state.media.pendingVideoDownload=null;
+    state.media.videoParse={...state.media.videoParse,status:'error',error:reason};
+    renderMediaPortalWorkspace();
+    toast(mediaPortalFailureMessage(reason,'video'));
+    return;
+  }
   if(!current){
     state.media.pendingVideoDownload=null;
     toast(mediaPortalFailureMessage(reason,'video'));
@@ -3908,11 +3927,17 @@ async function downloadParsedVideo(favorite=false,options={}){
   }
   if(!result) return;
   if(!result?.ok){
+    const failureCode=String(result?.code||'download-timeout');
+    if(MEDIA_PORTAL_CONTENT_FAILURES.has(failureCode)){
+      state.media.pendingVideoDownload=null;
+      toast(mediaPortalFailureMessage(failureCode,'video'));
+      return;
+    }
     const provider=state.media.videoProvider;
     const routes=mediaPortalRoutes(provider);
     const currentIndex=Math.max(0,Number(state.media.videoParse.portalIndex||0));
     const current=routes[currentIndex];
-    if(current) recordMediaPortalFailure(current,String(result?.code||'download-timeout'),state.media.videoParse.sourceUrl);
+    if(current) recordMediaPortalFailure(current,failureCode,state.media.videoParse.sourceUrl);
     const nextIndex=currentIndex+1<routes.length?currentIndex+1:-1;
     const next=routes[nextIndex];
     const fallbackCount=Number(options.fallbackCount||0);
@@ -3924,7 +3949,7 @@ async function downloadParsedVideo(favorite=false,options={}){
     }
     state.media.pendingVideoDownload=null;
     toast(result?.reason||'下载暂时无法开始');
-    void offerMediaManualPortal('video',String(result?.code||'download-timeout'),String(current?.url||state.media.browser.url||''));
+    void offerMediaManualPortal('video',failureCode,String(current?.url||state.media.browser.url||''));
     return;
   }
   state.media.pendingVideoDownload=null;
@@ -4097,7 +4122,7 @@ function renderMediaPortalWorkspace(){
       const choice=state.media.musicFormatChoice?.index===index?state.media.musicFormatChoice:null;
       const favorite=!!choice?.favorite;
       const preview=state.media.musicPreview?.index===index?state.media.musicPreview:null;
-      return `<div class="media-music-result">
+      return `<div class="media-music-result" data-music-index="${index}" title="双击试听">
         <div class="media-music-result-main"><strong>${escapeHtml(item.title||item.label||'未命名歌曲')}</strong><span>${escapeHtml(item.artist||'未知歌手')}</span></div>
         <div class="media-music-result-actions">
           <button class="media-music-preview-button${preview?' active':''}" type="button" data-music-preview="${index}" title="${preview?.status==='ready'?'播放或暂停试听':'试听'}" aria-label="试听"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"></path></svg></button>

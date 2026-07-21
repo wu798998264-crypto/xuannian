@@ -208,6 +208,8 @@ async function run() {
   assert(indexSource.includes('id="mediaView"'), 'main window must expose the media library view');
   assert(mainSource.includes('keepMediaPortalWorkerVisible') && mainSource.includes('visibilityRetryCount'), 'hidden media automation must emulate a visible page and retry delayed music results without a manual toggle');
   assert(mainSource.includes('mediaPortalPreviewCapture'), 'video parsing must capture same-session previews from provider download actions');
+  assert(mainSource.includes('scheduleMediaPortalVisibilityNudge') && mainSource.includes('正在唤醒后台页面并读取音乐结果'), 'music search must wake the hidden provider page after three seconds without user interaction');
+  assert(indexSource.includes("addEventListener('dblclick',event=>") && indexSource.includes('.media-music-result[data-music-index]'), 'music search rows must support double-click preview playback');
   assert(mainSource.includes('MEDIA_PREVIEW_MAX_AGE_MS') && mainSource.includes('mediaPreviewCachePath') && mainSource.includes('setMediaPortalPresentationMode'), 'captured previews must use a one-day managed cache and render inside the media stage');
   assert(indexSource.includes("state.fileSearch.clickTimer=setTimeout(()=>performFileSearchAction('copy',index),220)"), 'single-clicking a full-disk result must copy the local file');
   assert(indexSource.includes("api.showFileContextMenu(item.path)"), 'full-disk results must expose the local file context menu');

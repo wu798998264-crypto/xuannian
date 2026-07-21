@@ -6,6 +6,26 @@ const { detectVideoProvider, musicSearchUrl, scoreMediaDownloadQualityLabel } = 
 
 const CASES = [
   {
+    id: 'youtube',
+    source: 'https://www.youtube.com/watch?v=na6NGPw4XWM',
+  },
+  {
+    id: 'tiktok',
+    source: 'https://www.tiktok.com/@scout2015/video/6718335390845095173',
+  },
+  {
+    id: 'instagram',
+    source: 'https://www.instagram.com/reel/DA6o7HlpdXu/',
+  },
+  {
+    id: 'twitter',
+    source: 'https://x.com/CartelWatchNet/status/2026820063643447737',
+  },
+  {
+    id: 'facebook',
+    source: 'https://www.facebook.com/NASA/videos/nasa-2025-to-the-moon-mars-and-beyond/587352057218646/',
+  },
+  {
     id: 'douyin',
     source: '7.10 J@i.ca 10/01 srR:/ :4pm 《万物生》第01集 https://v.douyin.com/RSoqNxKyWQE/ 复制此链接，打开Dou音搜索，直接观看视频！',
   },
@@ -101,7 +121,18 @@ async function waitForTriggeredDownload(webContents, action, timeoutMs = 15000) 
     };
     const onDownload = (_event, item, sourceWebContents) => {
       if (sourceWebContents !== webContents) return;
-      const result = { ok: true, filename: item.getFilename(), url: item.getURL() };
+      const filename = String(item.getFilename() || '');
+      const mimeType = String(item.getMimeType() || '');
+      const url = String(item.getURL() || '');
+      const videoDownload = /\.(?:mp4|m4v|mov|webm|mkv|avi|wmv|flv|mpeg|mpg|ts|m2ts)(?:[?#]|$)/i.test(filename)
+        || /\.(?:mp4|m4v|mov|webm|mkv|avi|wmv|flv|mpeg|mpg|ts|m2ts)(?:[?#]|$)/i.test(url)
+        || /^video\//i.test(mimeType);
+      const result = { ok: videoDownload, filename, mimeType, url, reason: videoDownload ? '' : 'non-video-download' };
+      if (!videoDownload) {
+        item.cancel();
+        finish(result);
+        return;
+      }
       if (process.env.REAL_MEDIA_SAVE_DOWNLOAD === '1') {
         const destination = path.join(app.getPath('temp'), `xuannian-real-media-${Date.now()}.mp4`);
         item.setSavePath(destination);
@@ -198,14 +229,17 @@ async function parseOnce(webContents, provider) {
     }
     return { parsed, download: { ok: false, reason: parsed?.reason || 'parse-failed' } };
   }
+  const candidateCount = Math.max(1, Math.min(8, Number(parsed.candidateCount || 1)));
   const directUrl = parsed.qualityHref && isMediaUrl(parsed.qualityHref)
     ? parsed.qualityHref
     : parsed.previewUrl;
+  let preview = { ok: false, reason: 'preview-not-triggered' };
   if (directUrl) {
     const directProbe = await probeRemoteMedia(webContents, directUrl);
-    if (directProbe.ok || !parsed.downloadActionReady) return { parsed, download: directProbe };
+    preview = directProbe;
+    if (!parsed.downloadActionReady) return { parsed, preview, download: directProbe };
   }
-  if (!parsed.downloadActionReady) return { parsed, download: { ok: false, reason: 'no-download-source' } };
+  if (!parsed.downloadActionReady) return { parsed, preview, download: { ok: false, reason: 'no-download-source' } };
   if (process.env.REAL_MEDIA_DEBUG === 'download') {
     const debug = await webContents.executeJavaScript(`(() => [...document.querySelectorAll('button,a,[role="button"]')]
       .filter((element) => /download|下载/i.test(String(element.innerText || element.textContent || '')))
@@ -215,11 +249,30 @@ async function parseOnce(webContents, provider) {
         href: element.href || element.getAttribute('href') || '',
         download: element.getAttribute('download') || '',
         outerHTML: element.outerHTML.slice(0, 1200),
+        ancestors: Array.from({ length: 7 }, (_, depth) => {
+          let current = element;
+          for (let index = 0; current && index <= depth; index += 1) current = current.parentElement;
+          return current ? {
+            tag: current.tagName,
+            className: String(current.className || '').slice(0, 240),
+            text: String(current.innerText || current.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 1200),
+          } : null;
+        }).filter(Boolean),
       })).slice(0, 20))()`, true);
     console.log('real media download debug ' + JSON.stringify(debug));
   }
+  if (!preview.ok) {
+    preview = await waitForTriggeredDownload(webContents, () => webContents.executeJavaScript(buildPortalScript({
+      mode: 'video-download',
+      value: provider.sourceUrl,
+      timeoutMs: 20000,
+      candidateIndex: candidateCount - 1,
+    }, scoreMediaDownloadQualityLabel), true));
+    preview.candidateIndex = candidateCount - 1;
+  }
+  if (!preview.ok) return { parsed, preview, download: { ok: false, reason: 'preview-download-failed' } };
+  if (candidateCount === 1) return { parsed, preview, download: preview };
   let download = { ok: false, reason: 'download-not-triggered' };
-  const candidateCount = Math.max(1, Math.min(8, Number(parsed.candidateCount || 1)));
   for (let candidateIndex = 0; candidateIndex < candidateCount; candidateIndex += 1) {
     download = await waitForTriggeredDownload(webContents, () => webContents.executeJavaScript(buildPortalScript({
       mode: 'video-download',
@@ -230,7 +283,7 @@ async function parseOnce(webContents, provider) {
     download.candidateIndex = candidateIndex;
     if (download.ok) break;
   }
-  return { parsed, download };
+  return { parsed, preview, download };
 }
 
 async function run() {
@@ -285,10 +338,12 @@ async function run() {
             label: usedPortal,
             parsed: !!result.parsed?.ok,
             reason: result.parsed?.reason || '',
+            preview: !!result.preview?.ok,
+            previewReason: result.preview?.reason || '',
             download: !!result.download?.ok,
             downloadReason: result.download?.reason || '',
           });
-          if (result.parsed?.ok && result.download?.ok) break;
+          if (result.parsed?.ok && result.preview?.ok && result.download?.ok) break;
         }
       } catch (error) {
         result = { parsed: { ok: false, reason: String(error?.message || error) }, download: { ok: false } };
@@ -301,13 +356,16 @@ async function run() {
         parsed: {
           ok: !!result.parsed?.ok,
           reason: result.parsed?.reason || '',
+          title: String(result.parsed?.title || '').slice(0, 240),
           preview: !!result.parsed?.previewUrl,
           previewUrl: String(result.parsed?.previewUrl || '').slice(0, 500),
           quality: result.parsed?.qualityLabel || '',
           qualityHref: String(result.parsed?.qualityHref || '').slice(0, 500),
           action: !!result.parsed?.downloadActionReady,
           candidateCount: Number(result.parsed?.candidateCount || 0),
+          qualityOptions: Array.isArray(result.parsed?.qualityOptions) ? result.parsed.qualityOptions.map((item) => String(item?.label || '').slice(0, 180)) : [],
         },
+        previewDownload: result.preview,
         download: result.download,
       });
       console.log('real media probe ' + JSON.stringify(results[results.length - 1]));
@@ -352,7 +410,7 @@ async function run() {
   }
   console.log('real music probe ' + JSON.stringify(music));
   window.destroy();
-  const failed = results.filter((item) => !item.parsed?.ok || !item.download?.ok);
+  const failed = results.filter((item) => !item.parsed?.ok || !item.previewDownload?.ok || !item.download?.ok);
   const musicFailed = !music.skipped && (!music.search?.ok || !music.download?.ok);
   console.log('real media probe summary ' + JSON.stringify({ total: results.length, failed: failed.length, musicFailed }));
   app.exit(failed.length || musicFailed ? 1 : 0);
