@@ -12,10 +12,10 @@ function executableCandidates(env = process.env) {
       label: '阿里云盘',
       url: 'https://www.alipan.com/',
       paths: [
-        path.join(localAppData, 'Programs', 'AliyunDrive', 'AliyunDrive.exe'),
-        path.join(appData, 'aliyundrive', 'AliyunDrive.exe'),
-        path.join(programFiles, 'AliyunDrive', 'AliyunDrive.exe'),
-        path.join(programFilesX86, 'AliyunDrive', 'AliyunDrive.exe'),
+        path.win32.join(localAppData, 'Programs', 'AliyunDrive', 'AliyunDrive.exe'),
+        path.win32.join(appData, 'aliyundrive', 'AliyunDrive.exe'),
+        path.win32.join(programFiles, 'AliyunDrive', 'AliyunDrive.exe'),
+        path.win32.join(programFilesX86, 'AliyunDrive', 'AliyunDrive.exe'),
       ],
     },
     {
@@ -23,16 +23,16 @@ function executableCandidates(env = process.env) {
       label: '夸克',
       url: 'https://pan.quark.cn/',
       paths: [
-        path.join(localAppData, 'Programs', 'Quark', 'quark.exe'),
-        path.join(localAppData, 'Quark', 'Application', 'quark.exe'),
-        path.join(programFiles, 'Quark', 'quark.exe'),
-        path.join(programFilesX86, 'Quark', 'quark.exe'),
+        path.win32.join(localAppData, 'Programs', 'Quark', 'quark.exe'),
+        path.win32.join(localAppData, 'Quark', 'Application', 'quark.exe'),
+        path.win32.join(programFiles, 'Quark', 'quark.exe'),
+        path.win32.join(programFilesX86, 'Quark', 'quark.exe'),
       ],
     },
   ];
   return candidates.map((candidate) => ({
     ...candidate,
-    paths: candidate.paths.filter((value) => value && path.isAbsolute(value)),
+    paths: candidate.paths.filter((value) => value && path.win32.isAbsolute(value)),
   }));
 }
 
