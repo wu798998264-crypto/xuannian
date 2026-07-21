@@ -2,7 +2,18 @@
 .media-nav{display:flex;align-items:center;gap:14px;margin-bottom:14px;width:100%;max-width:100%}
 .media-nav-left,.media-nav-right{display:flex;align-items:center;gap:12px;min-width:0}
 .media-nav-right{margin-left:auto;gap:8px}
-.media-kind-tabs,.media-tabs{display:flex;align-items:center;gap:4px;padding:4px;border:1px solid var(--line);border-radius:8px;background:var(--panel-soft)}
+.media-tabs{display:flex;align-items:center;gap:4px;padding:4px;border:1px solid var(--line);border-radius:8px;background:var(--panel-soft)}
+.media-kind-select{position:relative;flex:none}
+.media-kind-toggle{height:44px;min-width:112px;padding:0 10px 0 12px;display:grid;grid-template-columns:20px minmax(0,1fr) 16px;align-items:center;gap:7px;border:1px solid var(--line);border-radius:8px;background:var(--panel-soft);color:var(--text);font-size:12px;font-weight:800;text-align:left}
+.media-kind-toggle:hover,.media-kind-toggle[aria-expanded="true"]{background:var(--panel);border-color:#aab1ba}
+.media-kind-toggle-icon,.media-kind-option>span{display:grid;place-items:center;color:var(--muted)}
+.media-kind-toggle-icon svg,.media-kind-option svg,.media-kind-chevron{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+.media-kind-chevron{width:14px;height:14px;color:var(--muted);transition:transform .16s ease}
+.media-kind-toggle[aria-expanded="true"] .media-kind-chevron{transform:rotate(180deg)}
+.media-kind-menu{position:absolute;left:0;top:calc(100% + 6px);z-index:24;width:100%;min-width:112px;padding:4px;border:1px solid var(--line);border-radius:8px;background:var(--panel);box-shadow:0 10px 24px rgba(20,24,30,.16)}
+.media-kind-menu[hidden]{display:none}
+.media-kind-option{width:100%;height:34px;padding:0 8px;display:grid;grid-template-columns:20px 1fr;align-items:center;gap:7px;border-radius:6px;color:var(--muted);font-size:12px;font-weight:800;text-align:left}
+.media-kind-option:hover,.media-kind-option.active{background:var(--panel-soft);color:var(--text)}
 .media-tab{height:34px;padding:0 14px;border-radius:6px;color:var(--muted);font-size:12px;font-weight:800;white-space:nowrap;display:flex;align-items:center;justify-content:center;gap:6px}
 .media-tab svg{width:14px;height:14px;flex:none;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
 .media-tab.active{background:var(--panel);color:var(--text);box-shadow:0 1px 4px rgba(20,24,30,.09)}
@@ -114,9 +125,12 @@ body.dark .media-local-player-icon{background:#30413b;color:#a9dac6}
 .media-local-player-close:hover{background:var(--panel-soft);color:var(--text)}
 .media-list{height:100%;overflow:auto;scrollbar-gutter:stable}
 .media-virtual-spacer{width:1px;pointer-events:none}
-.media-row{height:64px;display:grid;grid-template-columns:minmax(230px,1.4fr) minmax(150px,1fr) 90px 136px 184px;gap:12px;align-items:center;padding:0 12px;border-bottom:1px solid var(--line);cursor:grab}
+.media-row{height:64px;position:relative;display:grid;grid-template-columns:minmax(230px,1.4fr) minmax(150px,1fr) 90px 136px 184px;gap:12px;align-items:center;padding:0 12px;border-bottom:1px solid var(--line);cursor:grab}
 .media-row:hover{background:var(--panel-soft)}
 .media-row.dragging{opacity:.45}
+.media-row.drop-before::before,.media-row.drop-after::after{content:"";position:absolute;left:10px;right:10px;height:2px;border-radius:1px;background:#4d8d74;pointer-events:none}
+.media-row.drop-before::before{top:-1px}
+.media-row.drop-after::after{bottom:-1px}
 .media-collection.drop-target{border-color:#4d8d74;background:#e9f3ef;color:#2f6652;box-shadow:0 0 0 2px rgba(77,141,116,.18)}
 body.dark .media-collection.drop-target{background:#30413b;color:#b7e1d0}
 .media-primary{min-width:0;display:flex;align-items:center;gap:10px}
@@ -139,7 +153,7 @@ body.dark .media-row-action.active{color:#ffd862;background:#4d4523}
 .media-empty{height:100%;display:grid;place-items:center;padding:24px;color:var(--muted);font-size:12px;text-align:center}
 @media (max-width:900px){
   .media-nav{width:100%;overflow:visible}
-  .media-kind-tabs,.media-tabs{min-width:0;overflow-x:auto}
+  .media-tabs{min-width:0;overflow-x:auto}
   .media-tab{padding:0 10px}
   .media-launch-band{grid-template-columns:1fr}
   .media-launch-actions{justify-content:flex-end}

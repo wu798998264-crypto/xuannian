@@ -169,7 +169,7 @@ async function run() {
   assert(/id="mediaDirectShell"[\s\S]*?id="mediaAutomationProgress"/.test(indexSource) && indexSource.includes("const visible=progress.status==='running'"), 'media progress must stay in the content area and disappear immediately after success or failure');
   assert(indexSource.includes('id="mediaDownloadBubble"'), 'download progress must remain visible in the main window');
   assert(!indexSource.includes('data-media-filters="downloads"'), 'media lists must use only the shared video/music selector');
-  assert(indexSource.includes('id="mediaKindTabs"'), 'video and music must use two direct buttons');
+  assert(indexSource.includes('id="mediaKindToggle"') && indexSource.includes('id="mediaKindMenu"') && indexSource.includes('data-media-kind="video"') && indexSource.includes('data-media-kind="audio"'), 'video and music must use one persistent dropdown selector');
   assert(/class="media-nav-left"[\s\S]*?id="mediaTabs"[\s\S]*?data-media-tab="downloads"[\s\S]*?data-media-tab="favorites"/.test(indexSource), 'downloaded media and favorites must form a left-side group in that order');
   assert(/data-media-tab="downloads"[\s\S]*?<svg[\s\S]*?<span>已下载<\/span>/.test(indexSource) && /data-media-tab="favorites"[\s\S]*?<svg[\s\S]*?<span>收藏<\/span>/.test(indexSource), 'downloaded and favorite tabs must include distinguishing icons');
   assert(indexSource.includes('data-download-task-delete') && indexSource.includes('handleMediaDownloadTaskDoubleClick') && indexSource.includes('handleMediaDownloadTaskContextMenu'), 'download history must support delete, double-click open, and file context actions');
@@ -189,7 +189,8 @@ async function run() {
   assert(indexSource.includes('function showMediaCollectionPicker('), 'favoriting media must ask for a target category');
   assert(indexSource.includes("const MEDIA_LIBRARY_OVERSCAN=10"), 'media lists must render a bounded viewport buffer');
   assert(indexSource.includes('class="media-virtual-spacer"'), 'media lists must use virtual top and bottom spacers');
-  assert(indexSource.includes("addEventListener('drop',handleMediaFavoriteDrop)"), 'favorite media must support drag-and-drop categorization');
+  assert(indexSource.includes("addEventListener('drop',handleMediaFavoriteDrop)") && indexSource.includes("addEventListener('drop',handleMediaFavoriteListDrop)"), 'favorite media must support drag-and-drop categorization and ordering');
+  assert(indexSource.includes('MEDIA_FAVORITE_ORDER_KEY') && indexSource.includes('updateMediaFavoriteOrder('), 'favorite media order must persist across view changes and restarts');
   assert(indexSource.includes('getFileThumbnail: (filePath,size)=> nativeApi.getFileThumbnail'), 'unified renderer API must forward native thumbnail requests');
   assert(indexSource.includes('<svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="5.5"></circle><path d="m15 15 5 5"></path></svg>'), 'full-disk search navigation must use a plain magnifying-glass icon');
   assert(!indexSource.includes('<path d="M4 4h5"></path><path d="M4 4v5"></path>'), 'full-disk search navigation must not include the old corner mark');
