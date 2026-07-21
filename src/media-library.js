@@ -165,6 +165,25 @@ function detectVideoProvider(value) {
   }
 }
 
+function bilibiliEpisodeId(value) {
+  const sourceUrl = extractHttpUrl(value);
+  if (!sourceUrl) return '';
+  try {
+    const parsed = new URL(sourceUrl);
+    if (!hostMatches(normalizedHost(parsed.hostname), ['bilibili.com'])) return '';
+    return parsed.pathname.match(/\/bangumi\/play\/ep(\d+)/i)?.[1] || '';
+  } catch {
+    return '';
+  }
+}
+
+function bilibiliProgressiveApiUrl(value) {
+  const episodeId = bilibiliEpisodeId(value);
+  return episodeId
+    ? `https://api.bilibili.com/pgc/player/web/playurl?ep_id=${episodeId}&qn=80&fnval=0&fourk=1`
+    : '';
+}
+
 function scoreMediaDownloadQualityLabel(value) {
   const label = String(value || '').trim().toLowerCase();
   if (!label || /(?:复制|copy)/i.test(label)) return -1;
@@ -542,6 +561,8 @@ module.exports = {
   MEDIA_KIND_DIRECTORIES,
   VIDEO_EXTENSIONS,
   VIDEO_PROVIDERS,
+  bilibiliEpisodeId,
+  bilibiliProgressiveApiUrl,
   copyMediaToFavorites,
   createMediaCollection,
   deleteMediaCollection,

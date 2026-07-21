@@ -1,8 +1,10 @@
 const { app, BrowserWindow } = require('electron');
 const fs = require('fs');
+const http = require('http');
+const https = require('https');
 const path = require('path');
 const { buildPortalScript, classifyMediaPortalPopup, isMediaUrl } = require('../src/media-portal-automation');
-const { detectVideoProvider, musicSearchUrl, scoreMediaDownloadQualityLabel } = require('../src/media-library');
+const { bilibiliProgressiveApiUrl, detectVideoProvider, musicSearchUrl, scoreMediaDownloadQualityLabel } = require('../src/media-library');
 
 const CASES = [
   {
@@ -105,11 +107,66 @@ async function probeRemoteMedia(webContents, value) {
       bytes: Number(chunk?.value?.byteLength || 0),
     };
   } catch (error) {
-    return { ok: false, reason: String(error?.message || error) };
+    return new Promise((resolve) => {
+      const parsed = new URL(url);
+      const client = parsed.protocol === 'https:' ? https : http;
+      const request = client.get(url, {
+        headers: {
+          Accept: 'video/mp4,video/*;q=0.9,application/octet-stream;q=0.8,*/*;q=0.5',
+          ...(process.env.REAL_MEDIA_DUMP_FULL === '1' ? {} : { Range: 'bytes=0-65535' }),
+          Referer: /\/upgcxcode\//i.test(parsed.pathname) ? 'https://www.bilibili.com/' : webContents.getURL(),
+          'User-Agent': webContents.getUserAgent(),
+        },
+      }, (response) => {
+        const chunks = [];
+        response.on('data', (chunk) => chunks.push(chunk));
+        response.once('end', () => {
+          const contentType = String(response.headers['content-type'] || '');
+          const bytes = chunks.reduce((total, chunk) => total + chunk.length, 0);
+          let probePath = '';
+          if (process.env.REAL_MEDIA_DUMP_PROBE === '1' && bytes > 0) {
+            probePath = path.join(app.getPath('temp'), `xuannian-media-probe-${Date.now()}.m4s`);
+            fs.writeFileSync(probePath, Buffer.concat(chunks));
+          }
+          const mediaResponse = /^(?:video|audio)\//i.test(contentType)
+            || /application\/(?:octet-stream|force-download)/i.test(contentType)
+            || isMediaUrl(url);
+          resolve({
+            ok: response.statusCode >= 200 && response.statusCode < 300 && mediaResponse && bytes > 0,
+            status: response.statusCode,
+            contentType,
+            bytes,
+            probePath,
+            transport: 'node-http',
+            sessionReason: String(error?.message || error),
+          });
+        });
+        response.once('error', (nodeError) => resolve({ ok: false, reason: String(nodeError?.message || nodeError) }));
+      });
+      request.setTimeout(30000, () => request.destroy(new Error('node-probe-timeout')));
+      request.once('error', (nodeError) => resolve({ ok: false, reason: String(nodeError?.message || nodeError) }));
+    });
   }
 }
 
-async function waitForTriggeredDownload(webContents, action, timeoutMs = 15000) {
+async function resolvePlayablePopupUrl(webContents, popupUrl, sourceUrl) {
+  const apiUrl = /\.m4s(?:[?#]|$)/i.test(String(popupUrl || ''))
+    ? bilibiliProgressiveApiUrl(sourceUrl)
+    : '';
+  if (!apiUrl) return popupUrl;
+  const response = await webContents.session.fetch(apiUrl, {
+    headers: {
+      Accept: 'application/json,text/plain,*/*',
+      Referer: 'https://www.bilibili.com/',
+      'User-Agent': webContents.getUserAgent(),
+    },
+  });
+  if (!response.ok) return popupUrl;
+  const payload = await response.json();
+  return String(payload?.result?.durl?.find((item) => /^https?:\/\//i.test(String(item?.url || '')))?.url || popupUrl);
+}
+
+async function waitForTriggeredDownload(webContents, action, timeoutMs = 15000, sourceUrl = '') {
   return new Promise(async (resolve) => {
     let settled = false;
     const finish = (value) => {
@@ -117,15 +174,21 @@ async function waitForTriggeredDownload(webContents, action, timeoutMs = 15000) 
       settled = true;
       clearTimeout(timer);
       webContents.session.removeListener('will-download', onDownload);
+      webContents.removeListener('xuannian-test-popup-download', onPopupDownload);
       resolve(value);
+    };
+    const onPopupDownload = async (url) => {
+      const resolvedUrl = await resolvePlayablePopupUrl(webContents, url, sourceUrl);
+      const probe = await probeRemoteMedia(webContents, resolvedUrl);
+      finish({ ...probe, url: resolvedUrl, originalUrl: url, progressiveFallback: resolvedUrl !== url, transport: 'session-fetch' });
     };
     const onDownload = (_event, item, sourceWebContents) => {
       if (sourceWebContents !== webContents) return;
       const filename = String(item.getFilename() || '');
       const mimeType = String(item.getMimeType() || '');
       const url = String(item.getURL() || '');
-      const videoDownload = /\.(?:mp4|m4v|mov|webm|mkv|avi|wmv|flv|mpeg|mpg|ts|m2ts)(?:[?#]|$)/i.test(filename)
-        || /\.(?:mp4|m4v|mov|webm|mkv|avi|wmv|flv|mpeg|mpg|ts|m2ts)(?:[?#]|$)/i.test(url)
+      const videoDownload = /\.(?:mp4|m4s|m4v|mov|webm|mkv|avi|wmv|flv|mpeg|mpg|ts|m2ts)(?:[?#]|$)/i.test(filename)
+        || /\.(?:mp4|m4s|m4v|mov|webm|mkv|avi|wmv|flv|mpeg|mpg|ts|m2ts)(?:[?#]|$)/i.test(url)
         || /^video\//i.test(mimeType);
       const result = { ok: videoDownload, filename, mimeType, url, reason: videoDownload ? '' : 'non-video-download' };
       if (!videoDownload) {
@@ -149,6 +212,7 @@ async function waitForTriggeredDownload(webContents, action, timeoutMs = 15000) 
     const effectiveTimeoutMs = process.env.REAL_MEDIA_SAVE_DOWNLOAD === '1' ? Math.max(90000, timeoutMs) : timeoutMs;
     const timer = setTimeout(() => finish({ ok: false, reason: 'download-not-triggered' }), effectiveTimeoutMs);
     webContents.session.on('will-download', onDownload);
+    webContents.once('xuannian-test-popup-download', onPopupDownload);
     try {
       const result = await action();
       if (result?.href) {
@@ -267,7 +331,7 @@ async function parseOnce(webContents, provider) {
       value: provider.sourceUrl,
       timeoutMs: 20000,
       candidateIndex: candidateCount - 1,
-    }, scoreMediaDownloadQualityLabel), true));
+    }, scoreMediaDownloadQualityLabel), true), 15000, provider.sourceUrl);
     preview.candidateIndex = candidateCount - 1;
   }
   if (!preview.ok) return { parsed, preview, download: { ok: false, reason: 'preview-download-failed' } };
@@ -279,7 +343,7 @@ async function parseOnce(webContents, provider) {
       value: provider.sourceUrl,
       timeoutMs: 20000,
       candidateIndex,
-    }, scoreMediaDownloadQualityLabel), true));
+    }, scoreMediaDownloadQualityLabel), true), 15000, provider.sourceUrl);
     download.candidateIndex = candidateIndex;
     if (download.ok) break;
   }
@@ -303,7 +367,7 @@ async function run() {
   window.webContents.setWindowOpenHandler(({ url }) => {
     if (process.env.REAL_MEDIA_DEBUG === 'download') console.log('real media popup ' + String(url || '').slice(0, 2000));
     if (classifyMediaPortalPopup(url, window.webContents.getURL()) === 'download') {
-      setImmediate(() => window.webContents.downloadURL(url));
+      setImmediate(() => window.webContents.emit('xuannian-test-popup-download', url));
     }
     return { action: 'deny' };
   });

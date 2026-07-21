@@ -8,6 +8,8 @@ function run() {
   assert.strictEqual(classifyMediaPortalPopup('https://www.hellotik.app/result/1', 'https://www.hellotik.app/zh/douyin'), 'same-site');
   assert.strictEqual(classifyMediaPortalPopup('https://cdn.example.com/video.mp4', 'https://www.hellotik.app/zh/douyin'), 'download');
   assert.strictEqual(isMediaUrl('https://cdn.example.com/video.mp4?token=1'), true);
+  assert.strictEqual(classifyMediaPortalPopup('https://cdn.example.com/video-stream.m4s?token=1', 'https://www.seekin.ai/zh/downloader/'), 'download');
+  assert.strictEqual(isMediaUrl('https://cdn.example.com/video-stream.m4s?token=1'), true);
   assert.strictEqual(classifyMediaPortalPopup('https://v11.douyinvod.com/token/video/tos/cn/file/?mime_type=video_mp4', 'https://www.seekin.ai/zh/downloader/'), 'download');
   assert.strictEqual(isMediaUrl('https://v11.douyinvod.com/token/video/tos/cn/file/?mime_type=video_mp4'), true);
   assert.strictEqual(isMediaUrl('https://ads.example.com/page'), false);

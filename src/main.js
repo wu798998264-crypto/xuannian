@@ -20,6 +20,7 @@ const {
   createMediaCollection,
   deleteMediaCollection,
   detectVideoProvider,
+  bilibiliProgressiveApiUrl,
   isAllowedPortalUrl,
   listMediaCollections,
   listMediaFiles,
@@ -2755,8 +2756,52 @@ function findMediaPreviewCache(sourceUrl) {
 
 function mediaKindForDownloadUrl(value) {
   try {
-    return mediaKindForPath(new URL(String(value || '')).pathname);
+    const pathname = new URL(String(value || '')).pathname;
+    if (/\.m4s$/i.test(pathname)) return 'video';
+    return mediaKindForPath(pathname);
   } catch {
+    return '';
+  }
+}
+
+function mediaExtensionForDownloadUrl(value, fallback = '.mp4') {
+  try {
+    const extension = path.extname(new URL(String(value || '')).pathname).toLowerCase();
+    return extension === '.m4s' ? '.mp4' : (extension || fallback);
+  } catch {
+    return fallback;
+  }
+}
+
+function mediaDownloadReferer(value, fallback = '') {
+  try {
+    const pathname = new URL(String(value || '')).pathname;
+    if (/\/upgcxcode\//i.test(pathname)) return 'https://www.bilibili.com/';
+  } catch {}
+  return String(fallback || '').trim();
+}
+
+async function resolveBilibiliProgressiveDownload(webContents, sourceUrl) {
+  const apiUrl = bilibiliProgressiveApiUrl(sourceUrl);
+  if (!apiUrl || !webContents || webContents.isDestroyed()) return '';
+  try {
+    const response = await webContents.session.fetch(apiUrl, {
+      headers: {
+        Accept: 'application/json,text/plain,*/*',
+        Referer: 'https://www.bilibili.com/',
+        'User-Agent': webContents.getUserAgent(),
+      },
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const payload = await response.json();
+    const directUrl = Array.isArray(payload?.result?.durl)
+      ? String(payload.result.durl.find((item) => isHttpUrl(item?.url))?.url || '')
+      : '';
+    if (!directUrl) throw new Error(String(payload?.message || 'progressive URL missing'));
+    runtimeLog(`resolved Bilibili episode playable MP4 quality=${Number(payload?.result?.quality || 0)} format=${String(payload?.result?.format || '')}`);
+    return directUrl;
+  } catch (error) {
+    runtimeLog(`resolve Bilibili playable MP4 failed: ${error?.message || error}`);
     return '';
   }
 }
@@ -2791,7 +2836,8 @@ function streamNodeMediaPortalUrlToFile(url, destination, options = {}, redirect
     const request = client.get(value, {
       headers: {
         Accept: 'video/mp4,video/*;q=0.9,audio/*;q=0.8,application/octet-stream;q=0.7,*/*;q=0.5',
-        'User-Agent': `Mozilla/5.0 XuanNian/${app.getVersion()}`,
+        ...(String(options.referer || '').trim() ? { Referer: String(options.referer).trim() } : {}),
+        'User-Agent': String(options.userAgent || '').trim() || `Mozilla/5.0 XuanNian/${app.getVersion()}`,
       },
     }, (response) => {
       const location = response.headers.location;
@@ -2873,7 +2919,7 @@ async function streamMediaPortalUrlToFile(webContents, url, destination, options
     const headers = {
       Accept: 'video/mp4,video/*;q=0.9,audio/*;q=0.8,application/octet-stream;q=0.7,*/*;q=0.5',
     };
-    const referer = String(options.referer || '').trim();
+    const referer = mediaDownloadReferer(url, options.referer);
     if (referer) headers.Referer = referer;
     const userAgent = String(webContents?.getUserAgent?.() || '').trim();
     if (userAgent) headers['User-Agent'] = userAgent;
@@ -2926,7 +2972,7 @@ async function streamMediaPortalUrlToFile(webContents, url, destination, options
     try { output?.destroy(); } catch {}
     try { if (fs.existsSync(temporary)) fs.unlinkSync(temporary); } catch {}
     runtimeLog(`Electron media stream failed, retrying with Node HTTP: ${error?.message || error}`);
-    return streamNodeMediaPortalUrlToFile(url, destination, options);
+    return streamNodeMediaPortalUrlToFile(url, destination, { ...options, referer, userAgent });
   } finally {
     clearTimeout(responseTimeout);
     clearTimeout(timeout);
@@ -3057,15 +3103,22 @@ async function startDirectTrackedMediaDownload(webContents, url, referer) {
 }
 
 function startCapturedMediaPortalDownload(webContents, url) {
-  const referer = webContents.getURL();
+  const portalReferer = webContents.getURL();
   const previewCapture = mediaPortalPreviewCapture?.webContents === webContents;
-  const acknowledgeVideoRequest = !previewCapture
-    && !!mediaPortalParsedVideo?.downloadReady
-    && mediaPortalInputState?.automationMode !== 'music-download';
-  if (acknowledgeVideoRequest) markMediaPortalTransferStarted(webContents);
-  const direct = previewCapture
-    ? startDirectMediaPortalPreview(webContents, url, referer)
-    : startDirectTrackedMediaDownload(webContents, url, referer);
+  const sourceUrl = previewCapture
+    ? String(mediaPortalPreviewCapture?.sourceUrl || '')
+    : String(mediaPortalParsedVideo?.sourceUrl || '');
+  const direct = (async () => {
+    let resolvedUrl = String(url || '');
+    if (/\.m4s(?:[?#]|$)/i.test(resolvedUrl) && bilibiliProgressiveApiUrl(sourceUrl)) {
+      const playableUrl = await resolveBilibiliProgressiveDownload(webContents, sourceUrl);
+      if (playableUrl) resolvedUrl = playableUrl;
+    }
+    const referer = mediaDownloadReferer(resolvedUrl, portalReferer);
+    return previewCapture
+      ? startDirectMediaPortalPreview(webContents, resolvedUrl, referer)
+      : startDirectTrackedMediaDownload(webContents, resolvedUrl, referer);
+  })();
   direct.then((result) => {
     if (result?.started || webContents.isDestroyed()) return;
     runtimeLog('direct media request did not start; falling back to header-free Electron downloadURL');
@@ -3097,7 +3150,7 @@ function configureMediaDownloadSession(electronSession) {
       }
       const extension = filenameKind === 'video'
         ? path.extname(filename)
-        : (urlKind === 'video' ? path.extname(new URL(item.getURL()).pathname) : '.mp4');
+        : (urlKind === 'video' ? mediaExtensionForDownloadUrl(item.getURL()) : '.mp4');
       const destination = mediaPreviewCachePath(captureState.sourceUrl, extension);
       try {
         fs.mkdirSync(path.dirname(destination), { recursive: true });
@@ -3158,7 +3211,7 @@ function configureMediaDownloadSession(electronSession) {
     if (String(target.preferredName || '').trim()) {
       const extension = filenameKind === kind
         ? path.extname(receivedFilename)
-        : (urlKind === kind ? path.extname(new URL(item.getURL()).pathname) : (kind === 'audio' ? '.mp3' : '.mp4'));
+        : (urlKind === kind ? mediaExtensionForDownloadUrl(item.getURL(), kind === 'audio' ? '.mp3' : '.mp4') : (kind === 'audio' ? '.mp3' : '.mp4'));
       const displayName = path.basename(String(target.preferredName).trim(), path.extname(String(target.preferredName).trim()));
       filename = sanitizeDownloadFilename(`${displayName}${extension}`, item.getMimeType());
     } else if (!filenameKind) {

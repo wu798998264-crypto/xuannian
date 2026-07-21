@@ -7,6 +7,8 @@ const {
   createMediaCollection,
   deleteMediaCollection,
   detectVideoProvider,
+  bilibiliEpisodeId,
+  bilibiliProgressiveApiUrl,
   isAllowedPortalUrl,
   listManagedMediaFiles,
   listMediaCollections,
@@ -40,6 +42,9 @@ async function run() {
   assert.strictEqual(bilibili.id, 'bilibili');
   assert.strictEqual(bilibili.portalUrl, 'https://www.seekin.ai/zh/downloader/');
   assert.deepStrictEqual(bilibili.portals.map((route) => route.label), ['Seekin', 'Seekin Bilibili', 'DLPanda']);
+  assert.strictEqual(bilibiliEpisodeId('https://www.bilibili.com/bangumi/play/ep3648907/?share_source=copy_web'), '3648907');
+  assert.strictEqual(bilibiliEpisodeId('https://www.bilibili.com/video/BV1STE56zEdA'), '');
+  assert.strictEqual(bilibiliProgressiveApiUrl('https://www.bilibili.com/bangumi/play/ep3648907/'), 'https://api.bilibili.com/pgc/player/web/playurl?ep_id=3648907&qn=80&fnval=0&fourk=1');
   assert.strictEqual(detectVideoProvider('【凡人修仙传：第183话 慕兰之战07】 https://www.bilibili.com/bangumi/play/ep3854807/?share_source=copy_web').id, 'bilibili');
   assert.strictEqual(detectVideoProvider('https://xhslink.com/example').id, 'xiaohongshu');
   assert.deepStrictEqual(detectVideoProvider('https://xhslink.com/example').portals.map((route) => route.label), ['Seekin', 'Seekin 小红书', 'HelloTik', 'Xiaohongshua', 'DLPanda']);

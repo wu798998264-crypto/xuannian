@@ -14,7 +14,7 @@ function isHttpUrl(value) {
 function isMediaUrl(value) {
   if (!isHttpUrl(value)) return false;
   const raw = String(value || '');
-  if (/\.(?:mp4|m4v|mov|webm|mkv|mp3|m4a|wav|flac|aac|ogg)(?:[?#]|$)/i.test(raw)) return true;
+  if (/\.(?:mp4|m4s|m4v|mov|webm|mkv|mp3|m4a|wav|flac|aac|ogg)(?:[?#]|$)/i.test(raw)) return true;
   let parsed;
   try { parsed = new URL(raw); } catch { return false; }
   const host = parsed.hostname.toLowerCase().replace(/^www\./, '');
@@ -129,7 +129,7 @@ function buildPortalScript({ mode, value = '', phase = '', timeoutMs = 30000, ca
     const mediaUrl = (value) => {
       const url = httpUrl(value);
       if (!url) return '';
-      if (/\\.(?:mp4|m4v|mov|webm|mkv|mp3|m4a|wav|flac|aac|ogg)(?:[?#]|$)/i.test(url)) return url;
+      if (/\\.(?:mp4|m4s|m4v|mov|webm|mkv|mp3|m4a|wav|flac|aac|ogg)(?:[?#]|$)/i.test(url)) return url;
       try {
         const parsed = new URL(url);
         const host = parsed.hostname.toLowerCase().replace(/^www\\./, '');
