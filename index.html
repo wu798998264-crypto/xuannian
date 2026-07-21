@@ -3688,17 +3688,15 @@ function renderMediaManualPortal(){
   const video=$('#mediaVideoManualPortal');
   const music=$('#mediaMusicManualPortal');
   if(video){
-    const visible=!!manual.available&&manual.kind==='video';
-    video.hidden=!visible;
-    video.setAttribute('aria-hidden',String(!visible));
-    video.tabIndex=visible?0:-1;
+    video.hidden=false;
+    video.setAttribute('aria-hidden','false');
+    video.tabIndex=0;
     video.classList.toggle('active',manual.kind==='video'&&state.media.browserVisible);
   }
   if(music){
-    const visible=!!manual.available&&manual.kind==='audio';
-    music.hidden=!visible;
-    music.setAttribute('aria-hidden',String(!visible));
-    music.tabIndex=visible?0:-1;
+    music.hidden=false;
+    music.setAttribute('aria-hidden','false');
+    music.tabIndex=0;
     music.classList.toggle('active',manual.kind==='audio'&&state.media.browserVisible);
   }
 }
@@ -3712,16 +3710,22 @@ function clearMediaManualPortal(kind=''){
 }
 
 async function toggleMediaManualPortal(kind=state.media.kind,{forceOpen=false}={}){
-  const manual=state.media.manualPortal||{};
-  if(!manual.available||manual.kind!==kind) return;
+  let manual=state.media.manualPortal||{};
   if(state.media.browserVisible&&!forceOpen){
     state.media.browserVisible=false;
     renderMediaManualPortal();
     renderMediaBrowserState();
     return;
   }
-  const url=String(manual.url||state.media.browser.url||(kind==='audio'?'https://www.gequbao.com/':state.media.videoParse.portalUrl)||'');
+  const providerRoutes=kind==='video'?mediaPortalRoutes(state.media.videoProvider):[];
+  const activeRoute=providerRoutes[Math.max(0,Number(state.media.videoParse.portalIndex||0))];
+  const url=String(
+    (manual.kind===kind&&manual.url)
+    ||(kind==='audio'?'https://www.gequbao.com/':(state.media.videoParse.portalUrl||activeRoute?.url||'https://www.seekin.ai/zh/downloader/'))
+  );
   if(!url) return;
+  state.media.manualPortal={available:true,kind,url,reason:String(manual.kind===kind?manual.reason||'':''),prompting:false};
+  manual=state.media.manualPortal;
   let sameSite=false;
   try{ sameSite=new URL(url).hostname===new URL(String(state.media.browser.url||'')).hostname; }catch{}
   if(!state.media.browser.ready||state.media.browser.destroyed||!sameSite){
