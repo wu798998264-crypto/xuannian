@@ -8214,8 +8214,9 @@ function showUpdateDialog(){
   const progress=Math.max(0,Math.min(100,Number(update.percent||0)));
   const busy=['checking','downloading'].includes(status);
   const available=status==='available';
+  const retryDownload=status==='error'&&update.retryAction==='download'&&!!update.version;
   const downloaded=status==='downloaded';
-  const actionText=downloaded ? (update.manualInstall?(update.platform==='darwin'?'打开安装包':'打开下载位置'):'重启并安装') : (available?'下载更新':'检查更新');
+  const actionText=downloaded ? (update.manualInstall?(update.platform==='darwin'?'打开安装包':'打开下载位置'):'重启并安装') : (retryDownload?'重试下载':(available?'下载更新':'检查更新'));
   const showAction=!busy && (update.supported!==false || status==='downloaded');
   showModal(`
     <div data-update-dialog>
@@ -8240,10 +8241,11 @@ async function runUpdateAction(){
     if(state.update?.manualInstall) closeModal();
     return;
   }
-  state.update={...state.update,status:status==='available'?'downloading':'checking',message:status==='available'?'正在下载更新…':'正在检查更新…',percent:0};
+  const shouldDownload=status==='available'||(status==='error'&&state.update?.retryAction==='download'&&!!state.update?.version);
+  state.update={...state.update,status:shouldDownload?'downloading':'checking',message:shouldDownload?'正在下载更新…':'正在检查更新…',percent:0};
   renderUpdateNav();
   showUpdateDialog();
-  const next=status==='available' ? await api.downloadUpdate() : await api.checkForUpdates();
+  const next=shouldDownload ? await api.downloadUpdate() : await api.checkForUpdates();
   if(next) state.update={...state.update,...next};
   renderUpdateNav();
   showUpdateDialog();

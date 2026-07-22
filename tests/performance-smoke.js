@@ -177,6 +177,10 @@ async function run() {
   const quickSource = fs.readFileSync(path.join(__dirname, '..', 'quick.html'), 'utf8');
   const stickySource = fs.readFileSync(path.join(__dirname, '..', 'sticky.html'), 'utf8');
   const wheelSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'wheel-scroll.js'), 'utf8');
+  assert(mainSource.includes('autoUpdater.disableDifferentialDownload = true'), 'installed updates must avoid fragile multi-range differential downloads');
+  assert(mainSource.includes("retryAction: 'download'") && mainSource.includes('正在自动重试'), 'transient update failures must remain retryable and retry once automatically');
+  assert(indexSource.includes("const retryDownload=status==='error'&&update.retryAction==='download'&&!!update.version") && indexSource.includes("retryDownload?'重试下载'"), 'an interrupted update download must render a retry-download action');
+  assert(indexSource.includes("const shouldDownload=status==='available'||(status==='error'&&state.update?.retryAction==='download'"), 'retry-download must call the download path instead of checking again');
   const mediaStyleSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'media-library.css'), 'utf8');
   assert(indexSource.includes('id="mediaBrowserSurface"'), 'media download sites must have an embedded browser surface');
   assert(indexSource.includes('id="mediaDirectShell"') && /id="mediaBrowserShell" hidden/.test(indexSource), 'download websites must be hidden behind the background task status by default');

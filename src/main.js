@@ -242,6 +242,7 @@ let updateState = {
   platform: process.platform,
   supported: ['win32', 'darwin'].includes(process.platform),
   downloadedFile: '',
+  retryAction: '',
 };
 
 function configureStableUserDataPath() {
@@ -405,6 +406,20 @@ function normalizeReleaseNotes(notes) {
   return String(notes || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
 }
 
+function isTransientUpdateError(error) {
+  const message = String(error?.message || error || '');
+  return /ERR_CONNECTION_RESET|ECONNRESET|ETIMEDOUT|ESOCKETTIMEDOUT|ERR_NETWORK_CHANGED|ERR_INTERNET_DISCONNECTED|socket hang up|network error|timeout|timed out/i.test(message);
+}
+
+function formatUpdateError(error, phase = 'check') {
+  if (isTransientUpdateError(error)) {
+    return phase === 'download'
+      ? '网络连接中断，请点击“重试下载”继续。'
+      : '连接更新服务器失败，请稍后重试。';
+  }
+  return error?.message || (phase === 'download' ? '下载更新失败，请稍后重试' : '检查更新失败，请稍后重试');
+}
+
 function compareVersions(left, right) {
   const parse = (value) => String(value || '').replace(/^v/i, '').split('-')[0].split('.').map((part) => Number(part) || 0);
   const a = parse(left);
@@ -452,6 +467,7 @@ function requestJson(url, redirects = 0) {
 
 function downloadFile(url, destination, onProgress, redirects = 0) {
   return new Promise((resolve, reject) => {
+    let failRequest = reject;
     const request = https.get(url, {
       headers: { 'User-Agent': `XuanNian/${app.getVersion()}` },
     }, (response) => {
@@ -469,8 +485,19 @@ function downloadFile(url, destination, onProgress, redirects = 0) {
       const temporary = `${destination}.download`;
       const total = Number(response.headers['content-length'] || 0);
       let received = 0;
+      let settled = false;
       fs.mkdirSync(path.dirname(destination), { recursive: true });
       const output = fs.createWriteStream(temporary);
+      const fail = (error) => {
+        if (settled) return;
+        settled = true;
+        output.destroy();
+        try { fs.unlinkSync(temporary); } catch {}
+        reject(error);
+      };
+      failRequest = fail;
+      response.on('aborted', () => fail(new Error('下载连接中断')));
+      response.on('error', fail);
       response.on('data', (chunk) => {
         received += chunk.length;
         if (total > 0) onProgress?.(Math.min(100, (received / total) * 100));
@@ -478,23 +505,21 @@ function downloadFile(url, destination, onProgress, redirects = 0) {
       response.pipe(output);
       output.on('finish', () => {
         output.close(() => {
+          if (settled) return;
           try {
             if (fs.existsSync(destination)) fs.unlinkSync(destination);
             fs.renameSync(temporary, destination);
+            settled = true;
             resolve(destination);
           } catch (error) {
-            reject(error);
+            fail(error);
           }
         });
       });
-      output.on('error', (error) => {
-        response.destroy();
-        try { fs.unlinkSync(temporary); } catch {}
-        reject(error);
-      });
+      output.on('error', fail);
     });
     request.setTimeout(30000, () => request.destroy(new Error('下载更新超时')));
-    request.on('error', reject);
+    request.on('error', (error) => failRequest(error));
   });
 }
 
@@ -542,13 +567,16 @@ function initializeInstalledUpdater() {
   autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = false;
   autoUpdater.allowPrerelease = false;
+  // A full installer uses one stable transfer. Differential updates generate
+  // many range requests and are much more likely to fail on unstable routes.
+  autoUpdater.disableDifferentialDownload = true;
   autoUpdater.logger = {
     info: (message) => runtimeLog(`updater ${message}`),
     warn: (message) => runtimeLog(`updater warning ${message}`),
     error: (message) => runtimeLog(`updater error ${message}`),
     debug: (message) => runtimeLog(`updater debug ${message}`),
   };
-  autoUpdater.on('checking-for-update', () => setUpdateState({ status: 'checking', message: '正在检查更新…', percent: 0 }));
+  autoUpdater.on('checking-for-update', () => setUpdateState({ status: 'checking', message: '正在检查更新…', percent: 0, retryAction: '' }));
   autoUpdater.on('update-available', (info) => setUpdateState({
     status: 'available',
     version: info?.version || '',
@@ -556,22 +584,26 @@ function initializeInstalledUpdater() {
     releaseNotes: normalizeReleaseNotes(info?.releaseNotes),
     percent: 0,
     downloadedFile: '',
+    retryAction: '',
   }));
-  autoUpdater.on('update-not-available', () => setUpdateState({ status: 'current', version: '', message: '当前已是最新版本', releaseNotes: '', percent: 0, downloadedFile: '' }));
+  autoUpdater.on('update-not-available', () => setUpdateState({ status: 'current', version: '', message: '当前已是最新版本', releaseNotes: '', percent: 0, downloadedFile: '', retryAction: '' }));
   autoUpdater.on('download-progress', (progress) => setUpdateState({
     status: 'downloading',
     percent: Math.max(0, Math.min(100, Number(progress?.percent || 0))),
     message: '正在下载更新…',
+    retryAction: '',
   }));
   autoUpdater.on('update-downloaded', (info) => setUpdateState({
     status: 'downloaded',
     version: info?.version || updateState.version,
     percent: 100,
     message: '更新已下载，重启后即可完成安装',
+    retryAction: '',
   }));
   autoUpdater.on('error', (error) => {
     updateCheckInFlight = false;
-    setUpdateState({ status: 'error', message: error?.message || '更新失败，请稍后重试' });
+    const retryAction = updateState.status === 'downloading' || updateState.retryAction === 'download' ? 'download' : 'check';
+    setUpdateState({ status: 'error', retryAction, message: formatUpdateError(error, retryAction) });
   });
 }
 
@@ -581,7 +613,7 @@ async function checkForAppUpdates() {
   }
   if (updateCheckInFlight || updateState.status === 'downloading') return publicUpdateState();
   updateCheckInFlight = true;
-  setUpdateState({ status: 'checking', message: '正在检查更新…', percent: 0 });
+  setUpdateState({ status: 'checking', version: '', releaseNotes: '', downloadedFile: '', retryAction: '', message: '正在检查更新…', percent: 0 });
   try {
     if (updateState.manualInstall) {
       return await checkManualPackageUpdate();
@@ -590,7 +622,7 @@ async function checkForAppUpdates() {
     await autoUpdater.checkForUpdates();
     return publicUpdateState();
   } catch (error) {
-    return setUpdateState({ status: 'error', message: error?.message || '检查更新失败，请稍后重试' });
+    return setUpdateState({ status: 'error', retryAction: 'check', message: formatUpdateError(error, 'check') });
   } finally {
     updateCheckInFlight = false;
   }
@@ -598,27 +630,52 @@ async function checkForAppUpdates() {
 
 async function downloadAppUpdate() {
   if (updateState.status === 'downloaded') return publicUpdateState();
-  if (updateState.status !== 'available') return checkForAppUpdates();
+  const retryingDownload = updateState.status === 'error' && updateState.retryAction === 'download' && !!updateState.version;
+  if (updateState.status !== 'available' && !retryingDownload) return checkForAppUpdates();
   try {
-    setUpdateState({ status: 'downloading', message: '正在下载更新…', percent: 0 });
+    setUpdateState({ status: 'downloading', retryAction: 'download', message: retryingDownload ? '正在重试下载…' : '正在下载更新…', percent: 0 });
     if (updateState.manualInstall) {
       if (!portableUpdateDownload?.url) throw new Error('更新地址已失效，请重新检查更新');
       const destination = path.join(app.getPath('downloads'), portableUpdateDownload.name);
-      await downloadFile(portableUpdateDownload.url, destination, (percent) => {
-        setUpdateState({ status: 'downloading', percent, message: process.platform === 'darwin' ? '正在下载 macOS 更新…' : '正在下载 Windows 便携版更新…' });
-      });
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          await downloadFile(portableUpdateDownload.url, destination, (percent) => {
+            setUpdateState({ status: 'downloading', percent, message: process.platform === 'darwin' ? '正在下载 macOS 更新…' : '正在下载 Windows 便携版更新…' });
+          });
+          break;
+        } catch (error) {
+          if (!isTransientUpdateError(error) || attempt === 1) throw error;
+          setUpdateState({ status: 'downloading', retryAction: 'download', percent: 0, message: '网络连接中断，正在自动重试…' });
+          await sleep(1000);
+        }
+      }
       return setUpdateState({
         status: 'downloaded',
         percent: 100,
         downloadedFile: destination,
         message: process.platform === 'darwin' ? 'macOS 更新已下载，可以打开安装包' : '便携版更新已下载，请关闭当前版本后运行新文件',
+        retryAction: '',
       });
     }
     initializeInstalledUpdater();
-    await autoUpdater.downloadUpdate();
+    const attempts = 2;
+    let lastError = null;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      try {
+        await autoUpdater.downloadUpdate();
+        lastError = null;
+        break;
+      } catch (error) {
+        lastError = error;
+        if (!isTransientUpdateError(error) || attempt === attempts - 1) throw error;
+        setUpdateState({ status: 'downloading', retryAction: 'download', percent: 0, message: '网络连接中断，正在自动重试…' });
+        await sleep(1000);
+      }
+    }
+    if (lastError) throw lastError;
     return publicUpdateState();
   } catch (error) {
-    return setUpdateState({ status: 'error', message: error?.message || '下载更新失败，请稍后重试' });
+    return setUpdateState({ status: 'error', retryAction: 'download', message: formatUpdateError(error, 'download') });
   }
 }
 
