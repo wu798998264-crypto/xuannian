@@ -62,6 +62,7 @@ async function run() {
   require('../src/preload.js');
   Module._load = originalModuleLoad;
   assert(exposedApi, 'preload API was not exposed');
+  assert.strictEqual(typeof exposedApi.openMediaCollection, 'function', 'preload must expose opening a media collection folder');
   exposedApi.onQuickRefresh(() => {});
 
   const initial = Promise.all([
@@ -155,9 +156,12 @@ async function run() {
   assert(mainSource.includes("action('batch-delete'"), 'clipboard native context menus need a batch-delete entry');
   assert(mainSource.includes("ipcMain.handle('media:deleteLocalBatch'") && mainSource.includes("status: 'batch-deleted'"), 'media batch deletion must use one native operation and one refresh notification');
   assert(/kind === 'media'[\s\S]*?action\('batch-delete', '批量删除'\)/.test(mainSource), 'media native context menus need a batch-delete entry');
+  assert(mainSource.includes("ipcMain.handle('media:openCollection'") && /kind === 'media-folder'[\s\S]*?action\('open-folder', '打开文件夹'\)/.test(mainSource), 'media collection context menus must open their managed folder');
   assert(mediaLibrarySource.includes('async function scanMediaDirectory'), 'local media files must be derived from the selected folders');
   assert(mediaLibrarySource.includes('async function listManagedMediaFiles'), 'media scanning must enumerate only supported media files');
   assert(mediaLibrarySource.includes('async function deleteMediaCollection'), 'media collections need a file-preserving delete path');
+  assert(mediaLibrarySource.includes('movePathAcrossVolumes') && mediaLibrarySource.includes('preserved, folders, otherFiles'), 'deleting a media collection must preserve nested folders and non-media files');
+  assert(!mediaLibrarySource.includes('收藏夹中包含子文件夹或非媒体文件'), 'complex collection contents must no longer block collection deletion');
   assert(mediaLibrarySource.includes("portalUrl: SEEKIN_UNIVERSAL_PORTAL") && mediaLibrarySource.includes("autoDownloadQuality: 'highest'"), 'all supported video providers must start with Seekin while retaining highest-quality automation');
   assert(mediaLibrarySource.includes("id: 'tiktok'") && mediaLibrarySource.includes('portals: SEEKIN_ONLY_PORTALS'), 'every video provider must use the shared Seekin-only route');
   assert(!mediaLibrarySource.includes("label: 'DLPanda'") && !mediaLibrarySource.includes('finalFallback: true'), 'video providers must not configure automatic backup sites');

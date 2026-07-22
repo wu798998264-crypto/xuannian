@@ -560,13 +560,19 @@ async function renameMediaCollection(directory, kind, currentName, nextName) {
   return { ok: true, name: next, path: target };
 }
 
-async function moveFileAcrossVolumes(source, target) {
+async function movePathAcrossVolumes(source, target) {
   try {
     await fs.promises.rename(source, target);
   } catch (error) {
     if (error?.code !== 'EXDEV') throw error;
-    await fs.promises.copyFile(source, target, fs.constants.COPYFILE_EXCL);
-    await fs.promises.unlink(source);
+    const stat = await fs.promises.lstat(source);
+    if (stat.isDirectory()) {
+      await fs.promises.cp(source, target, { recursive: true, force: false, errorOnExist: true });
+      await fs.promises.rm(source, { recursive: true, force: false });
+    } else {
+      await fs.promises.copyFile(source, target, fs.constants.COPYFILE_EXCL);
+      await fs.promises.unlink(source);
+    }
   }
 }
 
@@ -583,7 +589,7 @@ async function moveMediaToCollection(sourcePath, directory, collection = '') {
     return { ok: true, path: source, unchanged: true };
   }
   const target = collisionFreePath(targetRoot, path.basename(source));
-  await moveFileAcrossVolumes(source, target);
+  await movePathAcrossVolumes(source, target);
   return { ok: true, path: target };
 }
 
@@ -596,21 +602,22 @@ async function deleteMediaCollection(directory, kind, name) {
   const source = mediaCollectionDirectory(root, kind, collection);
   if (!fs.existsSync(source)) return { ok: false, reason: '收藏夹已不存在' };
   const entries = await fs.promises.readdir(source, { withFileTypes: true });
-  if (entries.some((entry) => entry.isDirectory() || (entry.isFile() && mediaKindForPath(entry.name) !== kind))) {
-    return { ok: false, reason: '收藏夹中包含子文件夹或非媒体文件，请先在资源管理器中处理' };
-  }
   const targetRoot = mediaCollectionDirectory(root, kind, '');
   await fs.promises.mkdir(targetRoot, { recursive: true });
   let moved = 0;
+  let preserved = 0;
+  let folders = 0;
+  let otherFiles = 0;
   for (const entry of entries) {
-    if (!entry.isFile()) continue;
-    const filePath = path.join(source, entry.name);
-    if (mediaKindForPath(filePath) !== kind) continue;
-    await moveFileAcrossVolumes(filePath, collisionFreePath(targetRoot, entry.name));
-    moved += 1;
+    const sourcePath = path.join(source, entry.name);
+    await movePathAcrossVolumes(sourcePath, collisionFreePath(targetRoot, entry.name));
+    preserved += 1;
+    if (entry.isDirectory()) folders += 1;
+    else if (entry.isFile() && mediaKindForPath(entry.name) === kind) moved += 1;
+    else otherFiles += 1;
   }
   await fs.promises.rmdir(source);
-  return { ok: true, moved };
+  return { ok: true, moved, preserved, folders, otherFiles };
 }
 
 module.exports = {

@@ -468,6 +468,26 @@ async function run() {
   assert.deepStrictEqual(mediaBatchDeleteMetrics.deleteCalls, [{paths:['C:\\media\\alpha.mp4','C:\\media\\beta.mp4'],location:'downloads'}], 'media batch deletion must cross the bridge once');
   assert.deepStrictEqual(mediaBatchDeleteMetrics.remaining, ['gamma.mp4']);
   assert.strictEqual(mediaBatchDeleteMetrics.activeAfterConfirm, false);
+  const mediaCollectionFolderMetrics = await window.webContents.executeJavaScript(`
+    (async()=>{
+      const original={kind:state.media.kind,showItemContextMenu:api.showItemContextMenu,openMediaCollection:api.openMediaCollection};
+      const calls=[];
+      state.media.kind='video';
+      api.showItemContextMenu=async kind=>kind==='media-folder'?'open-folder':'';
+      api.openMediaCollection=async(location,kind,name)=>{calls.push({location,kind,name});return {ok:true,path:'C:/Favorites/video/项目收藏'};};
+      const list=document.querySelector('#mediaFavoriteCollections');
+      list.innerHTML='<button class="media-collection" data-media-collection="项目收藏" type="button">项目收藏</button>';
+      list.querySelector('button').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true}));
+      await new Promise(resolve=>setTimeout(resolve,10));
+      state.media.kind=original.kind;
+      api.showItemContextMenu=original.showItemContextMenu;
+      api.openMediaCollection=original.openMediaCollection;
+      renderMediaCollections('favorites');
+      return {calls};
+    })()
+  `, true);
+  console.log(`media collection folder metrics ${JSON.stringify(mediaCollectionFolderMetrics)}`);
+  assert.deepStrictEqual(mediaCollectionFolderMetrics.calls, [{location:'favorites',kind:'video',name:'项目收藏'}], 'right-clicking a media collection must open that exact managed folder');
   const nativeIconMetrics = await window.webContents.executeJavaScript(`
     (async()=>{
       let active=0;

@@ -372,6 +372,9 @@ contextBridge.exposeInMainWorld('nativeAPI', {
   async deleteMediaCollection(location, kind, name) {
     return ipcRenderer.invoke('media:deleteCollection', location || 'downloads', kind || 'video', name || '');
   },
+  async openMediaCollection(location, kind, name) {
+    return ipcRenderer.invoke('media:openCollection', location || 'downloads', kind || 'video', name || '');
+  },
   async moveLocalMedia(filePath, location, collection = '') {
     return ipcRenderer.invoke('media:moveLocal', filePath || '', location || 'downloads', collection || '');
   },

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>玄念8.3.4</title>
+  <title>玄念8.3.5</title>
   <link rel="icon" href="src/xuannian-logo-256.png" />
   <link rel="stylesheet" href="src/media-library.css" />
   <style>
@@ -1772,6 +1772,7 @@ function createBrowserFallbackAPI(){
     async createMediaCollection(){ return {ok:false,reason:'预览环境不支持收藏夹操作'}; },
     async renameMediaCollection(){ return {ok:false,reason:'预览环境不支持收藏夹操作'}; },
     async deleteMediaCollection(){ return {ok:false,reason:'预览环境不支持收藏夹操作'}; },
+    async openMediaCollection(){ return {ok:false,reason:'预览环境不支持打开收藏夹'}; },
     async moveLocalMedia(){ return {ok:false,reason:'预览环境不支持移动文件'}; },
     async deleteLocalMedia(){ return {ok:false,reason:'预览环境不支持删除文件'}; },
     async deleteLocalMediaBatch(){ return {ok:false,reason:'预览环境不支持批量删除文件',deletedPaths:[]}; },
@@ -1905,6 +1906,7 @@ function createUnifiedAPI(nativeApi, fallback){
     createMediaCollection: (location,kind,name)=> nativeApi.createMediaCollection ? nativeApi.createMediaCollection(location,kind,name) : fallback.createMediaCollection(location,kind,name),
     renameMediaCollection: (location,kind,currentName,nextName)=> nativeApi.renameMediaCollection ? nativeApi.renameMediaCollection(location,kind,currentName,nextName) : fallback.renameMediaCollection(location,kind,currentName,nextName),
     deleteMediaCollection: (location,kind,name)=> nativeApi.deleteMediaCollection ? nativeApi.deleteMediaCollection(location,kind,name) : fallback.deleteMediaCollection(location,kind,name),
+    openMediaCollection: (location,kind,name)=> nativeApi.openMediaCollection ? nativeApi.openMediaCollection(location,kind,name) : fallback.openMediaCollection(location,kind,name),
     moveLocalMedia: (filePath,location,collection)=> nativeApi.moveLocalMedia ? nativeApi.moveLocalMedia(filePath,location,collection) : fallback.moveLocalMedia(filePath,location,collection),
     deleteLocalMedia: (filePath,location)=> nativeApi.deleteLocalMedia ? nativeApi.deleteLocalMedia(filePath,location) : fallback.deleteLocalMedia(filePath,location),
     deleteLocalMediaBatch: (filePaths,location)=> nativeApi.deleteLocalMediaBatch ? nativeApi.deleteLocalMediaBatch(filePaths,location) : fallback.deleteLocalMediaBatch(filePaths,location),
@@ -5397,6 +5399,11 @@ async function handleMediaCollectionContextMenu(event,location){
   if(!button||!name) return;
   event.preventDefault();
   const action=await api.showItemContextMenu('media-folder',{name});
+  if(action==='open-folder'){
+    const result=await api.openMediaCollection(location,state.media.kind,name);
+    if(!result?.ok) toast(result?.reason||'打开收藏夹失败');
+    return;
+  }
   if(action==='rename'){
     const next=await showTextInputModal({title:'修改收藏夹名称',label:'收藏夹名称',value:name,confirmText:'保存'});
     if(!next||next===name) return;
@@ -5410,13 +5417,13 @@ async function handleMediaCollectionContextMenu(event,location){
     return;
   }
   if(action==='delete'){
-    const confirmed=await showConfirmModal({title:'删除收藏夹',message:`确定删除收藏夹「${name}」吗？其中的媒体文件会移回未分类，不会被删除。`,confirmText:'删除收藏夹',danger:true});
+    const confirmed=await showConfirmModal({title:'删除收藏夹',message:`确定删除收藏夹「${name}」吗？其中的文件和子文件夹会安全移出该分类，不会被删除。`,confirmText:'删除收藏夹',danger:true});
     if(!confirmed) return;
     const sourceOrder=location==='favorites'
       ? orderedFavoriteItems(state.media.items.filter(item=>item.location==='favorites'&&item.kind===state.media.kind&&String(item.collection||'')===name),state.media.kind,name).map(item=>item.name)
       : [];
     const result=await api.deleteMediaCollection(location,state.media.kind,name);
-    toast(result?.ok?(result.moved?`收藏夹已删除，${result.moved} 个文件已移回未分类`:'收藏夹已删除'):(result?.reason||'删除失败'));
+    toast(result?.ok?(result.preserved?`收藏夹已删除，${result.preserved} 项内容已安全移出`:'收藏夹已删除'):(result?.reason||'删除失败'));
     if(result?.ok){
       if(location==='favorites'){
         const targetKey=mediaFavoriteOrderKey(state.media.kind,'');

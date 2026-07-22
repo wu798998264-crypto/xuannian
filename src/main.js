@@ -33,6 +33,7 @@ const {
   moveMediaToCollection,
   musicSearchUrl,
   renameMediaCollection,
+  sanitizeCollectionName,
   sanitizeMediaVideoTitle,
   scoreMediaDownloadQualityLabel,
 } = require('./media-library');
@@ -7787,6 +7788,22 @@ ipcMain.handle('media:deleteCollection', async (_event, location, kind, name) =>
   const root = location === 'favorites' ? directories.favoritePath : directories.downloadPath;
   return runMediaFileOperation('delete media collection', () => deleteMediaCollection(root, kind, name));
 });
+ipcMain.handle('media:openCollection', async (_event, location, kind, name) => {
+  const directories = mediaDirectories();
+  const root = location === 'favorites' ? directories.favoritePath : directories.downloadPath;
+  const collection = sanitizeCollectionName(name);
+  if (!collection || collection !== String(name || '').trim()) return { ok: false, reason: '收藏夹名称无效' };
+  const target = mediaCollectionDirectory(root, kind, collection);
+  if (!target || !isPathInside(target, root)) return { ok: false, reason: '收藏夹路径无效' };
+  try {
+    const stat = await fs.promises.stat(target);
+    if (!stat.isDirectory()) return { ok: false, reason: '收藏夹已不存在' };
+    const reason = await shell.openPath(target);
+    return reason ? { ok: false, reason } : { ok: true, path: target };
+  } catch {
+    return { ok: false, reason: '收藏夹已不存在' };
+  }
+});
 ipcMain.handle('media:moveLocal', async (_event, filePath, location, collection = '') => {
   const directories = mediaDirectories();
   const root = location === 'favorites' ? directories.favoritePath : directories.downloadPath;
@@ -8459,6 +8476,8 @@ ipcMain.handle('ui:showItemContextMenu', (event, kind, options = {}) => {
     items.push(action('batch-delete', '批量删除'));
     items.push(action('delete', '删除'));
   } else if (kind === 'media-folder') {
+    items.push(action('open-folder', '打开文件夹'));
+    items.push({ type: 'separator' });
     items.push(action('rename', '修改收藏夹名称'));
     items.push(action('delete', '删除收藏夹'));
   } else if (kind === 'note-category') {
