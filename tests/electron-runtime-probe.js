@@ -1136,11 +1136,9 @@ async function run() {
       renderMediaBrowserState();
       setMediaTab('downloads');
       await new Promise(resolve=>setTimeout(resolve,20));
-      await performMediaAction('play','downloads',0);
-      const localAudioPlayer={
-        visible:!document.querySelector('#mediaLocalPlayer').hidden,
-        controls:document.querySelector('#mediaLocalAudio').controls,
-        path:document.querySelector('#mediaLocalAudio').dataset.mediaPath,
+      const downloadedMusicControls={
+        rowPlayButtons:document.querySelectorAll('#mediaDownloadsList [data-media-action="play"]').length,
+        localPlayerVisible:!document.querySelector('#mediaLocalPlayer').hidden,
         musicProviderLabel:document.querySelector('#mediaMusicProvider')?.textContent.trim()||'',
         musicManualPortalAvailable:!document.querySelector('#mediaMusicManualPortal').hidden,
       };
@@ -1333,7 +1331,7 @@ async function run() {
       localStorage.removeItem(MEDIA_FAVORITE_ORDER_KEY);
       return {
         openedPortals,portalTargets,portalInputs,externalUrls,copiedText,copiedFiles,draggedFiles,contextMenus,favoriteCollections,movedFavorites,deletedFavorites,
-        downloadedVideos,downloadedVideoQualities,downloadedSongs,previewedSongs,highQualityRequests,openedDownloadHistory,downloadHistoryContextMenus,deletedDownloadHistory,cancelledDownloadTasks,pausedDownloadTasks,createdMediaCollections,localPlaybackRequests,nativeMediaBridgeAvailableBeforeStub,videoUi,videoProgressUi,favoritePreviewModal,videoButtonHitTargets,pickerCreateVisible,createdCollectionChoice,musicUi,backgroundPortal,browserTogglePersistence,localAudioPlayer,manualPortalInitiallyVisible,
+        downloadedVideos,downloadedVideoQualities,downloadedSongs,previewedSongs,highQualityRequests,openedDownloadHistory,downloadHistoryContextMenus,deletedDownloadHistory,cancelledDownloadTasks,pausedDownloadTasks,createdMediaCollections,localPlaybackRequests,nativeMediaBridgeAvailableBeforeStub,videoUi,videoProgressUi,favoritePreviewModal,videoButtonHitTargets,pickerCreateVisible,createdCollectionChoice,musicUi,backgroundPortal,browserTogglePersistence,downloadedMusicControls,manualPortalInitiallyVisible,
         providerRouting:{douyinProvider,tiktokProvider,dailyFallback,failureClassification},
         verificationFlow,musicDownloadStates,pausedTask,interruptedTask,
         activeView:document.querySelector('.view.active')?.id||'',
@@ -1387,8 +1385,8 @@ async function run() {
   assert.strictEqual(mediaLibraryMetrics.verificationFlow.resumeCalls, 1);
   assert.strictEqual(mediaLibraryMetrics.verificationFlow.browserVisible, true);
   assert.deepStrictEqual(mediaLibraryMetrics.browserTogglePersistence, {available:true,browserVisible:true});
-  assert.deepStrictEqual(mediaLibraryMetrics.localPlaybackRequests, ['C:/Downloads/music.flac']);
-  assert.deepStrictEqual(mediaLibraryMetrics.localAudioPlayer, {visible:true,controls:true,path:'C:/Downloads/music.flac',musicProviderLabel:'歌曲宝',musicManualPortalAvailable:true});
+  assert.deepStrictEqual(mediaLibraryMetrics.localPlaybackRequests, []);
+  assert.deepStrictEqual(mediaLibraryMetrics.downloadedMusicControls, {rowPlayButtons:0,localPlayerVisible:false,musicProviderLabel:'歌曲宝',musicManualPortalAvailable:true});
   assert.strictEqual(mediaLibraryMetrics.providerRouting.douyinProvider.id, 'douyin');
   assert.strictEqual(mediaLibraryMetrics.providerRouting.douyinProvider.portalUrl, 'https://www.seekin.ai/zh/downloader/');
   assert.strictEqual(mediaLibraryMetrics.providerRouting.douyinProvider.autoDownloadQuality, 'highest');
@@ -1466,6 +1464,61 @@ async function run() {
   });
   assert.strictEqual(mediaLibraryMetrics.bubblePanel, '');
   assert(mediaLibraryMetrics.provider.includes('哔哩哔哩'));
+  window.setSize(560, 560);
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  const compactMediaLayout = await window.webContents.executeJavaScript(`
+    (async()=>{
+      await switchView('media',{skipCoach:true});
+      setMediaKind('video',{showPortal:true});
+      state.media.browserVisible=false;
+      state.media.videoParse={
+        status:'ready',sourceUrl:'https://v.douyin.com/compact',previewUrl:'',title:'小窗口布局测试',qualityLabel:'1080P',downloadReady:true,error:'',embeddedPreview:false,
+        qualityOptions:[{label:'1080P',href:'https://cdn.example.com/compact-1080.mp4'},{label:'720P',href:'https://cdn.example.com/compact-720.mp4'}],selectedQualityIndex:0
+      };
+      renderMediaPortalWorkspace();
+      renderMediaBrowserState();
+      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+      const shell=document.querySelector('#mediaDirectShell').getBoundingClientRect();
+      const result=document.querySelector('#mediaVideoResult').getBoundingClientRect();
+      const frame=document.querySelector('.media-video-frame').getBoundingClientRect();
+      const meta=document.querySelector('.media-video-meta').getBoundingClientRect();
+      const actions=document.querySelector('.media-video-actions').getBoundingClientRect();
+      return {
+        viewport:{width:innerWidth,height:innerHeight},
+        shellVisible:shell.width>0&&shell.height>0&&shell.bottom<=innerHeight+1,
+        frameVisible:frame.width>0&&frame.height>=70,
+        actionsVisible:actions.width>0&&actions.height>0&&actions.bottom<=shell.bottom+1&&actions.bottom<=innerHeight+1,
+        ordered:frame.bottom<=meta.top+1&&meta.bottom<=actions.top+1,
+        widthContained:frame.left>=result.left-1&&frame.right<=result.right+1&&actions.left>=result.left-1&&actions.right<=result.right+1,
+      };
+    })()
+  `, true);
+  console.log(`compact media layout metrics ${JSON.stringify(compactMediaLayout)}`);
+  if (process.env.XUANNIAN_RUNTIME_SCREENSHOT) {
+    window.showInactive();
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    const compactImage = await window.webContents.capturePage();
+    const compactPath = path.resolve(process.env.XUANNIAN_RUNTIME_SCREENSHOT).replace(/(\.png)?$/i, '-media-video-compact.png');
+    fs.writeFileSync(compactPath, compactImage.toPNG());
+    window.hide();
+  }
+  window.setSize(1280, 820);
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  assert(compactMediaLayout.viewport.width <= 560 && compactMediaLayout.viewport.width >= 500);
+  assert(compactMediaLayout.viewport.height <= 560 && compactMediaLayout.viewport.height >= 480);
+  assert.deepStrictEqual({
+    shellVisible:compactMediaLayout.shellVisible,
+    frameVisible:compactMediaLayout.frameVisible,
+    actionsVisible:compactMediaLayout.actionsVisible,
+    ordered:compactMediaLayout.ordered,
+    widthContained:compactMediaLayout.widthContained,
+  }, {
+    shellVisible:true,
+    frameVisible:true,
+    actionsVisible:true,
+    ordered:true,
+    widthContained:true,
+  });
   assert.strictEqual(rendererErrors.length, 0, `renderer errors: ${rendererErrors.join(' | ')}`);
   if (process.env.XUANNIAN_RUNTIME_SCREENSHOT) {
     await window.webContents.executeJavaScript(`

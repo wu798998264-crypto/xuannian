@@ -174,6 +174,7 @@ const activeMediaDownloadItems = new Map();
 const dismissedMediaDownloadTaskIds = new Set();
 let mediaPortalHtmlFullscreen = false;
 let mediaPortalLastVisibleBounds = null;
+let mediaPortalPresentationMode = 'browser';
 const recentClipboardDigests = new Map();
 const recentClipboardSequences = new Map();
 const pendingClipboardSequences = new Set();
@@ -2544,6 +2545,7 @@ function createWindow() {
     resizable: true,
     thickFrame: true,
     maximizable: true,
+    fullscreenable: true,
     autoHideMenuBar: true,
     backgroundColor: '#f4f4f4',
     webPreferences: {
@@ -2559,8 +2561,14 @@ function createWindow() {
   mainWindow.webContents.on('will-navigate', (event, url) => {
     if (!url.startsWith('file://')) event.preventDefault();
   });
-  mainWindow.webContents.session.setPermissionRequestHandler((_webContents, permission, callback) => {
-    callback(permission === 'media');
+  const mainSession = mainWindow.webContents.session;
+  const canUseMainPermission = (webContents, permission) => (
+    permission === 'media'
+    || (permission === 'fullscreen' && webContents === mainWindow?.webContents)
+  );
+  mainSession.setPermissionCheckHandler((webContents, permission) => canUseMainPermission(webContents, permission));
+  mainSession.setPermissionRequestHandler((webContents, permission, callback) => {
+    callback(canUseMainPermission(webContents, permission));
   });
   mainWindow.setResizable(true);
   mainWindow.setMinimumSize(MAIN_WINDOW_MIN_WIDTH, MAIN_WINDOW_MIN_HEIGHT);
@@ -3348,7 +3356,15 @@ function startCapturedMediaPortalDownload(webContents, url) {
 function configureMediaDownloadSession(electronSession) {
   if (!electronSession || configuredMediaDownloadSessions.has(electronSession)) return;
   configuredMediaDownloadSessions.add(electronSession);
-  electronSession.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+  const canUsePortalPermission = (webContents, permission) => (
+    permission === 'fullscreen'
+    && mediaPortalPresentationMode === 'preview'
+    && webContents === mediaPortalView?.webContents
+  );
+  electronSession.setPermissionCheckHandler((webContents, permission) => canUsePortalPermission(webContents, permission));
+  electronSession.setPermissionRequestHandler((webContents, permission, callback) => {
+    callback(canUsePortalPermission(webContents, permission));
+  });
   electronSession.on('will-download', (event, item, webContents) => {
     if (mediaPortalPreviewCapture?.webContents === webContents) {
       const captureState = mediaPortalPreviewCapture;
@@ -3537,6 +3553,7 @@ function destroyMediaPortalView({ notify = true } = {}) {
   mediaPortalView = null;
   mediaPortalHtmlFullscreen = false;
   mediaPortalLastVisibleBounds = null;
+  mediaPortalPresentationMode = 'browser';
   if (view) {
     try { mainWindow?.contentView?.removeChildView(view); } catch {}
     try {
@@ -4064,6 +4081,7 @@ function setMediaPortalPresentationMode(mode = 'browser', previewUrl = '') {
   const view = mediaPortalView;
   if (!view || view.webContents.isDestroyed()) return;
   const normalizedMode = mode === 'preview' ? 'preview' : 'browser';
+  mediaPortalPresentationMode = normalizedMode;
   const source = String(previewUrl || '');
   const script = [
     '(() => {',

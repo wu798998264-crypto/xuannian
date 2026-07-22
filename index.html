@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>玄念8.3.0</title>
+  <title>玄念8.3.1</title>
   <link rel="icon" href="src/xuannian-logo-256.png" />
   <link rel="stylesheet" href="src/media-library.css" />
   <style>
@@ -4627,16 +4627,12 @@ function scheduleMediaListRender(tab){
 function mediaRowHtml(item,index,tab){
   const favoriteActive=tab==='favorites'||!!item.favorite;
   const favoriteTitle=tab==='favorites'?'取消收藏':(item.favorite?'已收藏':'收藏');
-  const playAction=tab==='downloads'&&item.kind==='audio'
-    ? `<button class="media-row-action" data-media-action="play" data-media-index="${index}" data-media-list="${tab}" title="播放"><svg viewBox="0 0 24 24"><path d="m8 5 11 7-11 7Z"></path></svg></button>`
-    : '';
   return `<div class="media-row" data-media-row="${index}" data-media-list="${tab}" data-media-path="${escapeHtml(item.path||'')}" draggable="true" title="${escapeHtml(item.path||'')}">
     <div class="media-primary"><span class="media-kind ${item.kind}">${mediaKindIcon(item.kind)}</span><span class="media-name-wrap"><span class="media-name">${escapeHtml(item.name||'')}</span><span class="media-type-label">${item.kind==='video'?'视频':'音乐'}</span></span></div>
     <div class="media-path">${escapeHtml(item.directory||'')}</div>
     <div class="media-size">${escapeHtml(formatFileSize(item.size))}</div>
     <div class="media-date">${escapeHtml(formatFileModified(item.modifiedAt))}</div>
     <div class="media-row-actions">
-      ${playAction}
       <button class="media-row-action ${favoriteActive?'active':''}" data-media-action="favorite" data-media-index="${index}" data-media-list="${tab}" title="${favoriteTitle}">${iconSvg('bookmark')}</button>
       <button class="media-row-action" data-media-action="open" data-media-index="${index}" data-media-list="${tab}" title="打开">${fileActionIcon('open')}</button>
       <button class="media-row-action" data-media-action="reveal" data-media-index="${index}" data-media-list="${tab}" title="打开所在文件夹">${fileActionIcon('reveal')}</button>
