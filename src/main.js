@@ -49,7 +49,11 @@ const {
   shouldExtendMediaPortalVideoResultWait,
   shouldRetryMediaPortalVideoAutomation,
 } = require('./media-portal-automation');
-const { findInstalledMusicClient } = require('./media-app-launcher');
+const {
+  findInstalledMusicClient,
+  highQualityMusicSearchUrl,
+  musicClientLaunchArguments,
+} = require('./media-app-launcher');
 const {
   createMediaDownloadControl,
   isMediaDownloadCancelled,
@@ -4971,47 +4975,79 @@ function previewMediaMusicResult(url) {
 async function openHighQualityMusic(query = '', downloadTarget = 'download', collection = '') {
   const value = String(query || '').trim().slice(0, 240);
   if (!value) return { ok: false, reason: '缺少歌曲名称' };
-  const client = process.platform === 'win32' ? findInstalledMusicClient() : null;
-  const providerLabel = client?.label || '阿里云盘网页';
-  const tracker = await startMediaExternalAudioTracker(value, downloadTarget, collection, providerLabel);
-  const failTracker = () => {
-    if (!tracker) return;
-    mediaExternalAudioTrackers.delete(tracker.id);
-    notifyMediaDownloadProgress({ ...tracker.task, status: 'error', updatedAt: Date.now() });
-    stopMediaExternalAudioMonitorIfIdle();
+  let client = process.platform === 'win32' ? findInstalledMusicClient() : null;
+  if (process.platform === 'win32' && client?.id !== 'quark' && typeof app.getApplicationInfoForProtocol === 'function') {
+    try {
+      const info = await app.getApplicationInfoForProtocol('qkclouddrive://activate');
+      const executablePath = String(info?.path || '').trim();
+      if (executablePath && fs.existsSync(executablePath)) {
+        client = {
+          id: 'quark',
+          label: '夸克',
+          url: 'https://pan.quark.cn/',
+          executablePath,
+        };
+      }
+    } catch {}
+  }
+  const searchUrl = highQualityMusicSearchUrl(value);
+  const startTracker = (providerLabel) => {
+    setImmediate(() => {
+      startMediaExternalAudioTracker(value, downloadTarget, collection, providerLabel)
+        .catch((error) => runtimeLog(`external audio tracker start failed: ${error?.message || error}`));
+    });
   };
   clipboard.writeText(value);
-  if (client?.executablePath) {
-    try {
-      const args = client.id === 'quark' ? [client.url] : [];
-      const child = spawn(client.executablePath, args, {
-        detached: true,
-        stdio: 'ignore',
-        windowsHide: true,
+  if (client?.id === 'quark' && client.executablePath) {
+    const launched = await new Promise((resolve) => {
+      let child;
+      try {
+        child = spawn(client.executablePath, musicClientLaunchArguments(client, value), {
+          detached: true,
+          stdio: 'ignore',
+          windowsHide: true,
+        });
+      } catch (error) {
+        resolve({ ok: false, error });
+        return;
+      }
+      let settled = false;
+      const finish = (result) => {
+        if (settled) return;
+        settled = true;
+        resolve(result);
+      };
+      child.once('spawn', () => {
+        child.unref();
+        finish({ ok: true });
       });
-      child.unref();
+      child.once('error', (error) => finish({ ok: false, error }));
+      setTimeout(() => finish({ ok: false, error: new Error('夸克启动超时') }), 2500).unref?.();
+    });
+    if (launched.ok) {
+      startTracker(client.label);
       return {
         ok: true,
         target: client.id,
         label: client.label,
-        taskId: tracker?.id || '',
-        message: '已复制歌曲名称并打开' + client.label + '；玄念会在后台检测下载完成并自动导入',
+        taskId: '',
+        message: '已复制歌曲名称并在夸克中搜索高清资源；请选择可用资源后确认下载，玄念会在后台检测完成的音频',
       };
-    } catch (error) {
-      runtimeLog('open high quality music client failed: ' + (error?.message || error));
     }
+    runtimeLog('open high quality music client failed: ' + (launched.error?.message || launched.error || 'unknown'));
   }
   try {
-    await shell.openExternal('https://www.alipan.com/');
+    await shell.openExternal(searchUrl);
+    startTracker('浏览器');
     return {
       ok: true,
       target: 'web',
-      label: '阿里云盘网页',
-      taskId: tracker?.id || '',
-      message: '未检测到阿里云盘或夸克客户端，已复制歌曲名称并打开网页；玄念会检测本地下载完成',
+      label: '高清资源搜索页',
+      taskId: '',
+      message: '已复制歌曲名称并打开高清资源搜索页；未能识别夸克客户端时会使用默认浏览器',
     };
-  } catch {
-    failTracker();
+  } catch (error) {
+    runtimeLog('open high quality music search failed: ' + (error?.message || error));
     return { ok: false, reason: '高清音质入口暂时无法打开' };
   }
 }

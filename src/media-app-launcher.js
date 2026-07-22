@@ -8,6 +8,20 @@ function executableCandidates(env = process.env) {
   const programFilesX86 = String(env['ProgramFiles(x86)'] || '').trim();
   const candidates = [
     {
+      id: 'quark',
+      label: '夸克',
+      url: 'https://pan.quark.cn/',
+      paths: [
+        path.win32.join(localAppData, 'Programs', 'Quark', 'quark.exe'),
+        path.win32.join(localAppData, 'Programs', 'Quark', 'Application', 'quark.exe'),
+        path.win32.join(localAppData, 'Quark', 'Application', 'quark.exe'),
+        path.win32.join(programFiles, 'Quark', 'quark.exe'),
+        path.win32.join(programFiles, 'Quark', 'Application', 'quark.exe'),
+        path.win32.join(programFilesX86, 'Quark', 'quark.exe'),
+        path.win32.join(programFilesX86, 'Quark', 'Application', 'quark.exe'),
+      ],
+    },
+    {
       id: 'aliyun-drive',
       label: '阿里云盘',
       url: 'https://www.alipan.com/',
@@ -18,22 +32,23 @@ function executableCandidates(env = process.env) {
         path.win32.join(programFilesX86, 'AliyunDrive', 'AliyunDrive.exe'),
       ],
     },
-    {
-      id: 'quark',
-      label: '夸克',
-      url: 'https://pan.quark.cn/',
-      paths: [
-        path.win32.join(localAppData, 'Programs', 'Quark', 'quark.exe'),
-        path.win32.join(localAppData, 'Quark', 'Application', 'quark.exe'),
-        path.win32.join(programFiles, 'Quark', 'quark.exe'),
-        path.win32.join(programFilesX86, 'Quark', 'quark.exe'),
-      ],
-    },
   ];
   return candidates.map((candidate) => ({
     ...candidate,
     paths: candidate.paths.filter((value) => value && path.win32.isAbsolute(value)),
   }));
+}
+
+function highQualityMusicSearchUrl(query = '') {
+  const keyword = String(query || '').trim().slice(0, 240);
+  const search = [keyword, '无损', 'FLAC', '夸克网盘'].filter(Boolean).join(' ');
+  return `https://quark.sm.cn/s?q=${encodeURIComponent(search)}`;
+}
+
+function musicClientLaunchArguments(client = {}, query = '') {
+  const searchUrl = highQualityMusicSearchUrl(query);
+  if (client.id === 'quark') return ['--brand-quark', searchUrl];
+  return [searchUrl];
 }
 
 function findInstalledMusicClient({ env = process.env, existsSync = fs.existsSync } = {}) {
@@ -49,4 +64,6 @@ function findInstalledMusicClient({ env = process.env, existsSync = fs.existsSyn
 module.exports = {
   executableCandidates,
   findInstalledMusicClient,
+  highQualityMusicSearchUrl,
+  musicClientLaunchArguments,
 };
