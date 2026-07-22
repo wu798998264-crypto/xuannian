@@ -1302,7 +1302,6 @@ async function run() {
       await previewMediaMusicVersion(0);
       state.media.musicPreview={...state.media.musicPreview,status:'ready',previewUrl:'https://cdn.example.com/test-song.mp3'};
       renderMediaPortalWorkspace();
-      chooseMediaMusicFormat(0,false);
       const musicUi={
         rows:document.querySelectorAll('#mediaMusicResults .media-music-result').length,
         actions:[...document.querySelectorAll('#mediaMusicResults [data-music-action]')].map(button=>button.textContent.trim()),
@@ -1311,8 +1310,7 @@ async function run() {
         activeAudioControls:!!document.querySelector('#mediaMusicResults audio[data-music-preview-audio][controls]'),
         topFormatControls:!!document.querySelector('#mediaMusicFormats'),
       };
-      await downloadMediaMusicVersion(0,'mp3',false);
-      await downloadMediaMusicVersion(1,'wav',false);
+      await downloadMediaMusicVersion(0,false);
       const backgroundPortal={browserHidden:document.querySelector('#mediaBrowserShell').hidden,directVisible:!document.querySelector('#mediaDirectShell').hidden};
       state.media.browser={...state.media.browser,ready:true};
       state.media.manualPortal={available:true,kind:'audio',url:'https://www.gequbao.com/',reason:'human-verification',prompting:false};
@@ -1621,7 +1619,7 @@ async function run() {
   assert.deepStrictEqual(mediaLibraryMetrics.portalInputs.map((item) => item.automationMode || ''), ['video-parse','video-parse','music-search']);
   assert.deepStrictEqual(mediaLibraryMetrics.externalUrls, []);
   assert.deepStrictEqual(mediaLibraryMetrics.copiedText, []);
-  assert.deepStrictEqual(mediaLibraryMetrics.highQualityRequests, ['测试歌曲（现场版） - 现场歌手']);
+  assert.deepStrictEqual(mediaLibraryMetrics.highQualityRequests, []);
   assert.deepStrictEqual(mediaLibraryMetrics.downloadedVideos, [{target:'download',collection:''},{target:'favorite',collection:'项目收藏'}]);
   assert.deepStrictEqual(mediaLibraryMetrics.downloadedVideoQualities, [1,1], 'selected video quality must reach both download actions');
   assert.deepStrictEqual(mediaLibraryMetrics.videoButtonHitTargets, [true,true,true,true,true], 'the full visible video download button must be clickable');
@@ -1630,10 +1628,10 @@ async function run() {
   assert.strictEqual(mediaLibraryMetrics.createdCollectionChoice, '新建视频分类');
   assert.deepStrictEqual(mediaLibraryMetrics.createdMediaCollections, [{location:'favorites',kind:'video',name:'新建视频分类'}]);
   assert.deepStrictEqual(mediaLibraryMetrics.downloadedSongs, [{url:'https://www.gequbao.com/music/101',target:'download',collection:'',preferredName:'测试歌曲 - 测试歌手'}]);
-  assert.strictEqual(mediaLibraryMetrics.nativeMediaBridgeAvailableBeforeStub, true);
+  assert.strictEqual(mediaLibraryMetrics.nativeMediaBridgeAvailableBeforeStub, false, 'renderer must not expose the retired high-quality music bridge');
   assert.deepStrictEqual(mediaLibraryMetrics.videoUi, {previewSrc:'https://cdn.example.com/runtime.mp4',actions:['下载视频','下载并收藏'],topActions:false,fallbackHidden:true,qualityChoiceHidden:false,qualityOptions:['1080P · 80 MB','720P · 40 MB'],selectedQualityIndex:1,exhaustedFallbackHidden:true});
   assert.deepStrictEqual(mediaLibraryMetrics.videoProgressUi, {controls:true,controlsAttribute:true,customProgressPresent:false,sourceDurationEndsWith:true,longDurationFormat:'02:00:00'});
-  assert.deepStrictEqual(mediaLibraryMetrics.musicUi, {rows:2,actions:['下载','下载并收藏','下载','下载并收藏'],formatChoices:['普通音质','高清音质'],previewButtons:2,activeAudioControls:true,topFormatControls:false});
+  assert.deepStrictEqual(mediaLibraryMetrics.musicUi, {rows:2,actions:['下载','下载并收藏','下载','下载并收藏'],formatChoices:[],previewButtons:2,activeAudioControls:true,topFormatControls:false});
   assert.deepStrictEqual(mediaLibraryMetrics.mediaInputClear, {
     videoClearVisibleBefore:true,
     musicClearVisibleBefore:true,

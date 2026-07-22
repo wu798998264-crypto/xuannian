@@ -1173,7 +1173,7 @@
               <div class="media-portal-empty" id="mediaMusicEmpty">
                 <div class="media-direct-icon"><svg viewBox="0 0 24 24"><path d="M9 18V5l10-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="16" cy="16" r="3"></circle></svg></div>
                 <strong id="mediaMusicStatus">搜索后选择需要的版本</strong>
-                <span id="mediaMusicAddress">每条结果可分别选择普通音质或高清音质</span>
+                <span id="mediaMusicAddress">每条结果均可试听、下载或收藏</span>
               </div>
               <div class="media-music-results" id="mediaMusicResults" hidden></div>
             </div>
@@ -1483,7 +1483,6 @@ const state = {
     videoParseTimer:null,
     musicSearch:{status:'idle',requestId:0,query:'',results:[],error:''},
     musicPreview:{status:'idle',requestId:0,index:-1,resultUrl:'',previewUrl:'',error:''},
-    musicFormatChoice:null,
     portalProgress:{status:'idle',requestId:0,kind:'',operation:'',percent:0,message:'',reason:''},
     portalProgressHideTimer:null,
     clickTimer:null,
@@ -1792,7 +1791,6 @@ function createBrowserFallbackAPI(){
     async resumeMediaPortalAfterVerification(){ return {ok:false}; },
     async downloadMediaMusicResult(){ return false; },
     async previewMediaMusicResult(){ return false; },
-    async openHighQualityMusic(){ return {ok:false,reason:'预览环境不支持打开本地音乐客户端'}; },
     setMediaBrowserBounds(){ return false; },
     async getMediaBrowserState(){ return {ready:false,loading:false,url:'',title:'',canGoBack:false,canGoForward:false}; },
     async mediaBrowserAction(){ return false; },
@@ -1926,7 +1924,6 @@ function createUnifiedAPI(nativeApi, fallback){
     resumeMediaPortalAfterVerification: ()=> nativeApi.resumeMediaPortalAfterVerification ? nativeApi.resumeMediaPortalAfterVerification() : fallback.resumeMediaPortalAfterVerification(),
     downloadMediaMusicResult: (url,downloadTarget,collection,preferredName)=> nativeApi.downloadMediaMusicResult ? nativeApi.downloadMediaMusicResult(url,downloadTarget,collection,preferredName) : Promise.resolve(false),
     previewMediaMusicResult: (url)=> nativeApi.previewMediaMusicResult ? nativeApi.previewMediaMusicResult(url) : Promise.resolve(false),
-    openHighQualityMusic: (query,downloadTarget,collection)=> nativeApi.openHighQualityMusic ? nativeApi.openHighQualityMusic(query,downloadTarget,collection) : fallback.openHighQualityMusic(query),
     setMediaBrowserBounds: (bounds,visible,mode)=> nativeApi.setMediaBrowserBounds ? nativeApi.setMediaBrowserBounds(bounds,visible,mode) : fallback.setMediaBrowserBounds(bounds,visible,mode),
     getMediaBrowserState: ()=> nativeApi.getMediaBrowserState ? nativeApi.getMediaBrowserState() : fallback.getMediaBrowserState(),
     mediaBrowserAction: (action)=> nativeApi.mediaBrowserAction ? nativeApi.mediaBrowserAction(action) : fallback.mediaBrowserAction(action),
@@ -2151,7 +2148,6 @@ async function init(){
       results:Array.isArray(payload?.results)?payload.results:[],
       error:String(payload?.reason||''),
     };
-    state.media.musicFormatChoice=null;
     state.media.musicPreview={status:'idle',requestId:0,index:-1,resultUrl:'',previewUrl:'',error:''};
     renderMediaPortalWorkspace();
     renderMediaBrowserState();
@@ -2458,11 +2454,9 @@ function bindEvents(){
     }
     const action=event.target.closest('[data-music-action]');
     if(action){
-      chooseMediaMusicFormat(Number(action.dataset.musicIndex),action.dataset.musicAction==='favorite');
+      downloadMediaMusicVersion(Number(action.dataset.musicIndex),action.dataset.musicAction==='favorite');
       return;
     }
-    const format=event.target.closest('[data-music-format-choice]');
-    if(format) downloadMediaMusicVersion(Number(format.dataset.musicIndex),format.dataset.musicFormatChoice,format.dataset.musicFavorite==='true');
   });
   $('#mediaMusicResults')?.addEventListener('dblclick',event=>{
     if(event.target.closest('button,audio,input,select')) return;
@@ -4135,7 +4129,6 @@ async function clearMediaLaunchInput(kind='video'){
     $$('#mediaMusicResults audio').forEach(element=>element.pause());
     state.media.musicSearch={status:'idle',requestId:-1,query:'',results:[],error:''};
     state.media.musicPreview={status:'idle',requestId:-1,index:-1,resultUrl:'',previewUrl:'',error:''};
-    state.media.musicFormatChoice=null;
   }else{
     stopBilibiliLoginMonitor();
     clearTimeout(state.media.videoParseTimer);
@@ -4316,7 +4309,6 @@ async function searchMediaMusic(){
   $('#mediaMusicResults audio')?.pause();
   state.media.musicSearch={status:'searching',requestId:0,query:keyword,results:[],error:''};
   state.media.musicPreview={status:'idle',requestId:0,index:-1,resultUrl:'',previewUrl:'',error:''};
-  state.media.musicFormatChoice=null;
   state.media.browserVisible=false;
   state.media.browser={...state.media.browser,ready:true,loading:true,opening:true,url,autoActionMissing:false,externalOpened:false};
   renderMediaPortalWorkspace();
@@ -4363,28 +4355,10 @@ async function previewMediaMusicVersion(index){
   }
 }
 
-function chooseMediaMusicFormat(index,favorite=false){
+async function downloadMediaMusicVersion(index,favorite=false){
   const result=state.media.musicSearch.results[index];
   if(!result) return;
-  const current=state.media.musicFormatChoice;
-  state.media.musicFormatChoice=current?.index===index&&current?.favorite===favorite?null:{index,favorite};
-  renderMediaPortalWorkspace();
-}
-
-async function downloadMediaMusicVersion(index,format='mp3',favorite=false){
-  const result=state.media.musicSearch.results[index];
-  if(!result) return;
-  state.media.musicFormatChoice=null;
-  renderMediaPortalWorkspace();
   const displayName=[result.title,result.artist].filter(Boolean).join(' - ')||result.label||'未命名歌曲';
-  if(format==='wav'){
-    const collection=favorite?await showMediaCollectionPicker('audio'):'';
-    if(collection===null) return;
-    const opened=await api.openHighQualityMusic(displayName,favorite?'favorite':'download',collection);
-    if(!opened?.ok){ toast(opened?.reason||'高清音质入口暂时无法打开'); return; }
-    toast(opened.message||(favorite?'已打开高清音质入口，下载完成后自动备份到收藏':'已打开高清音质入口'));
-    return;
-  }
   const collection=favorite?await showMediaCollectionPicker('audio'):'';
   if(collection===null) return;
   const opened=await api.downloadMediaMusicResult(result.url,favorite?'favorite':'download',collection,displayName);
@@ -4393,9 +4367,9 @@ async function downloadMediaMusicVersion(index,format='mp3',favorite=false){
     void offerMediaManualPortal('audio','load-error',String(result.url||''));
     return;
   }
-  state.media.browser={...state.media.browser,ready:true,loading:true,opening:true,url:result.url,autoActionMissing:false,qualityLabel:'普通音质'};
+  state.media.browser={...state.media.browser,ready:true,loading:true,opening:true,url:result.url,autoActionMissing:false,qualityLabel:'音频'};
   renderMediaBrowserState();
-  toast(favorite?'普通音质下载已开始，完成后自动进入收藏':'正在准备所选普通音质版本');
+  toast(favorite?'下载已开始，完成后自动进入收藏':'正在准备所选音乐版本');
 }
 
 function formatMediaVideoTime(value){
@@ -4524,14 +4498,12 @@ function renderMediaPortalWorkspace(){
   const musicAddress=$('#mediaMusicAddress');
   if(musicStatus) musicStatus.textContent=search.status==='searching'?'正在搜索多个版本…':(search.status==='error'?'没有找到可用版本':'搜索后选择需要的版本');
   if(musicAddress){
-    musicAddress.textContent=search.status==='searching'?'正在读取歌曲宝结果列表':(search.status==='error'?mediaPortalFailureMessage(search.error,'audio'):'每条结果可分别选择普通音质或高清音质');
+    musicAddress.textContent=search.status==='searching'?'正在读取歌曲宝结果列表':(search.status==='error'?mediaPortalFailureMessage(search.error,'audio'):'每条结果均可试听、下载或收藏');
     musicAddress.title=search.status==='error'?musicAddress.textContent:'';
   }
   if(musicResults){
     musicResults.hidden=!(search.status==='ready'&&results.length);
     musicResults.innerHTML=results.map((item,index)=>{
-      const choice=state.media.musicFormatChoice?.index===index?state.media.musicFormatChoice:null;
-      const favorite=!!choice?.favorite;
       const preview=state.media.musicPreview?.index===index?state.media.musicPreview:null;
       return `<div class="media-music-result" data-music-index="${index}" title="双击试听">
         <div class="media-music-result-main"><strong>${escapeHtml(item.title||item.label||'未命名歌曲')}</strong><span>${escapeHtml(item.artist||'未知歌手')}</span></div>
@@ -4541,7 +4513,6 @@ function renderMediaPortalWorkspace(){
           <button class="black-btn" type="button" data-music-action="favorite" data-music-index="${index}">下载并收藏</button>
         </div>
         ${preview?`<div class="media-music-preview${preview.status==='error'?' error':''}">${preview.status==='ready'&&preview.previewUrl?`<audio data-music-preview-audio controls controlslist="nodownload noremoteplayback" preload="metadata" src="${escapeHtml(preview.previewUrl)}"></audio>`:`<span>${preview.status==='loading'?'正在准备试听…':escapeHtml(mediaPortalFailureMessage(preview.error||'preview-unavailable','audio'))}</span>`}</div>`:''}
-        ${choice?`<div class="media-music-format-choices"><span>选择音质</span><button type="button" data-music-format-choice="mp3" data-music-index="${index}" data-music-favorite="${favorite}">普通音质</button><button type="button" data-music-format-choice="wav" data-music-index="${index}" data-music-favorite="${favorite}">高清音质</button></div>`:''}
       </div>`;
     }).join('');
   }
@@ -4585,7 +4556,7 @@ function renderMediaBrowserState(){
   const address=$('#mediaBrowserAddress');
   if(address){ address.textContent=browser.url||'下载网站将在这里打开'; address.title=browser.url||''; }
   const status=$('#mediaBrowserStatus');
-  const statusText=browser.externalOpened?'已打开高清音质入口':(browser.crashed?'后台网页需要刷新':(browser.musicResultsReady?'已读取版本列表':(browser.parsed?'视频解析完成':(browser.autoActionMissing?'自动操作未完成，请重新解析':(browser.autoDownloadStarted?(browser.qualityLabel==='普通音质'?'已触发普通音质下载':'视频下载已开始'):((browser.loading||browser.opening)?'后台处理中':(browser.autoSubmitted?'已提交解析':(browser.autoFilled?'已自动填入':'等待任务'))))))));
+  const statusText=browser.externalOpened?'已打开外部下载入口':(browser.crashed?'后台网页需要刷新':(browser.musicResultsReady?'已读取版本列表':(browser.parsed?'视频解析完成':(browser.autoActionMissing?'自动操作未完成，请重新解析':(browser.autoDownloadStarted?(browser.qualityLabel==='音频'?'音频下载已开始':'视频下载已开始'):((browser.loading||browser.opening)?'后台处理中':(browser.autoSubmitted?'已提交解析':(browser.autoFilled?'已自动填入':'等待任务'))))))));
   if(status) status.textContent=statusText;
   const directStatus=$('#mediaDirectStatus');
   if(directStatus) directStatus.textContent=statusText;
