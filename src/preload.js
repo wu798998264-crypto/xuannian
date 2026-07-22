@@ -384,14 +384,17 @@ contextBridge.exposeInMainWorld('nativeAPI', {
   async cancelMediaDownloadTask(taskId) {
     return ipcRenderer.invoke('media:cancelDownloadTask', taskId || '');
   },
+  async setMediaDownloadTaskPaused(taskId, paused = true) {
+    return ipcRenderer.invoke('media:setDownloadTaskPaused', taskId || '', !!paused);
+  },
   async getLocalMediaPlaybackUrl(filePath) {
     return ipcRenderer.invoke('media:localPlaybackUrl', filePath || '');
   },
   async openMediaPortal(url, downloadTarget = 'download', sourceText = '', autoSubmit = false, collection = '', qualityPreference = '', automationMode = '') {
     return ipcRenderer.invoke('media:openPortal', url || '', downloadTarget || 'download', sourceText || '', !!autoSubmit, collection || '', qualityPreference || '', automationMode || '');
   },
-  async downloadParsedMediaVideo(downloadTarget = 'download', collection = '') {
-    return ipcRenderer.invoke('media:downloadParsedVideo', downloadTarget || 'download', collection || '');
+  async downloadParsedMediaVideo(downloadTarget = 'download', collection = '', qualityIndex = 0) {
+    return ipcRenderer.invoke('media:downloadParsedVideo', downloadTarget || 'download', collection || '', Math.max(0, Number(qualityIndex) || 0));
   },
   async resumeMediaPortalAfterVerification() {
     return ipcRenderer.invoke('media:resumeAfterVerification');

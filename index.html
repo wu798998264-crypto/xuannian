@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>玄念8.2.9</title>
+  <title>玄念8.3.0</title>
   <link rel="icon" href="src/xuannian-logo-256.png" />
   <link rel="stylesheet" href="src/media-library.css" />
   <style>
@@ -167,9 +167,11 @@
     .media-download-task-head{display:flex;align-items:center;gap:8px;min-width:0}
     .media-download-task-name{min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;font-weight:800}
     .media-download-task-status{flex:none;color:var(--muted);font-size:10px}
-    .media-download-task-delete{width:24px;height:24px;flex:none;display:grid;place-items:center;border-radius:5px;color:var(--muted)}
-    .media-download-task-delete:hover{background:var(--panel-soft);color:var(--danger)}
-    .media-download-task-delete svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+    .media-download-task-action{width:24px;height:24px;flex:none;display:grid;place-items:center;border-radius:5px;color:var(--muted)}
+    .media-download-task-action:hover{background:var(--panel-soft);color:var(--text)}
+    .media-download-task-delete:hover{color:var(--danger)}
+    .media-download-task-action svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+    .media-download-task-pause svg{fill:currentColor;stroke:none}
     .media-download-track{height:3px;margin-top:8px;border-radius:2px;background:var(--panel-soft);overflow:hidden}
     .media-download-track span{display:block;height:100%;width:0;background:#4d8d74;transition:width .12s linear}
     .media-download-empty{height:74px;display:grid;place-items:center;color:var(--muted);font-size:11px}
@@ -1137,13 +1139,9 @@
               </div>
               <div class="media-video-result" id="mediaVideoResult" hidden>
                 <div class="media-video-frame"><video id="mediaVideoPreview" controls controlslist="nodownload noremoteplayback" disablepictureinpicture preload="metadata"></video></div>
-                <div class="media-video-progress" id="mediaVideoProgress" hidden>
-                  <span id="mediaVideoCurrentTime">00:00</span>
-                  <input id="mediaVideoSeek" type="range" min="0" max="0" value="0" step="0.05" aria-label="视频播放进度" disabled />
-                  <span id="mediaVideoDuration">00:00</span>
-                </div>
                 <div class="media-video-meta"><strong id="mediaVideoTitle">已解析视频</strong><div class="media-video-meta-details"><span id="mediaVideoQuality"></span><span class="media-video-source-duration" id="mediaVideoSourceDuration" hidden></span></div></div>
                 <div class="media-video-actions">
+                  <label class="media-video-quality-choice" id="mediaVideoQualityChoice" hidden><span>清晰度</span><select id="mediaVideoQualitySelect" aria-label="选择视频清晰度"></select></label>
                   <button class="ghost-btn" id="mediaVideoFallback" type="button" hidden>备用站解析</button>
                   <button class="ghost-btn" id="mediaDownloadVideo" type="button">下载视频</button>
                   <button class="black-btn" id="mediaDownloadFavoriteVideo" type="button">下载并收藏</button>
@@ -1447,7 +1445,7 @@ const state = {
     requestId:0,
     refreshTimer:null,
     videoProvider:null,
-    videoParse:{status:'idle',requestId:0,sourceUrl:'',previewUrl:'',embeddedPreview:false,title:'',qualityLabel:'',downloadReady:false,error:'',portalIndex:0,portalUrl:''},
+    videoParse:{status:'idle',requestId:0,sourceUrl:'',previewUrl:'',embeddedPreview:false,title:'',qualityLabel:'',qualityOptions:[],selectedQualityIndex:0,downloadReady:false,error:'',portalIndex:0,portalUrl:''},
     videoDownloadBusy:false,
     videoParseTimer:null,
     musicSearch:{status:'idle',requestId:0,query:'',results:[],error:''},
@@ -1653,6 +1651,8 @@ function iconSvg(name){
     idea:'<svg viewBox="0 0 24 24"><path d="M9 18h6"></path><path d="M10 22h4"></path><path d="M8 14c-1.7-1.2-3-3.3-3-5.6A7 7 0 1 1 19 8.4c0 2.3-1.3 4.4-3 5.6-.5.4-1 1.1-1 1.8V16H9v-.2c0-.7-.5-1.4-1-1.8Z"></path></svg>',
     paperclip:'<svg viewBox="0 0 24 24"><path d="m21.4 11.6-8.9 8.9a6 6 0 0 1-8.5-8.5l9.5-9.5a4 4 0 0 1 5.7 5.7l-9.6 9.6a2 2 0 0 1-2.8-2.8l8.9-8.9"></path></svg>',
     camera:'<svg viewBox="0 0 24 24"><path d="M14.5 4 16 7h3a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h3l1.5-3h5Z"></path><circle cx="12" cy="13" r="3.5"></circle></svg>',
+    play:'<svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"></path></svg>',
+    pause:'<svg viewBox="0 0 24 24"><path d="M7 5h4v14H7z"></path><path d="M13 5h4v14h-4z"></path></svg>',
     scissors:'<svg viewBox="0 0 24 24"><circle cx="6" cy="6" r="3"></circle><circle cx="6" cy="18" r="3"></circle><path d="M20 4 8.1 15.9"></path><path d="M14.5 14.5 20 20"></path><path d="M8.1 8.1 12 12"></path></svg>',
     chevronDown:'<svg viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"></path></svg>',
     screenshot:'<svg viewBox="0 0 24 24"><path d="M8 3H5a2 2 0 0 0-2 2v3"></path><path d="M16 3h3a2 2 0 0 1 2 2v3"></path><path d="M8 21H5a2 2 0 0 1-2-2v-3"></path><path d="M16 21h3a2 2 0 0 0 2-2v-3"></path><path d="M8 12h8"></path><path d="M12 8v8"></path></svg>'
@@ -1740,6 +1740,7 @@ function createBrowserFallbackAPI(){
     async deleteLocalMedia(){ return {ok:false,reason:'预览环境不支持删除文件'}; },
     async deleteMediaDownloadHistoryItem(){ return {ok:false,reason:'预览环境不支持删除下载记录'}; },
     async cancelMediaDownloadTask(){ return {ok:true}; },
+    async setMediaDownloadTaskPaused(_taskId,paused=true){ return {ok:true,paused:!!paused}; },
     async getLocalMediaPlaybackUrl(filePath){ return String(filePath||''); },
     async openMediaPortal(url){ return this.openExternal(url); },
     async downloadParsedMediaVideo(){ return {ok:false,reason:'预览环境不支持媒体下载'}; },
@@ -1869,8 +1870,9 @@ function createUnifiedAPI(nativeApi, fallback){
     deleteLocalMedia: (filePath,location)=> nativeApi.deleteLocalMedia ? nativeApi.deleteLocalMedia(filePath,location) : fallback.deleteLocalMedia(filePath,location),
     deleteMediaDownloadHistoryItem: (taskId)=> nativeApi.deleteMediaDownloadHistoryItem ? nativeApi.deleteMediaDownloadHistoryItem(taskId) : fallback.deleteMediaDownloadHistoryItem(taskId),
     cancelMediaDownloadTask: (taskId)=> nativeApi.cancelMediaDownloadTask ? nativeApi.cancelMediaDownloadTask(taskId) : fallback.cancelMediaDownloadTask(taskId),
+    setMediaDownloadTaskPaused: (taskId,paused=true)=> nativeApi.setMediaDownloadTaskPaused ? nativeApi.setMediaDownloadTaskPaused(taskId,paused) : fallback.setMediaDownloadTaskPaused(taskId,paused),
     openMediaPortal: (url,downloadTarget,sourceText,autoSubmit,collection,qualityPreference,automationMode)=> nativeApi.openMediaPortal ? nativeApi.openMediaPortal(url,downloadTarget,sourceText,autoSubmit,collection,qualityPreference,automationMode) : fallback.openMediaPortal(url,downloadTarget,sourceText,autoSubmit,collection,qualityPreference,automationMode),
-    downloadParsedMediaVideo: (downloadTarget,collection)=> nativeApi.downloadParsedMediaVideo ? nativeApi.downloadParsedMediaVideo(downloadTarget,collection) : Promise.resolve({ok:false,reason:'当前环境不支持媒体下载'}),
+    downloadParsedMediaVideo: (downloadTarget,collection,qualityIndex=0)=> nativeApi.downloadParsedMediaVideo ? nativeApi.downloadParsedMediaVideo(downloadTarget,collection,qualityIndex) : Promise.resolve({ok:false,reason:'当前环境不支持媒体下载'}),
     resumeMediaPortalAfterVerification: ()=> nativeApi.resumeMediaPortalAfterVerification ? nativeApi.resumeMediaPortalAfterVerification() : fallback.resumeMediaPortalAfterVerification(),
     downloadMediaMusicResult: (url,downloadTarget,collection,preferredName)=> nativeApi.downloadMediaMusicResult ? nativeApi.downloadMediaMusicResult(url,downloadTarget,collection,preferredName) : Promise.resolve(false),
     previewMediaMusicResult: (url)=> nativeApi.previewMediaMusicResult ? nativeApi.previewMediaMusicResult(url) : Promise.resolve(false),
@@ -2069,6 +2071,8 @@ async function init(){
       embeddedPreview:!!payload?.embeddedPreview,
       title:String(payload?.title||''),
       qualityLabel:String(payload?.qualityLabel||''),
+      qualityOptions:Array.isArray(payload?.qualityOptions)?payload.qualityOptions.slice(0,10).map(option=>({label:String(option?.label||''),href:String(option?.href||'')})):[],
+      selectedQualityIndex:0,
       downloadReady:!!payload?.downloadReady,
       error:String(payload?.reason||''),
       portalIndex,
@@ -2376,23 +2380,12 @@ function bindEvents(){
   bindReliableMediaButton($('#mediaDownloadVideo'),()=>downloadParsedVideo(false));
   bindReliableMediaButton($('#mediaDownloadFavoriteVideo'),()=>downloadParsedVideo(true));
   const mediaVideoPreview=$('#mediaVideoPreview');
-  const mediaVideoSeek=$('#mediaVideoSeek');
-  ['loadedmetadata','durationchange','timeupdate','emptied'].forEach(type=>mediaVideoPreview?.addEventListener(type,()=>syncMediaVideoProgress()));
-  mediaVideoSeek?.addEventListener('pointerdown',()=>{ mediaVideoSeek.dataset.scrubbing='true'; });
-  mediaVideoSeek?.addEventListener('input',()=>{
-    const value=Math.max(0,Number(mediaVideoSeek.value)||0);
-    try{ if(mediaVideoPreview&&Number.isFinite(mediaVideoPreview.duration)&&mediaVideoPreview.duration>0) mediaVideoPreview.currentTime=Math.min(value,mediaVideoPreview.duration); }catch{}
-    syncMediaVideoProgress({currentOverride:value});
+  ['loadedmetadata','durationchange','emptied'].forEach(type=>mediaVideoPreview?.addEventListener(type,()=>syncMediaVideoProgress()));
+  $('#mediaVideoQualitySelect')?.addEventListener('change',event=>{
+    const options=Array.isArray(state.media.videoParse?.qualityOptions)?state.media.videoParse.qualityOptions:[];
+    state.media.videoParse.selectedQualityIndex=Math.max(0,Math.min(options.length-1,Number(event.target.value)||0));
+    renderMediaPortalWorkspace();
   });
-  const finishMediaVideoSeek=()=>{
-    if(!mediaVideoSeek) return;
-    delete mediaVideoSeek.dataset.scrubbing;
-    syncMediaVideoProgress();
-  };
-  mediaVideoSeek?.addEventListener('change',finishMediaVideoSeek);
-  mediaVideoSeek?.addEventListener('pointerup',finishMediaVideoSeek);
-  mediaVideoSeek?.addEventListener('pointercancel',finishMediaVideoSeek);
-  mediaVideoSeek?.addEventListener('blur',finishMediaVideoSeek);
   $('#mediaMusicInput')?.addEventListener('keydown',event=>{
     if(event.key==='Enter'){
       event.preventDefault();
@@ -3631,9 +3624,14 @@ function renderMediaDownloadBubble(){
     const detail=task.status==='downloading'&&task.totalBytes
       ?`${formatFileSize(task.receivedBytes)} / ${formatFileSize(task.totalBytes)}`
       :`${statusLabel}${knownSize?` · ${formatFileSize(knownSize)}`:''}`;
-    const removable=(task.status==='completed'&&task.path)||task.status==='interrupted';
-    const deleteTitle=task.status==='completed'?'删除已下载文件':'删除等待重试任务';
-    return `<div class="media-download-task" data-download-task-id="${escapeHtml(task.id)}"><div class="media-download-task-head"><span class="media-download-task-name" title="${escapeHtml(task.name||'下载任务')}">${escapeHtml(task.name||'下载任务')}</span><span class="media-download-task-status">${escapeHtml(detail)}</span>${removable?`<button class="media-download-task-delete" type="button" data-download-task-delete="${escapeHtml(task.id)}" title="${deleteTitle}"><svg viewBox="0 0 24 24"><path d="M4 7h16"></path><path d="M9 7V4h6v3"></path><path d="m7 7 1 13h8l1-13"></path></svg></button>`:''}</div><div class="media-download-track"><span style="width:${Math.max(0,Math.min(100,task.status==='completed'?100:taskPercent))}%"></span></div></div>`;
+    const pausable=['downloading','paused'].includes(task.status);
+    const pauseTitle=task.status==='paused'?'继续下载':'暂停下载';
+    const pauseIcon=task.status==='paused'?'play':'pause';
+    const removable=(task.status==='completed'&&task.path)||['paused','interrupted'].includes(task.status);
+    const deleteTitle=task.status==='completed'?'删除已下载文件':(task.status==='paused'?'删除已暂停任务':'删除等待重试任务');
+    const pauseAction=pausable?`<button class="media-download-task-action media-download-task-pause" type="button" data-download-task-pause="${escapeHtml(task.id)}" title="${pauseTitle}" aria-label="${pauseTitle}">${iconSvg(pauseIcon)}</button>`:'';
+    const deleteAction=removable?`<button class="media-download-task-action media-download-task-delete" type="button" data-download-task-delete="${escapeHtml(task.id)}" title="${deleteTitle}" aria-label="${deleteTitle}"><svg viewBox="0 0 24 24"><path d="M4 7h16"></path><path d="M9 7V4h6v3"></path><path d="m7 7 1 13h8l1-13"></path></svg></button>`:'';
+    return `<div class="media-download-task" data-download-task-id="${escapeHtml(task.id)}"><div class="media-download-task-head"><span class="media-download-task-name" title="${escapeHtml(task.name||'下载任务')}">${escapeHtml(task.name||'下载任务')}</span><span class="media-download-task-status">${escapeHtml(detail)}</span>${pauseAction}${deleteAction}</div><div class="media-download-track"><span style="width:${Math.max(0,Math.min(100,task.status==='completed'?100:taskPercent))}%"></span></div></div>`;
   }).join(''):'<div class="media-download-empty">暂无下载任务</div>';
 }
 
@@ -3672,14 +3670,14 @@ function mediaDownloadTaskById(taskId){
 async function deleteMediaDownloadTask(taskId){
   const task=mediaDownloadTaskById(taskId);
   if(!task) return;
-  if(task.status==='interrupted'){
+  if(['paused','interrupted'].includes(task.status)){
     const result=await api.cancelMediaDownloadTask(task.id);
     if(!result?.ok){ toast(result?.reason||'任务删除失败'); return; }
     clearTimeout(mediaDownloadRemovalTimers.get(task.id));
     mediaDownloadRemovalTimers.delete(task.id);
     state.media.downloadTasks=state.media.downloadTasks.filter(item=>item.id!==task.id);
     renderMediaDownloadBubble();
-    toast('等待重试任务已删除');
+    toast(task.status==='paused'?'已暂停的下载任务已删除':'等待重试任务已删除');
     return;
   }
   if(task.status!=='completed') return;
@@ -3693,16 +3691,28 @@ async function deleteMediaDownloadTask(taskId){
   if(state.view==='media') await refreshMediaLibrary({quiet:true});
 }
 
+async function toggleMediaDownloadTaskPause(taskId){
+  const task=mediaDownloadTaskById(taskId);
+  if(!task||!['downloading','paused'].includes(task.status)) return;
+  const shouldPause=task.status!=='paused';
+  const result=await api.setMediaDownloadTaskPaused(task.id,shouldPause);
+  if(!result?.ok){ toast(result?.reason||(shouldPause?'暂停失败':'继续下载失败')); return; }
+  updateMediaDownloadTask({...task,status:shouldPause?'paused':'downloading',updatedAt:Date.now()});
+  toast(shouldPause?'下载已暂停，可继续或删除':'下载已继续');
+}
+
 function handleMediaDownloadTaskClick(event){
-  const button=event.target.closest('[data-download-task-delete]');
-  if(!button) return;
+  const pauseButton=event.target.closest('[data-download-task-pause]');
+  const deleteButton=event.target.closest('[data-download-task-delete]');
+  if(!pauseButton&&!deleteButton) return;
   event.preventDefault();
   event.stopPropagation();
-  deleteMediaDownloadTask(button.dataset.downloadTaskDelete);
+  if(pauseButton) toggleMediaDownloadTaskPause(pauseButton.dataset.downloadTaskPause);
+  else deleteMediaDownloadTask(deleteButton.dataset.downloadTaskDelete);
 }
 
 async function handleMediaDownloadTaskDoubleClick(event){
-  if(event.target.closest('[data-download-task-delete]')) return;
+  if(event.target.closest('[data-download-task-delete],[data-download-task-pause]')) return;
   const row=event.target.closest('[data-download-task-id]');
   const task=mediaDownloadTaskById(row?.dataset.downloadTaskId);
   if(!task?.path||task.status!=='completed') return;
@@ -3891,7 +3901,7 @@ function updateMediaVideoProvider({autoParse=false}={}){
   const fallback=$('#mediaVideoFallback');
   if(fallback) fallback.hidden=true;
   if(state.media.videoParse.sourceUrl&&state.media.videoParse.sourceUrl!==provider?.sourceUrl){
-    state.media.videoParse={status:'idle',requestId:0,sourceUrl:'',previewUrl:'',embeddedPreview:false,title:'',qualityLabel:'',downloadReady:false,error:'',portalIndex:selectedIndex,portalUrl:selectedRoute?.url||''};
+    state.media.videoParse={status:'idle',requestId:0,sourceUrl:'',previewUrl:'',embeddedPreview:false,title:'',qualityLabel:'',qualityOptions:[],selectedQualityIndex:0,downloadReady:false,error:'',portalIndex:selectedIndex,portalUrl:selectedRoute?.url||''};
   }
   renderMediaPortalWorkspace();
   if(autoParse&&provider){
@@ -3928,7 +3938,7 @@ async function parseMediaVideo(routeSelection=null,{force=false}={}){
   }
   const route=routes[portalIndex];
   const url=route.url;
-  state.media.videoParse={status:'parsing',requestId:0,sourceUrl:provider.sourceUrl,previewUrl:'',embeddedPreview:false,title:'',qualityLabel:'',downloadReady:false,error:'',portalIndex,portalUrl:url};
+  state.media.videoParse={status:'parsing',requestId:0,sourceUrl:provider.sourceUrl,previewUrl:'',embeddedPreview:false,title:'',qualityLabel:'',qualityOptions:[],selectedQualityIndex:0,downloadReady:false,error:'',portalIndex,portalUrl:url};
   state.media.browserVisible=false;
   state.media.browser={...state.media.browser,ready:true,loading:true,opening:true,url,autoActionMissing:false,qualityLabel:'',externalOpened:false};
   renderMediaPortalWorkspace();
@@ -3982,7 +3992,11 @@ async function downloadParsedVideo(favorite=false,options={}){
       }
     }
     if(collection===null) return;
-    result=await api.downloadParsedMediaVideo(favorite?'favorite':'download',collection);
+    const qualityOptions=Array.isArray(parsed.qualityOptions)?parsed.qualityOptions:[];
+    const selectedQualityIndex=qualityOptions.length
+      ?Math.max(0,Math.min(qualityOptions.length-1,Number(parsed.selectedQualityIndex)||0))
+      :0;
+    result=await api.downloadParsedMediaVideo(favorite?'favorite':'download',collection,selectedQualityIndex);
   }catch(error){
     toast('下载通道启动失败，请重新打开玄念后重试');
   }finally{
@@ -4126,21 +4140,21 @@ function formatMediaVideoTime(value){
     :`${String(minutes).padStart(2,'0')}:${String(seconds).padStart(2,'0')}`;
 }
 
-function syncMediaVideoProgress({currentOverride=null}={}){
+function formatMediaVideoQualityOption(option,index=0){
+  const raw=String(option?.label||'').replace(/\s+/g,' ').trim();
+  const quality=raw.match(/(?:\b(?:8K|4K|2K|2160P|1440P|1080P(?:60|\+)?|720P(?:60)?|480P|360P|240P|HD|UHD|FHD|SD|Original)\b|杜比视界|原画|最高画质|高清|标清)/i)?.[0]||'';
+  const size=raw.match(/\b\d+(?:\.\d+)?\s*(?:TB|GB|MB|KB)\b/i)?.[0]||'';
+  const format=raw.match(/\b(?:MP4|WEBM|MOV|M4V)\b/i)?.[0]||'';
+  const concise=[quality,format,size].filter((value,position,values)=>value&&values.findIndex(item=>item.toLowerCase()===value.toLowerCase())===position).join(' · ');
+  if(concise) return concise.slice(0,64);
+  const cleaned=raw.replace(/(?:download|下载|保存)/gi,' ').replace(/\s+/g,' ').trim();
+  return (cleaned||`画质 ${index+1}`).slice(0,48);
+}
+
+function syncMediaVideoProgress(){
   const preview=$('#mediaVideoPreview');
-  const seek=$('#mediaVideoSeek');
-  if(!preview||!seek) return;
+  if(!preview) return;
   const duration=Number.isFinite(preview.duration)&&preview.duration>0?preview.duration:0;
-  const overridden=currentOverride!==null&&Number.isFinite(Number(currentOverride));
-  const current=overridden
-    ?Math.max(0,Number(currentOverride))
-    :(seek.dataset.scrubbing==='true'?Math.max(0,Number(seek.value)||0):(Number.isFinite(preview.currentTime)?Math.max(0,preview.currentTime):0));
-  seek.disabled=duration<=0;
-  seek.max=duration>0?String(duration):'0';
-  if(seek.dataset.scrubbing!=='true'||overridden) seek.value=String(duration>0?Math.min(current,duration):0);
-  seek.setAttribute('aria-valuetext',`${formatMediaVideoTime(current)} / ${formatMediaVideoTime(duration)}`);
-  if($('#mediaVideoCurrentTime')) $('#mediaVideoCurrentTime').textContent=formatMediaVideoTime(current);
-  if($('#mediaVideoDuration')) $('#mediaVideoDuration').textContent=formatMediaVideoTime(duration);
   const sourceDuration=$('#mediaVideoSourceDuration');
   if(sourceDuration){
     sourceDuration.hidden=!duration||!preview.dataset.src;
@@ -4150,15 +4164,6 @@ function syncMediaVideoProgress({currentOverride=null}={}){
 }
 
 function resetMediaVideoProgress(){
-  const seek=$('#mediaVideoSeek');
-  if(seek){
-    delete seek.dataset.scrubbing;
-    seek.value='0';
-    seek.max='0';
-    seek.disabled=true;
-  }
-  if($('#mediaVideoCurrentTime')) $('#mediaVideoCurrentTime').textContent='00:00';
-  if($('#mediaVideoDuration')) $('#mediaVideoDuration').textContent='00:00';
   if($('#mediaVideoSourceDuration')){
     $('#mediaVideoSourceDuration').hidden=true;
     $('#mediaVideoSourceDuration').textContent='';
@@ -4169,6 +4174,7 @@ function renderMediaPortalWorkspace(){
   $$('[data-media-workspace]').forEach(element=>{ element.hidden=element.dataset.mediaWorkspace!==state.media.kind; });
   const video=state.media.videoParse||{};
   const videoReady=video.status==='ready';
+  const videoBusy=!!state.media.videoDownloadBusy;
   const videoEmpty=$('#mediaVideoEmpty');
   const videoResult=$('#mediaVideoResult');
   if(videoEmpty) videoEmpty.hidden=videoReady;
@@ -4206,12 +4212,31 @@ function renderMediaPortalWorkspace(){
     }
     preview.hidden=!next;
     preview.closest('.media-video-frame')?.classList.toggle('no-preview',!next&&!embedded);
-    if($('#mediaVideoProgress')) $('#mediaVideoProgress').hidden=!next;
     syncMediaVideoProgress();
   }
+  const qualityOptions=Array.isArray(video.qualityOptions)?video.qualityOptions:[];
+  const selectedQualityIndex=qualityOptions.length
+    ?Math.max(0,Math.min(qualityOptions.length-1,Number(video.selectedQualityIndex)||0))
+    :0;
+  video.selectedQualityIndex=selectedQualityIndex;
+  const qualityChoice=$('#mediaVideoQualityChoice');
+  const qualitySelect=$('#mediaVideoQualitySelect');
+  if(qualityChoice) qualityChoice.hidden=!videoReady||qualityOptions.length===0;
+  if(qualitySelect){
+    const signature=qualityOptions.map((option,index)=>`${index}:${String(option?.label||'')}:${String(option?.href||'')}`).join('|');
+    if(qualitySelect.dataset.signature!==signature){
+      qualitySelect.innerHTML=qualityOptions.map((option,index)=>`<option value="${index}" title="${escapeHtml(String(option?.label||''))}">${escapeHtml(formatMediaVideoQualityOption(option,index))}</option>`).join('');
+      qualitySelect.dataset.signature=signature;
+    }
+    qualitySelect.value=String(selectedQualityIndex);
+    qualitySelect.disabled=videoBusy||qualityOptions.length<=1;
+    qualitySelect.title=qualityOptions.length<=1?'当前会话仅能取得这一档画质':'选择下载画质；若该档不可用，将只向更低画质降级';
+  }
+  const selectedQuality=qualityOptions[selectedQualityIndex];
   if($('#mediaVideoTitle')) $('#mediaVideoTitle').textContent=video.title||'已解析视频';
-  if($('#mediaVideoQuality')) $('#mediaVideoQuality').textContent=(video.previewUrl||video.embeddedPreview)?(video.qualityLabel||'可预览'):'该网站未提供可直接预览的视频地址';
-  const videoBusy=!!state.media.videoDownloadBusy;
+  if($('#mediaVideoQuality')) $('#mediaVideoQuality').textContent=(video.previewUrl||video.embeddedPreview)
+    ?formatMediaVideoQualityOption(selectedQuality||{label:video.qualityLabel||'可预览'},selectedQualityIndex)
+    :'该网站未提供可直接预览的视频地址';
   if($('#mediaDownloadVideo')){
     $('#mediaDownloadVideo').disabled=!video.downloadReady||videoBusy;
     $('#mediaDownloadVideo').textContent=videoBusy?'正在启动…':'下载视频';

@@ -8,7 +8,10 @@ const {
   deleteMediaCollection,
   detectVideoProvider,
   bilibiliEpisodeId,
+  bilibiliProgressiveOptions,
   bilibiliProgressiveApiUrl,
+  bilibiliVideoIdentity,
+  bilibiliViewApiUrl,
   isAllowedPortalUrl,
   listManagedMediaFiles,
   listMediaCollections,
@@ -20,8 +23,30 @@ const {
   sanitizeMediaVideoTitle,
   scoreMediaDownloadQualityLabel,
 } = require('../src/media-library');
+const {
+  createMediaDownloadControl,
+  isMediaDownloadCancelled,
+} = require('../src/media-download-control');
 
 async function run() {
+  const downloadControl = createMediaDownloadControl();
+  assert.strictEqual(downloadControl.pause(), true);
+  let pauseReleased = false;
+  const pauseWait = downloadControl.waitIfPaused().then(() => { pauseReleased = true; });
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.strictEqual(pauseReleased, false, 'paused downloads must stop advancing until resumed');
+  assert.strictEqual(downloadControl.resume(), true);
+  await pauseWait;
+  assert.strictEqual(pauseReleased, true);
+  let abortCalls = 0;
+  downloadControl.attachAbort(() => { abortCalls += 1; });
+  downloadControl.pause();
+  const cancelledWait = downloadControl.waitIfPaused().catch((error) => error);
+  downloadControl.cancel();
+  const cancelledError = await cancelledWait;
+  assert.strictEqual(abortCalls, 1);
+  assert.strictEqual(isMediaDownloadCancelled(cancelledError, downloadControl), true);
+
   const douyin = detectVideoProvider('https://v.douyin.com/example');
   assert.strictEqual(douyin.id, 'douyin');
   assert.strictEqual(douyin.portalUrl, 'https://www.seekin.ai/zh/downloader/');
@@ -43,6 +68,18 @@ async function run() {
   assert.strictEqual(bilibiliEpisodeId('https://www.bilibili.com/bangumi/play/ep3648907/?share_source=copy_web'), '3648907');
   assert.strictEqual(bilibiliEpisodeId('https://www.bilibili.com/video/BV1STE56zEdA'), '');
   assert.strictEqual(bilibiliProgressiveApiUrl('https://www.bilibili.com/bangumi/play/ep3648907/'), 'https://api.bilibili.com/pgc/player/web/playurl?ep_id=3648907&qn=80&fnval=0&fourk=1');
+  assert.deepStrictEqual(bilibiliVideoIdentity('https://www.bilibili.com/video/BV1STE56zEdA?p=2'), { bvid: 'BV1STE56zEdA', aid: '' });
+  assert.deepStrictEqual(bilibiliVideoIdentity('https://www.bilibili.com/video/av12345'), { bvid: '', aid: '12345' });
+  assert.strictEqual(bilibiliViewApiUrl('https://www.bilibili.com/video/BV1STE56zEdA'), 'https://api.bilibili.com/x/web-interface/view?bvid=BV1STE56zEdA');
+  assert.strictEqual(bilibiliProgressiveApiUrl('https://www.bilibili.com/video/BV1STE56zEdA', 64, '987654'), 'https://api.bilibili.com/x/player/playurl?bvid=BV1STE56zEdA&cid=987654&qn=64&fnval=0&fourk=1');
+  assert.deepStrictEqual(bilibiliProgressiveOptions([
+    { code: 0, data: { quality: 32, accept_quality: [80, 64, 32, 16], accept_description: ['1080P', '720P', '480P', '360P'], durl: [{ url: 'https://cdn.example.com/video-480.mp4', size: 20 * 1024 * 1024 }] } },
+    { code: 0, data: { quality: 32, accept_quality: [80, 64, 32, 16], accept_description: ['1080P', '720P', '480P', '360P'], durl: [{ url: 'https://cdn.example.com/video-480-duplicate.mp4', size: 18 * 1024 * 1024 }] } },
+    { code: 0, data: { quality: 16, accept_quality: [80, 64, 32, 16], accept_description: ['1080P', '720P', '480P', '360P'], durl: [{ url: 'https://cdn.example.com/video-360.mp4', size: 10 * 1024 * 1024 }] } },
+  ]), [
+    { label: '480P · 20.0 MB', href: 'https://cdn.example.com/video-480.mp4', quality: 32, source: 'bilibili' },
+    { label: '360P · 10.0 MB', href: 'https://cdn.example.com/video-360.mp4', quality: 16, source: 'bilibili' },
+  ]);
   assert.strictEqual(detectVideoProvider('【凡人修仙传：第183话 慕兰之战07】 https://www.bilibili.com/bangumi/play/ep3854807/?share_source=copy_web').id, 'bilibili');
   assert.strictEqual(detectVideoProvider('https://xhslink.com/example').id, 'xiaohongshu');
   assert.deepStrictEqual(detectVideoProvider('https://xhslink.com/example').portals.map((route) => route.label), ['Seekin']);

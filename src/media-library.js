@@ -130,11 +130,92 @@ function bilibiliEpisodeId(value) {
   }
 }
 
-function bilibiliProgressiveApiUrl(value) {
+const BILIBILI_QUALITY_LABELS = Object.freeze({
+  127: '8K',
+  126: '杜比视界',
+  125: 'HDR',
+  120: '4K',
+  116: '1080P60',
+  112: '1080P+',
+  80: '1080P',
+  74: '720P60',
+  64: '720P',
+  32: '480P',
+  16: '360P',
+  6: '240P',
+});
+
+function bilibiliVideoIdentity(value) {
+  const sourceUrl = extractHttpUrl(value);
+  if (!sourceUrl) return null;
+  try {
+    const parsed = new URL(sourceUrl);
+    if (!hostMatches(normalizedHost(parsed.hostname), ['bilibili.com'])) return null;
+    const token = parsed.pathname.match(/\/video\/(BV[0-9A-Za-z]+|av\d+)/i)?.[1] || '';
+    if (!token) return null;
+    return /^BV/i.test(token)
+      ? { bvid: token, aid: '' }
+      : { bvid: '', aid: token.replace(/^av/i, '') };
+  } catch {
+    return null;
+  }
+}
+
+function bilibiliViewApiUrl(value) {
+  const identity = bilibiliVideoIdentity(value);
+  if (!identity) return '';
+  return identity.bvid
+    ? `https://api.bilibili.com/x/web-interface/view?bvid=${encodeURIComponent(identity.bvid)}`
+    : `https://api.bilibili.com/x/web-interface/view?aid=${encodeURIComponent(identity.aid)}`;
+}
+
+function bilibiliProgressiveApiUrl(value, quality = 80, cid = '') {
   const episodeId = bilibiliEpisodeId(value);
-  return episodeId
-    ? `https://api.bilibili.com/pgc/player/web/playurl?ep_id=${episodeId}&qn=80&fnval=0&fourk=1`
-    : '';
+  const qn = Math.max(6, Math.min(127, Number(quality) || 80));
+  if (episodeId) {
+    return `https://api.bilibili.com/pgc/player/web/playurl?ep_id=${episodeId}&qn=${qn}&fnval=0&fourk=1`;
+  }
+  const identity = bilibiliVideoIdentity(value);
+  const pageId = String(cid || '').trim();
+  if (!identity || !/^\d+$/.test(pageId)) return '';
+  const identityQuery = identity.bvid
+    ? `bvid=${encodeURIComponent(identity.bvid)}`
+    : `avid=${encodeURIComponent(identity.aid)}`;
+  return `https://api.bilibili.com/x/player/playurl?${identityQuery}&cid=${encodeURIComponent(pageId)}&qn=${qn}&fnval=0&fourk=1`;
+}
+
+function bilibiliQualityLabel(value, fallback = '') {
+  const quality = Number(value || 0);
+  return BILIBILI_QUALITY_LABELS[quality] || String(fallback || '').trim() || `清晰度 ${quality}`;
+}
+
+function bilibiliProgressiveOptions(payloads = []) {
+  const options = new Map();
+  for (const payload of Array.isArray(payloads) ? payloads : []) {
+    const result = payload?.result || payload?.data;
+    if (!result || Number(payload?.code || 0) !== 0) continue;
+    const quality = Number(result.quality || 0);
+    const downloads = Array.isArray(result.durl) ? result.durl : [];
+    if (!quality || downloads.length !== 1 || !/^https?:\/\//i.test(String(downloads[0]?.url || ''))) continue;
+    const descriptions = new Map((Array.isArray(result.accept_quality) ? result.accept_quality : []).map((item, index) => (
+      [Number(item || 0), String((Array.isArray(result.accept_description) ? result.accept_description[index] : '') || '').trim()]
+    )));
+    const bytes = Math.max(0, Number(downloads[0]?.size || 0));
+    const sizeLabel = bytes > 0
+      ? ` · ${(bytes / (1024 * 1024)).toFixed(bytes >= 100 * 1024 * 1024 ? 0 : 1)} MB`
+      : '';
+    const option = {
+      label: `${bilibiliQualityLabel(quality, descriptions.get(quality))}${sizeLabel}`,
+      href: String(downloads[0].url),
+      quality,
+      source: 'bilibili',
+    };
+    const previous = options.get(quality);
+    if (!previous || bytes > Number(previous.bytes || 0)) options.set(quality, { ...option, bytes });
+  }
+  return [...options.values()]
+    .sort((left, right) => Number(right.quality || 0) - Number(left.quality || 0))
+    .map(({ bytes: _bytes, ...option }) => option);
 }
 
 function scoreMediaDownloadQualityLabel(value) {
@@ -515,7 +596,11 @@ module.exports = {
   VIDEO_EXTENSIONS,
   VIDEO_PROVIDERS,
   bilibiliEpisodeId,
+  bilibiliProgressiveOptions,
   bilibiliProgressiveApiUrl,
+  bilibiliQualityLabel,
+  bilibiliVideoIdentity,
+  bilibiliViewApiUrl,
   copyMediaToFavorites,
   createMediaCollection,
   deleteMediaCollection,
