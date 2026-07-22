@@ -89,7 +89,9 @@ async function probeRemoteMedia(webContents, value) {
   const parsedUrl = new URL(url);
   const referer = /(?:^|\.)xhscdn\.com$/i.test(parsedUrl.hostname)
     ? 'https://www.xiaohongshu.com/'
-    : (/\/upgcxcode\//i.test(parsedUrl.pathname) ? 'https://www.bilibili.com/' : webContents.getURL());
+    : (/(?:^|\.)(?:douyinvod\.com|bytev\.com|douyinpic\.com)$/i.test(parsedUrl.hostname)
+      ? 'https://www.douyin.com/'
+      : (/\/upgcxcode\//i.test(parsedUrl.pathname) ? 'https://www.bilibili.com/' : webContents.getURL()));
   try {
     const response = await webContents.session.fetch(url, {
       headers: {
@@ -356,7 +358,7 @@ async function parseOnce(webContents, provider) {
 async function run() {
   await app.whenReady();
   const window = new BrowserWindow({
-    show: false,
+    show: process.env.REAL_MEDIA_SHOW === '1',
     width: 1280,
     height: 900,
     webPreferences: {
@@ -376,9 +378,10 @@ async function run() {
   });
   const results = [];
   const caseFilter = String(process.env.REAL_MEDIA_FILTER || '').trim().toLowerCase();
+  const caseFilters = new Set(caseFilter.split(',').map((value) => value.trim()).filter(Boolean));
   const sourceOverride = String(process.env.REAL_MEDIA_SOURCE || '').trim();
-  const activeCases = caseFilter === 'music' ? [] : CASES
-    .filter((testCase) => !caseFilter || testCase.id === caseFilter)
+  const activeCases = caseFilters.has('music') && caseFilters.size === 1 ? [] : CASES
+    .filter((testCase) => !caseFilters.size || caseFilters.has(testCase.id))
     .map((testCase) => sourceOverride ? { ...testCase, source: sourceOverride } : testCase);
   for (const testCase of activeCases) {
     const provider = detectVideoProvider(testCase.source);
@@ -436,9 +439,10 @@ async function run() {
         download: result.download,
       });
       console.log('real media probe ' + JSON.stringify(results[results.length - 1]));
+      if (result.parsed?.ok && result.preview?.ok && result.download?.ok && process.env.REAL_MEDIA_REPEAT_SUCCESS !== '1') break;
     }
   }
-  const skipMusic = !!caseFilter && caseFilter !== 'music';
+  const skipMusic = caseFilters.size > 0 && !caseFilters.has('music');
   let music = skipMusic
     ? { skipped: true, search: { ok: true, reason: 'filtered' }, download: { ok: true, reason: 'filtered' } }
     : { search: { ok: false, reason: 'not-run' }, download: { ok: false, reason: 'not-run' } };

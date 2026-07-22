@@ -35,8 +35,11 @@ const {
 const {
   buildPortalScript,
   classifyMediaPortalPopup,
+  isCurrentMediaPortalRequest,
   isHttpUrl,
   isMediaUrl,
+  mediaPortalLoadFailureAction,
+  shouldRetryMediaPortalVideoAutomation,
 } = require('./media-portal-automation');
 const { findInstalledMusicClient } = require('./media-app-launcher');
 
@@ -2814,6 +2817,7 @@ function mediaDownloadReferer(value, fallback = '') {
     const parsed = new URL(String(value || ''));
     const pathname = parsed.pathname;
     if (/(?:^|\.)xhscdn\.com$/i.test(parsed.hostname)) return 'https://www.xiaohongshu.com/';
+    if (/(?:^|\.)(?:douyinvod\.com|bytev\.com|douyinpic\.com)$/i.test(parsed.hostname)) return 'https://www.douyin.com/';
     if (/\/upgcxcode\//i.test(pathname)) return 'https://www.bilibili.com/';
   } catch {}
   return String(fallback || '').trim();
@@ -3917,6 +3921,35 @@ function publishMediaPortalVideo(state, parsed) {
   });
 }
 
+function recoverMediaPortalVideoAutomation(state, result = {}) {
+  const reason = String(result.reason || 'automation-error');
+  const recoveryCount = Number(state.videoRecoveryCount || 0);
+  if (!shouldRetryMediaPortalVideoAutomation(reason, recoveryCount)) return false;
+  const view = mediaPortalView;
+  if (!view || view.webContents.isDestroyed() || !isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId)) return false;
+  state.videoRecoveryCount = recoveryCount + 1;
+  state.retryCount = 0;
+  state.loadRetryCount = 0;
+  state.phase = 'input';
+  state.previewDownloadPercent = 0;
+  state.automationRerunRequested = false;
+  clearMediaPortalInputTimer();
+  runtimeLog(`media portal video recovery request=${state.requestId} attempt=${state.videoRecoveryCount} reason=${reason}`);
+  emitMediaPortalProgress(state, {
+    percent: Math.min(72, 34 + state.videoRecoveryCount * 12),
+    message: `下载站响应不完整，正在自动恢复（${state.videoRecoveryCount}）`,
+    reason: '',
+  });
+  setTimeout(() => {
+    if (!isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId)) return;
+    loadMediaPortalPage(view, state, state.portalUrl, {
+      reload: true,
+      reason: `video-recovery-${state.videoRecoveryCount}`,
+    });
+  }, 420);
+  return true;
+}
+
 async function completeMediaPortalAutomation(state, result = {}) {
   if (state.requestId !== mediaPortalRequestId) return;
   clearMediaPortalVisibilityNudgeTimer();
@@ -3942,6 +3975,7 @@ async function completeMediaPortalAutomation(state, result = {}) {
   }
   if (humanVerification) rememberMediaPortalVerificationResume(state);
   if (mode === 'video-parse') {
+    if (!result.ok && recoverMediaPortalVideoAutomation(state, result)) return;
     const parsed = {
       requestId: state.requestId,
       ok: !!result.ok,
@@ -4079,8 +4113,14 @@ function scheduleMediaPortalInput() {
   const view = mediaPortalView;
   const state = mediaPortalInputState;
   if (!view || view.webContents.isDestroyed() || !state || state.requestId !== mediaPortalRequestId) return;
+  if (state.automationRunning) {
+    state.automationRerunRequested = true;
+    return;
+  }
   mediaPortalInputTimer = setTimeout(async () => {
-    if (!mediaPortalView || mediaPortalView.webContents.isDestroyed() || state.requestId !== mediaPortalRequestId) return;
+    if (!mediaPortalView || mediaPortalView.webContents.isDestroyed() || !isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId)) return;
+    state.automationRunning = true;
+    state.automationRerunRequested = false;
     keepMediaPortalWorkerVisible(view);
     scheduleMediaPortalVisibilityNudge(state, view);
     const script = buildPortalScript({
@@ -4093,26 +4133,33 @@ function scheduleMediaPortalInput() {
     }, scoreMediaDownloadQualityLabel);
     try {
       const result = await view.webContents.executeJavaScript(script, true);
-      if (state.requestId !== mediaPortalRequestId) return;
+      if (!isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId)) return;
       if (result?.continueAutomation) {
         state.phase = String(result.nextPhase || 'result');
+        runtimeLog(`media portal automation stage request=${state.requestId} mode=${state.automationMode} phase=${state.phase}`);
         notifyMediaBrowserState({ opening: true, automationStage: state.phase });
-        scheduleMediaPortalInput();
+        state.automationRerunRequested = true;
         return;
       }
       await completeMediaPortalAutomation(state, result || {});
     } catch (error) {
-      if (state.requestId !== mediaPortalRequestId) return;
+      if (!isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId)) return;
       state.retryCount = Number(state.retryCount || 0) + 1;
       if (state.retryCount <= 3) {
         if (state.automationMode === 'video-parse' && state.phase !== 'result' && view.webContents.getURL() !== state.portalUrl) {
           state.phase = 'result';
         }
-        scheduleMediaPortalInput();
+        state.automationRerunRequested = true;
         return;
       }
       runtimeLog(`media portal automation failed: ${error?.message || error}`);
       await completeMediaPortalAutomation(state, { ok: false, reason: 'automation-error' });
+    } finally {
+      state.automationRunning = false;
+      if (isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId) && state.automationRerunRequested) {
+        state.automationRerunRequested = false;
+        scheduleMediaPortalInput();
+      }
     }
   }, 320);
 }
@@ -4598,6 +4645,80 @@ function setMediaPortalBounds(bounds = {}, visible = false, mode = 'browser') {
   return true;
 }
 
+function handleMediaPortalLoadError(view, state, value, error, reason = 'open') {
+  const action = mediaPortalLoadFailureAction({
+    error,
+    expectedState: state,
+    activeState: mediaPortalInputState,
+    activeRequestId: mediaPortalRequestId,
+    retryCount: state?.loadRetryCount,
+    maxRetries: 2,
+  });
+  const message = String(error?.message || error || 'unknown load error');
+  if (action === 'ignore-stale') {
+    runtimeLog(`ignored stale media portal load failure request=${Number(state?.requestId || 0)} reason=${reason}: ${message}`);
+    return;
+  }
+  if (action === 'wait-for-navigation') {
+    state.navigationAbortCount = Number(state.navigationAbortCount || 0) + 1;
+    runtimeLog(`media portal navigation superseded request=${state.requestId} count=${state.navigationAbortCount}; waiting for final page`);
+    emitMediaPortalProgress(state, {
+      percent: Math.min(42, 10 + state.navigationAbortCount * 4),
+      message: '下载站正在跳转，继续等待最终页面',
+      reason: '',
+    });
+    setTimeout(() => {
+      if (isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId)) scheduleMediaPortalInput();
+    }, 650);
+    return;
+  }
+  if (action === 'retry') {
+    state.loadRetryCount = Number(state.loadRetryCount || 0) + 1;
+    runtimeLog(`retrying media portal load request=${state.requestId} attempt=${state.loadRetryCount} reason=${reason}: ${message}`);
+    emitMediaPortalProgress(state, {
+      percent: Math.min(36, 8 + state.loadRetryCount * 6),
+      message: `下载站连接波动，正在自动重连（${state.loadRetryCount}/2）`,
+      reason: '',
+    });
+    setTimeout(() => {
+      if (!isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId)) return;
+      loadMediaPortalPage(view, state, value, { reload: true, reason: 'load-retry' });
+    }, 450 * state.loadRetryCount);
+    return;
+  }
+  runtimeLog(`media portal load failed request=${state.requestId} after retries: ${message}`);
+  completeMediaPortalAutomation(state, { ok: false, reason: 'load-error' }).catch((automationError) => {
+    runtimeLog(`media portal load failure completion failed: ${automationError?.message || automationError}`);
+  });
+  notifyMediaBrowserState({ loadError: true, opening: false });
+}
+
+function loadMediaPortalPage(view, state, value, { reload = false, reason = 'open' } = {}) {
+  if (!view || view.webContents.isDestroyed() || !isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId)) return false;
+  let loadPromise = null;
+  try {
+    if (reload && view.webContents.getURL() === value) {
+      view.webContents.reloadIgnoringCache();
+    } else {
+      loadPromise = view.webContents.loadURL(value);
+    }
+  } catch (error) {
+    handleMediaPortalLoadError(view, state, value, error, reason);
+    return false;
+  }
+  if (loadPromise && typeof loadPromise.then === 'function') {
+    loadPromise.then(() => {
+      if (!isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId)) return;
+      state.loadRetryCount = 0;
+      scheduleMediaPortalInput();
+    }).catch((error) => handleMediaPortalLoadError(view, state, value, error, reason));
+  }
+  setTimeout(() => {
+    if (isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId)) scheduleMediaPortalInput();
+  }, 900);
+  return true;
+}
+
 function openMediaPortal(url, downloadTarget = 'download', sourceText = '', autoSubmit = false, collection = '', qualityPreference = '', automationMode = '') {
   const value = String(url || '').trim();
   if (!isAllowedPortalUrl(value)) return false;
@@ -4633,6 +4754,11 @@ function openMediaPortal(url, downloadTarget = 'download', sourceText = '', auto
       phase: normalizedAutomationMode === 'video-parse' ? 'input' : '',
       portalUrl: value,
       retryCount: 0,
+      loadRetryCount: 0,
+      navigationAbortCount: 0,
+      videoRecoveryCount: 0,
+      automationRunning: false,
+      automationRerunRequested: false,
     }
     : null;
   clearMediaPortalInputTimer();
@@ -4682,25 +4808,27 @@ function openMediaPortal(url, downloadTarget = 'download', sourceText = '', auto
     }, 40);
     return { ok: true, requestId: mediaPortalRequestId, cachedPreview: true };
   }
-  let loadPromise;
-  try {
-    if (view.webContents.getURL() === value) {
-      view.webContents.reloadIgnoringCache();
-      loadPromise = Promise.resolve();
-    } else {
-      loadPromise = view.webContents.loadURL(value);
+  const navigationState = mediaPortalInputState;
+  if (navigationState) {
+    runtimeLog(`media portal open request=${navigationState.requestId} mode=${navigationState.automationMode} url=${value}`);
+    loadMediaPortalPage(view, navigationState, value, {
+      reload: view.webContents.getURL() === value,
+      reason: 'open',
+    });
+  } else {
+    try {
+      const loadPromise = view.webContents.getURL() === value
+        ? (view.webContents.reloadIgnoringCache(), null)
+        : view.webContents.loadURL(value);
+      loadPromise?.catch((error) => {
+        runtimeLog(`manual media portal load failed: ${error?.message || error}`);
+        notifyMediaBrowserState({ loadError: true, opening: false });
+      });
+    } catch (error) {
+      runtimeLog(`manual media portal load failed: ${error?.message || error}`);
+      notifyMediaBrowserState({ loadError: true, opening: false });
     }
-  } catch (error) {
-    loadPromise = Promise.reject(error);
   }
-  loadPromise.catch((error) => {
-    runtimeLog(`media portal load failed: ${error?.message || error}`);
-    const state = mediaPortalInputState;
-    if (state && state.requestId === mediaPortalRequestId) {
-      completeMediaPortalAutomation(state, { ok: false, reason: 'load-error' });
-    }
-    notifyMediaBrowserState({ loadError: true, opening: false });
-  });
   notifyMediaBrowserState({
     requestId: mediaPortalRequestId,
     destroyed: false,

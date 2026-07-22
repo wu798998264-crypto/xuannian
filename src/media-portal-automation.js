@@ -58,6 +58,44 @@ function classifyMediaPortalPopup(value, currentUrl = '') {
   return 'block';
 }
 
+function isCurrentMediaPortalRequest(expectedState, activeState, activeRequestId) {
+  return !!expectedState
+    && expectedState === activeState
+    && Number(expectedState.requestId || 0) === Number(activeRequestId || 0);
+}
+
+function isBenignMediaPortalNavigationError(error) {
+  const code = Number(error?.errno ?? error?.errorCode ?? error?.code);
+  const message = String(error?.message || error || '');
+  return code === -3 || /(?:^|\b)ERR_ABORTED(?:\b|\s*\(-3\))/i.test(message);
+}
+
+function mediaPortalLoadFailureAction({
+  error,
+  expectedState,
+  activeState,
+  activeRequestId,
+  retryCount = 0,
+  maxRetries = 2,
+} = {}) {
+  if (!isCurrentMediaPortalRequest(expectedState, activeState, activeRequestId)) return 'ignore-stale';
+  if (isBenignMediaPortalNavigationError(error)) return 'wait-for-navigation';
+  return Number(retryCount || 0) < Math.max(0, Number(maxRetries || 0)) ? 'retry' : 'fail';
+}
+
+function shouldRetryMediaPortalVideoAutomation(reason, recoveryCount = 0) {
+  const normalizedReason = String(reason || '');
+  const limits = {
+    'automation-error': 2,
+    'input-missing': 2,
+    'parse-action-missing': 2,
+    'parse-timeout': 1,
+    'download-action-missing': 1,
+  };
+  const limit = Number(limits[normalizedReason] || 0);
+  return limit > 0 && Number(recoveryCount || 0) < limit;
+}
+
 function buildPortalScript({ mode, value = '', phase = '', timeoutMs = 30000, candidateIndex = 0 } = {}, qualityScorer = () => -1) {
   const normalizedMode = String(mode || '');
   const normalizedPhase = String(phase || '');
@@ -516,6 +554,10 @@ function buildPortalScript({ mode, value = '', phase = '', timeoutMs = 30000, ca
 module.exports = {
   buildPortalScript,
   classifyMediaPortalPopup,
+  isBenignMediaPortalNavigationError,
+  isCurrentMediaPortalRequest,
   isHttpUrl,
   isMediaUrl,
+  mediaPortalLoadFailureAction,
+  shouldRetryMediaPortalVideoAutomation,
 };

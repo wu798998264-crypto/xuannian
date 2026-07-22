@@ -1,5 +1,13 @@
 const assert = require('assert');
-const { buildPortalScript, classifyMediaPortalPopup, isMediaUrl } = require('../src/media-portal-automation');
+const {
+  buildPortalScript,
+  classifyMediaPortalPopup,
+  isBenignMediaPortalNavigationError,
+  isCurrentMediaPortalRequest,
+  isMediaUrl,
+  mediaPortalLoadFailureAction,
+  shouldRetryMediaPortalVideoAutomation,
+} = require('../src/media-portal-automation');
 const { scoreMediaDownloadQualityLabel } = require('../src/media-library');
 
 function run() {
@@ -13,6 +21,42 @@ function run() {
   assert.strictEqual(classifyMediaPortalPopup('https://v11.douyinvod.com/token/video/tos/cn/file/?mime_type=video_mp4', 'https://www.seekin.ai/zh/downloader/'), 'download');
   assert.strictEqual(isMediaUrl('https://v11.douyinvod.com/token/video/tos/cn/file/?mime_type=video_mp4'), true);
   assert.strictEqual(isMediaUrl('https://ads.example.com/page'), false);
+
+  const activeRequest = { requestId: 12 };
+  const staleRequest = { requestId: 11 };
+  assert.strictEqual(isCurrentMediaPortalRequest(activeRequest, activeRequest, 12), true);
+  assert.strictEqual(isCurrentMediaPortalRequest(staleRequest, activeRequest, 12), false);
+  assert.strictEqual(isBenignMediaPortalNavigationError(new Error("ERR_ABORTED (-3) loading 'https://www.seekin.ai/zh/downloader/'")), true);
+  assert.strictEqual(isBenignMediaPortalNavigationError(Object.assign(new Error('net::ERR_NAME_NOT_RESOLVED'), { errno: -105 })), false);
+  assert.strictEqual(mediaPortalLoadFailureAction({
+    error: new Error('net::ERR_FAILED'),
+    expectedState: staleRequest,
+    activeState: activeRequest,
+    activeRequestId: 12,
+  }), 'ignore-stale');
+  assert.strictEqual(mediaPortalLoadFailureAction({
+    error: new Error('ERR_ABORTED (-3)'),
+    expectedState: activeRequest,
+    activeState: activeRequest,
+    activeRequestId: 12,
+  }), 'wait-for-navigation');
+  assert.strictEqual(mediaPortalLoadFailureAction({
+    error: new Error('net::ERR_CONNECTION_RESET'),
+    expectedState: activeRequest,
+    activeState: activeRequest,
+    activeRequestId: 12,
+    retryCount: 0,
+  }), 'retry');
+  assert.strictEqual(mediaPortalLoadFailureAction({
+    error: new Error('net::ERR_CONNECTION_RESET'),
+    expectedState: activeRequest,
+    activeState: activeRequest,
+    activeRequestId: 12,
+    retryCount: 2,
+  }), 'fail');
+  assert.strictEqual(shouldRetryMediaPortalVideoAutomation('parse-timeout', 0), true);
+  assert.strictEqual(shouldRetryMediaPortalVideoAutomation('parse-timeout', 1), false);
+  assert.strictEqual(shouldRetryMediaPortalVideoAutomation('content-unavailable', 0), false);
 
   const parseScript = buildPortalScript({ mode: 'video-parse', phase: 'result', timeoutMs: 45000 }, scoreMediaDownloadQualityLabel);
   assert(parseScript.includes("mode === 'video-parse'"));
