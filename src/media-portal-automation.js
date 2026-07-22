@@ -102,6 +102,36 @@ function shouldExtendMediaPortalVideoResultWait(reason, phase, waitCount = 0) {
     && Number(waitCount || 0) < 1;
 }
 
+function parseMediaSizeBytes(label) {
+  const match = String(label || '').replace(/,/g, '').match(/(\d+(?:\.\d+)?)\s*(KB|MB|GB|TB)\b/i);
+  if (!match) return 0;
+  const value = Number(match[1]);
+  const unit = String(match[2] || '').toUpperCase();
+  const multipliers = {
+    KB: 1024,
+    MB: 1024 ** 2,
+    GB: 1024 ** 3,
+    TB: 1024 ** 4,
+  };
+  return Number.isFinite(value) && value > 0 ? Math.round(value * multipliers[unit]) : 0;
+}
+
+function selectMediaPreviewOption(options, maxBytes = 0) {
+  const limit = Math.max(0, Number(maxBytes || 0));
+  const candidates = (Array.isArray(options) ? options : [])
+    .map((option, index) => ({
+      ...option,
+      index,
+      sizeBytes: parseMediaSizeBytes(option?.label),
+    }));
+  const known = candidates
+    .filter((option) => option.sizeBytes > 0 && (!limit || option.sizeBytes <= limit))
+    .sort((left, right) => left.sizeBytes - right.sizeBytes || right.index - left.index);
+  if (known.length) return known[0];
+  if (candidates.some((option) => option.sizeBytes > 0)) return null;
+  return candidates.at(-1) || null;
+}
+
 function buildPortalScript({ mode, value = '', phase = '', timeoutMs = 30000, candidateIndex = 0 } = {}, qualityScorer = () => -1) {
   const normalizedMode = String(mode || '');
   const normalizedPhase = String(phase || '');
@@ -444,7 +474,15 @@ function buildPortalScript({ mode, value = '', phase = '', timeoutMs = 30000, ca
       }
       action.setAttribute('data-xuannian-parser-action', 'true');
       action.click();
-      resolve({ ok: true, stage: 'input', filled: true, submitted: true, continueAutomation: true, nextPhase: 'result' });
+      resolve({
+        ok: true,
+        stage: 'input',
+        filled: true,
+        submitted: true,
+        actionLabel: text(action).slice(0, 120),
+        continueAutomation: true,
+        nextPhase: 'result',
+      });
     };
     const attemptVideoResult = () => {
       if (humanVerificationRequired()) { resolve({ ok: false, stage: 'result', reason: 'human-verification' }); return; }
@@ -565,6 +603,8 @@ module.exports = {
   isHttpUrl,
   isMediaUrl,
   mediaPortalLoadFailureAction,
+  parseMediaSizeBytes,
+  selectMediaPreviewOption,
   shouldExtendMediaPortalVideoResultWait,
   shouldRetryMediaPortalVideoAutomation,
 };

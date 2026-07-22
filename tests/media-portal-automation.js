@@ -6,6 +6,8 @@ const {
   isCurrentMediaPortalRequest,
   isMediaUrl,
   mediaPortalLoadFailureAction,
+  parseMediaSizeBytes,
+  selectMediaPreviewOption,
   shouldExtendMediaPortalVideoResultWait,
   shouldRetryMediaPortalVideoAutomation,
 } = require('../src/media-portal-automation');
@@ -61,6 +63,29 @@ function run() {
   assert.strictEqual(shouldExtendMediaPortalVideoResultWait('parse-timeout', 'result', 0), true);
   assert.strictEqual(shouldExtendMediaPortalVideoResultWait('parse-timeout', 'result', 1), false);
   assert.strictEqual(shouldExtendMediaPortalVideoResultWait('parse-timeout', 'input', 0), false);
+  assert.strictEqual(parseMediaSizeBytes('Original (1.05 GB)'), Math.round(1.05 * 1024 ** 3));
+  assert.strictEqual(parseMediaSizeBytes('2K (67.84 MB)'), Math.round(67.84 * 1024 ** 2));
+  assert.strictEqual(parseMediaSizeBytes('Video'), 0);
+  assert.deepStrictEqual(
+    selectMediaPreviewOption([
+      { label: 'Original (1.05 GB)', href: 'https://cdn.example.com/original.mp4' },
+      { label: '1080P (79.37 MB)', href: 'https://cdn.example.com/1080.mp4' },
+      { label: '2K (67.84 MB)', href: 'https://cdn.example.com/2k.mp4' },
+    ], 96 * 1024 ** 2),
+    {
+      label: '2K (67.84 MB)',
+      href: 'https://cdn.example.com/2k.mp4',
+      index: 2,
+      sizeBytes: Math.round(67.84 * 1024 ** 2),
+    },
+  );
+  assert.strictEqual(selectMediaPreviewOption([
+    { label: 'Original (1.05 GB)', href: 'https://cdn.example.com/original.mp4' },
+  ], 96 * 1024 ** 2), null);
+  assert.strictEqual(selectMediaPreviewOption([
+    { label: 'Original', href: 'https://cdn.example.com/original.mp4' },
+    { label: 'Video', href: 'https://cdn.example.com/video.mp4' },
+  ], 96 * 1024 ** 2).index, 1);
 
   const parseScript = buildPortalScript({ mode: 'video-parse', phase: 'result', timeoutMs: 45000 }, scoreMediaDownloadQualityLabel);
   assert(parseScript.includes("mode === 'video-parse'"));
@@ -70,6 +95,7 @@ function run() {
   assert(parseScript.includes('window.alert = () => undefined'));
   assert(parseScript.includes("reason: 'human-verification'"));
   assert(parseScript.includes('attemptVideoResult'));
+  assert(parseScript.includes('actionLabel'));
   assert(parseScript.includes('previewUrl'));
   assert(parseScript.includes('mismatchedPlatformLink'));
   assert(parseScript.includes('hasResultEvidence'));

@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const { resolveAzureSigningConfig } = require('./azure-signing-config');
 
 const projectDir = path.resolve(__dirname, '..');
 const targets = process.argv.slice(2).filter(Boolean);
@@ -8,6 +9,7 @@ const requestedTargets = targets.length ? targets : ['portable', 'nsis'];
 const builderTargets = requestedTargets.includes('nsis')
   ? [...new Set(['portable', ...requestedTargets])]
   : requestedTargets;
+const azureSigning = resolveAzureSigningConfig(process.env);
 const nativeHelpers = [
   {
     source: path.join(projectDir, 'src', 'native', 'XuanNianClipboardHelper.cs'),
@@ -120,6 +122,7 @@ try {
     '--publish',
     'never',
     ...electronDistArg,
+    ...azureSigning.args,
     ...(outputDir ? [`--config.directories.output=${outputDir}`] : []),
   ], { shell: true });
 } finally {

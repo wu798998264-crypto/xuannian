@@ -85,7 +85,7 @@ body.dark .media-tab.active{background:#3d3e42;box-shadow:none}
 .media-video-actions .black-btn,.media-video-actions .ghost-btn{position:relative;z-index:31;height:40px;min-width:112px;box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;padding:0 18px;pointer-events:auto;touch-action:manipulation;-webkit-app-region:no-drag;cursor:pointer}
 .media-video-actions .black-btn>*,.media-video-actions .ghost-btn>*{pointer-events:none}
 .media-search-command{height:42px;white-space:nowrap}
-.media-music-results{height:100%;min-height:0;overflow:auto;padding:34px 2px 2px;scrollbar-gutter:stable}
+.media-music-results{height:100%;min-height:0;overflow:auto;padding:2px;scrollbar-gutter:stable}
 .media-music-result{min-height:64px;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--line)}
 .media-music-result:hover{background:var(--panel-soft)}
 .media-music-result-main{min-width:0;display:flex;flex-direction:column;gap:4px}

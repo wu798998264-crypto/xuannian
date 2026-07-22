@@ -45,6 +45,7 @@ const {
   isHttpUrl,
   isMediaUrl,
   mediaPortalLoadFailureAction,
+  selectMediaPreviewOption,
   shouldExtendMediaPortalVideoResultWait,
   shouldRetryMediaPortalVideoAutomation,
 } = require('./media-portal-automation');
@@ -212,7 +213,10 @@ const MEDIA_PORTAL_VIDEO_WAKE_REPEAT_MS = 12000;
 const MEDIA_PORTAL_VIDEO_WAKE_VISIBLE_MS = 180;
 const MEDIA_PREVIEW_CACHE_DIRECTORY = 'media-preview-cache';
 const MEDIA_PREVIEW_MAX_AGE_MS = 24 * 60 * 60 * 1000;
-const MEDIA_PREVIEW_DOWNLOAD_TIMEOUT_MS = 8 * 60 * 1000;
+const MEDIA_PREVIEW_MAX_BYTES = 96 * 1024 * 1024;
+const MEDIA_PREVIEW_DOWNLOAD_TIMEOUT_MS = 2 * 60 * 1000;
+const MEDIA_PORTAL_VIDEO_RESULT_TIMEOUT_MS = 30 * 1000;
+const MEDIA_PORTAL_VIDEO_EXTENDED_RESULT_TIMEOUT_MS = 40 * 1000;
 const MEDIA_DOWNLOAD_HISTORY_FILE = 'xuannian-media-download-history.json';
 const MEDIA_EXTERNAL_AUDIO_TIMEOUT_MS = 15 * 60 * 1000;
 const STARTUP_MIGRATION_STATE_FILE = 'xuannian-migration-state.json';
@@ -2993,12 +2997,20 @@ function removePartialMediaFile(filePath, attempts = 5) {
   remove(Math.max(0, Number(attempts) || 0));
 }
 
+function mediaPreviewLimitError(maxBytes, actualBytes = 0) {
+  const error = new Error(`media preview exceeds ${Math.max(0, Number(maxBytes || 0))} bytes`);
+  error.code = 'MEDIA_PREVIEW_TOO_LARGE';
+  error.actualBytes = Math.max(0, Number(actualBytes || 0));
+  return error;
+}
+
 function streamNodeMediaPortalUrlToFile(url, destination, options = {}, redirects = 0) {
   return new Promise((resolve, reject) => {
     const value = String(url || '');
     const client = /^https:/i.test(value) ? https : http;
     const temporary = `${destination}.nodepart-${process.pid}-${Math.random().toString(16).slice(2, 8)}`;
     const control = options.control || null;
+    const maxBytes = Math.max(0, Number(options.maxBytes || 0));
     let output = null;
     let request = null;
     let responseStream = null;
@@ -3061,6 +3073,11 @@ function streamNodeMediaPortalUrlToFile(url, destination, options = {}, redirect
         return;
       }
       const totalBytes = Math.max(0, Number(response.headers['content-length'] || 0));
+      if (maxBytes && totalBytes > maxBytes) {
+        response.resume();
+        finish(mediaPreviewLimitError(maxBytes, totalBytes));
+        return;
+      }
       let receivedBytes = 0;
       options.onStarted?.({ contentType, kind, resolvedUrl: value, totalBytes });
       if (control) {
@@ -3085,10 +3102,24 @@ function streamNodeMediaPortalUrlToFile(url, destination, options = {}, redirect
       }
       response.on('data', (chunk) => {
         receivedBytes += chunk.length;
+        if (maxBytes && receivedBytes > maxBytes) {
+          const error = mediaPreviewLimitError(maxBytes, receivedBytes);
+          try { response.destroy(error); } catch {}
+          try { request.destroy(error); } catch {}
+          finish(error);
+          return;
+        }
+        if (!output.write(chunk)) response.pause();
         options.onProgress?.({ receivedBytes, totalBytes });
+      });
+      response.once('end', () => {
+        if (!settled) output.end();
       });
       response.once('aborted', () => finish(new Error('media response aborted')));
       response.once('error', finish);
+      output.on('drain', () => {
+        if (!settled && !control?.paused) response.resume();
+      });
       output.once('error', (error) => {
         response.destroy();
         finish(error);
@@ -3113,7 +3144,6 @@ function streamNodeMediaPortalUrlToFile(url, destination, options = {}, redirect
           finish(error);
         }
       });
-      response.pipe(output);
       if (control?.paused) response.pause();
     });
     request.setTimeout(30000);
@@ -3136,6 +3166,7 @@ async function streamMediaPortalUrlToFile(webContents, url, destination, options
   const temporary = `${destination}.part-${process.pid}-${Math.random().toString(16).slice(2, 8)}`;
   const controller = new AbortController();
   const control = options.control || null;
+  const maxBytes = Math.max(0, Number(options.maxBytes || 0));
   const timeout = control ? null : setTimeout(() => controller.abort(), Math.max(30000, Number(options.timeoutMs || MEDIA_PREVIEW_DOWNLOAD_TIMEOUT_MS)));
   const detachAbort = control?.attachAbort(() => controller.abort()) || null;
   let responseTimeout = null;
@@ -3178,6 +3209,7 @@ async function streamMediaPortalUrlToFile(webContents, url, destination, options
     output = fs.createWriteStream(temporary, { flags: 'wx' });
     reader = response.body.getReader();
     const totalBytes = Math.max(0, Number(response.headers.get('content-length') || 0));
+    if (maxBytes && totalBytes > maxBytes) throw mediaPreviewLimitError(maxBytes, totalBytes);
     let receivedBytes = 0;
     options.onStarted?.({ contentType, kind, resolvedUrl, totalBytes });
     while (true) {
@@ -3186,6 +3218,9 @@ async function streamMediaPortalUrlToFile(webContents, url, destination, options
       if (chunk.done) break;
       await control?.waitIfPaused();
       const buffer = Buffer.from(chunk.value);
+      if (maxBytes && receivedBytes + buffer.length > maxBytes) {
+        throw mediaPreviewLimitError(maxBytes, receivedBytes + buffer.length);
+      }
       await new Promise((resolve, reject) => output.write(buffer, (error) => error ? reject(error) : resolve()));
       receivedBytes += buffer.length;
       options.onProgress?.({ receivedBytes, totalBytes });
@@ -3205,6 +3240,7 @@ async function streamMediaPortalUrlToFile(webContents, url, destination, options
       cancelled.code = 'MEDIA_DOWNLOAD_CANCELLED';
       throw cancelled;
     }
+    if (error?.code === 'MEDIA_PREVIEW_TOO_LARGE') throw error;
     runtimeLog(`Electron media stream failed, retrying with Node HTTP: ${error?.message || error}`);
     return streamNodeMediaPortalUrlToFile(url, destination, { ...options, referer, userAgent });
   } finally {
@@ -3225,6 +3261,8 @@ async function startDirectMediaPortalPreview(webContents, url, referer) {
     destination = mediaPreviewCachePath(captureState.sourceUrl, extension);
     const result = await streamMediaPortalUrlToFile(webContents, url, destination, {
       referer,
+      control: captureState.control,
+      maxBytes: MEDIA_PREVIEW_MAX_BYTES,
       onStarted: ({ totalBytes }) => {
         started = true;
         runtimeLog(`direct media preview response started bytes=${totalBytes || 0}`);
@@ -3252,8 +3290,8 @@ async function startDirectMediaPortalPreview(webContents, url, referer) {
     return { ok: true, started: true };
   } catch (error) {
     runtimeLog(`direct media preview failed started=${started}: ${error?.message || error}`);
-    if (started && mediaPortalPreviewCapture === captureState) clearMediaPortalPreviewCapture(null);
-    return { ok: false, started };
+    if (mediaPortalPreviewCapture === captureState) clearMediaPortalPreviewCapture(null);
+    return { ok: false, started: started || error?.code === 'MEDIA_PREVIEW_TOO_LARGE' };
   }
 }
 
@@ -3428,6 +3466,13 @@ function configureMediaDownloadSession(electronSession) {
         ? path.extname(filename)
         : (urlKind === 'video' ? mediaExtensionForDownloadUrl(item.getURL()) : '.mp4');
       const destination = mediaPreviewCachePath(captureState.sourceUrl, extension);
+      const initialBytes = Math.max(0, Number(item.getTotalBytes() || 0));
+      if (initialBytes > MEDIA_PREVIEW_MAX_BYTES) {
+        event.preventDefault();
+        runtimeLog(`media preview download skipped bytes=${initialBytes} limit=${MEDIA_PREVIEW_MAX_BYTES}`);
+        clearMediaPortalPreviewCapture(null);
+        return;
+      }
       try {
         fs.mkdirSync(path.dirname(destination), { recursive: true });
         if (fs.existsSync(destination)) fs.unlinkSync(destination);
@@ -3442,6 +3487,11 @@ function configureMediaDownloadSession(electronSession) {
       const updatePreviewProgress = () => {
         const receivedBytes = Math.max(0, Number(item.getReceivedBytes() || 0));
         const totalBytes = Math.max(0, Number(item.getTotalBytes() || 0));
+        if (receivedBytes > MEDIA_PREVIEW_MAX_BYTES || totalBytes > MEDIA_PREVIEW_MAX_BYTES) {
+          runtimeLog(`media preview download cancelled bytes=${Math.max(receivedBytes, totalBytes)} limit=${MEDIA_PREVIEW_MAX_BYTES}`);
+          clearMediaPortalPreviewCapture(null);
+          return;
+        }
         const filePercent = totalBytes > 0 ? Math.max(0, Math.min(100, Math.round((receivedBytes / totalBytes) * 100))) : 0;
         captureState.state.previewDownloadPercent = filePercent;
         emitMediaPortalProgress(captureState.state, {
@@ -4012,6 +4062,7 @@ function clearMediaPortalPreviewCapture(result = null) {
   mediaPortalPreviewCapture = null;
   if (!capture) return;
   clearTimeout(capture.timeout);
+  if (!result) capture.control?.cancel?.();
   if (!result && capture.item && !capture.item.isDestroyed?.()) {
     try { capture.item.cancel(); } catch {}
   }
@@ -4042,15 +4093,14 @@ async function prepareMediaPortalVideoPreview(state, parsed) {
       sourceUrl: state.value,
       state,
       item: null,
+      control: createMediaDownloadControl(),
       resolve,
       timeout: setTimeout(() => clearMediaPortalPreviewCapture(null), MEDIA_PREVIEW_DOWNLOAD_TIMEOUT_MS),
     };
   });
   try {
-    const directPreviewOption = Array.isArray(parsed.qualityOptions)
-      ? [...parsed.qualityOptions].reverse().find((option) => isMediaUrl(option?.href))
-      : null;
-    if (directPreviewOption?.href) {
+    const directPreviewOption = selectMediaPreviewOption(parsed.qualityOptions, MEDIA_PREVIEW_MAX_BYTES);
+    if (isMediaUrl(directPreviewOption?.href)) {
       startCapturedMediaPortalDownload(view.webContents, directPreviewOption.href);
       const captured = await capturedDownload;
       if (captured) captured.label = String(directPreviewOption.label || parsed.qualityLabel || '临时预览');
@@ -4067,7 +4117,14 @@ async function prepareMediaPortalVideoPreview(state, parsed) {
       if (captured) captured.label = String(parsed.qualityLabel || '临时预览');
       return captured;
     }
-    const candidateIndex = Math.max(0, Number(parsed.candidateCount || 1) - 1);
+    if (!directPreviewOption && Array.isArray(parsed.qualityOptions) && parsed.qualityOptions.length) {
+      runtimeLog(`media preview skipped because all known qualities exceed ${MEDIA_PREVIEW_MAX_BYTES} bytes`);
+      clearMediaPortalPreviewCapture();
+      return null;
+    }
+    const candidateIndex = Number.isInteger(directPreviewOption?.index)
+      ? directPreviewOption.index
+      : Math.max(0, Number(parsed.candidateCount || 1) - 1);
     expectMediaPortalPopupDownload(view.webContents, 20000);
     const result = await view.webContents.executeJavaScript(buildPortalScript({
       mode: 'video-download',
@@ -4507,7 +4564,9 @@ function scheduleMediaPortalInput() {
       phase: state.phase || '',
       value: state.value || '',
       timeoutMs: state.automationMode === 'video-parse' && state.phase === 'result'
-        ? (Number(state.videoResultWaitCount || 0) > 0 ? 75000 : 60000)
+        ? (Number(state.videoResultWaitCount || 0) > 0
+          ? MEDIA_PORTAL_VIDEO_EXTENDED_RESULT_TIMEOUT_MS
+          : MEDIA_PORTAL_VIDEO_RESULT_TIMEOUT_MS)
         : (state.automationMode === 'music-download' ? 55000 : (state.automationMode === 'music-search' && state.visibilityRetryCount ? 15000 : 30000)),
     }, scoreMediaDownloadQualityLabel);
     try {
@@ -4515,7 +4574,15 @@ function scheduleMediaPortalInput() {
       if (!isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId)) return;
       if (result?.continueAutomation) {
         state.phase = String(result.nextPhase || 'result');
-        runtimeLog(`media portal automation stage request=${state.requestId} mode=${state.automationMode} phase=${state.phase}`);
+        const actionLabel = String(result.actionLabel || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+        runtimeLog(`media portal automation submitted request=${state.requestId} mode=${state.automationMode} phase=${state.phase} action=${actionLabel || '-'}`);
+        if (state.automationMode === 'video-parse' && state.phase === 'result') {
+          emitMediaPortalProgress(state, {
+            percent: 62,
+            message: '后台搜索已提交，正在等待下载站返回结果',
+            reason: '',
+          });
+        }
         notifyMediaBrowserState({ opening: true, automationStage: state.phase });
         state.automationRerunRequested = true;
         return;
