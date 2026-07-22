@@ -950,6 +950,36 @@ async function run() {
   assert.strictEqual(noteCategoryMetrics.created, '新增分类');
   assert.strictEqual(noteCategoryMetrics.movedProjectId, 'category-a');
   assert.strictEqual(noteCategoryMetrics.activeProject, 'category-new');
+  const noteSidebarResizeMetrics = await window.webContents.executeJavaScript(`
+    (async()=>{
+      await switchView('notes',{skipCoach:true});
+      const layout=document.querySelector('#noteLayout');
+      const handle=document.querySelector('#noteSidebarResizeHandle');
+      const previousStored=localStorage.getItem(NOTE_SIDEBAR_WIDTH_KEY);
+      const initialized=Number(handle.getAttribute('aria-valuenow'));
+      const initial=applyNoteSidebarWidth(236);
+      const bounds=noteSidebarWidthBounds(layout);
+      const target=Math.min(bounds.max,initial+48);
+      const rect=layout.getBoundingClientRect();
+      handle.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true,button:0,pointerId:81,clientX:rect.left+initial}));
+      handle.dispatchEvent(new PointerEvent('pointermove',{bubbles:true,cancelable:true,button:0,pointerId:81,clientX:rect.left+target}));
+      handle.dispatchEvent(new PointerEvent('pointerup',{bubbles:true,cancelable:true,button:0,pointerId:81,clientX:rect.left+target}));
+      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+      const dragged=Number(handle.getAttribute('aria-valuenow'));
+      const stored=Number(localStorage.getItem(NOTE_SIDEBAR_WIDTH_KEY));
+      const metrics={initialized,initial,target,dragged,stored,role:handle.getAttribute('role'),cursor:getComputedStyle(handle).cursor};
+      if(previousStored===null) localStorage.removeItem(NOTE_SIDEBAR_WIDTH_KEY);
+      else localStorage.setItem(NOTE_SIDEBAR_WIDTH_KEY,previousStored);
+      applyNoteSidebarWidth(previousStored===null?236:Number(previousStored));
+      return metrics;
+    })()
+  `, true);
+  console.log(`note sidebar resize metrics ${JSON.stringify(noteSidebarResizeMetrics)}`);
+  assert.strictEqual(noteSidebarResizeMetrics.initialized, 236);
+  assert.strictEqual(noteSidebarResizeMetrics.dragged, noteSidebarResizeMetrics.target);
+  assert.strictEqual(noteSidebarResizeMetrics.stored, noteSidebarResizeMetrics.target);
+  assert.strictEqual(noteSidebarResizeMetrics.role, 'separator');
+  assert.strictEqual(noteSidebarResizeMetrics.cursor, 'col-resize');
   const mediaLibraryMetrics = await window.webContents.executeJavaScript(`
     (async()=>{
       const openedPortals=[];
@@ -973,6 +1003,7 @@ async function run() {
       const createdMediaCollections=[];
       const browserBoundsRequests=[];
       const resetMediaPortals=[];
+      let bilibiliSessionChecks=0;
       const localPlaybackRequests=[];
       let verificationResumeCalls=0;
       const nativeMediaBridgeAvailableBeforeStub=typeof api.downloadParsedMediaVideo==='function'&&typeof api.downloadMediaMusicResult==='function'&&typeof api.openHighQualityMusic==='function';
@@ -983,6 +1014,7 @@ async function run() {
       api.resolveMediaVideoProvider=async value=>resolveMediaVideoProviderFallback(value);
       api.openMediaPortal=async(url,target,sourceText,autoSubmit,collection,qualityPreference,automationMode)=>{ openedPortals.push(url); portalTargets.push(target); portalInputs.push({sourceText,autoSubmit,collection,qualityPreference,automationMode}); return true; };
       api.resetMediaPortal=async kind=>{ resetMediaPortals.push(kind); return {ok:true,requestId:900+resetMediaPortals.length}; };
+      api.getBilibiliSessionStatus=async()=>{ bilibiliSessionChecks+=1; return {authenticated:true,sessionFingerprint:'runtime-member'}; };
       api.getMediaMusicSearchUrl=async keyword=>'https://www.gequbao.com/s/'+encodeURIComponent(keyword);
       api.downloadParsedMediaVideo=async(target,collection,qualityIndex)=>{ downloadedVideos.push({target,collection}); downloadedVideoQualities.push(qualityIndex); return {ok:true}; };
       api.resumeMediaPortalAfterVerification=async()=>{ verificationResumeCalls+=1; return {ok:true}; };
@@ -1358,11 +1390,34 @@ async function run() {
         musicResults:state.media.musicSearch.results.length,
         resetKinds:[...resetMediaPortals],
       };
+      const autoLoginPortalStart=openedPortals.length;
+      const autoLoginTargetStart=portalTargets.length;
+      const autoLoginInputStart=portalInputs.length;
+      setMediaKind('video');
+      setMediaTab('portal');
+      videoInput.value='https://www.bilibili.com/video/BV1autologin';
+      const autoLoginProvider=resolveMediaVideoProviderFallback(videoInput.value);
+      state.media.videoProvider=autoLoginProvider;
+      state.media.videoParse={status:'error',requestId:31,sourceUrl:autoLoginProvider.sourceUrl,previewUrl:'',embeddedPreview:false,title:'',qualityLabel:'',qualityOptions:[],selectedQualityIndex:0,downloadReady:false,error:'bilibili-login-required',portalIndex:0,portalUrl:autoLoginProvider.portalUrl};
+      state.media.manualPortal={available:true,kind:'video',url:autoLoginProvider.sourceUrl,reason:'bilibili-login-required',prompting:false};
+      state.media.browserVisible=true;
+      startBilibiliLoginMonitor(autoLoginProvider.sourceUrl,0);
+      await new Promise(resolve=>setTimeout(resolve,650));
+      const bilibiliAutoReturn={
+        checks:bilibiliSessionChecks,
+        browserVisible:state.media.browserVisible,
+        parseStatus:state.media.videoParse.status,
+        manualAvailable:state.media.manualPortal.available,
+        retryPortalCount:openedPortals.length-autoLoginPortalStart,
+      };
+      openedPortals.length=autoLoginPortalStart;
+      portalTargets.length=autoLoginTargetStart;
+      portalInputs.length=autoLoginInputStart;
       return {
         openedPortals,portalTargets,portalInputs,externalUrls,copiedText,copiedFiles,draggedFiles,contextMenus,favoriteCollections,movedFavorites,deletedFavorites,
         downloadedVideos,downloadedVideoQualities,downloadedSongs,previewedSongs,highQualityRequests,openedDownloadHistory,downloadHistoryContextMenus,deletedDownloadHistory,cancelledDownloadTasks,pausedDownloadTasks,createdMediaCollections,localPlaybackRequests,nativeMediaBridgeAvailableBeforeStub,videoUi,videoProgressUi,favoritePreviewModal,videoButtonHitTargets,pickerCreateVisible,createdCollectionChoice,musicUi,backgroundPortal,browserTogglePersistence,downloadedMusicControls,manualPortalInitiallyVisible,
         providerRouting:{douyinProvider,tiktokProvider,dailyFallback,failureClassification},
-        verificationFlow,musicDownloadStates,pausedTask,interruptedTask,mediaInputClear,
+        verificationFlow,musicDownloadStates,pausedTask,interruptedTask,mediaInputClear,bilibiliAutoReturn,
         activeView:document.querySelector('.view.active')?.id||'',
         activeNav:document.querySelector('.nav-btn.active')?.dataset.view||'',
         rows:document.querySelectorAll('#mediaDownloadsList [data-media-row]').length,
@@ -1416,6 +1471,13 @@ async function run() {
     musicStatus:'idle',
     musicResults:0,
     resetKinds:['video','audio'],
+  });
+  assert.deepStrictEqual(mediaLibraryMetrics.bilibiliAutoReturn, {
+    checks:1,
+    browserVisible:false,
+    parseStatus:'parsing',
+    manualAvailable:false,
+    retryPortalCount:1,
   });
   assert.deepStrictEqual(mediaLibraryMetrics.previewedSongs, ['https://www.gequbao.com/music/102','https://www.gequbao.com/music/101']);
   assert.deepStrictEqual(mediaLibraryMetrics.backgroundPortal, {browserHidden:true,directVisible:true});

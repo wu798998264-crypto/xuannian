@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>玄念8.3.2</title>
+  <title>玄念8.3.3</title>
   <link rel="icon" href="src/xuannian-logo-256.png" />
   <link rel="stylesheet" href="src/media-library.css" />
   <style>
@@ -184,6 +184,13 @@
     .categorized-view .note-sidebar{border:0;border-right:1px solid var(--line);border-radius:0;background:var(--category)}
     .categorized-view .note-sidebar-inner{padding:24px 10px 12px}
     .categorized-view .note-main{padding:24px 18px 14px;background:var(--work);-webkit-app-region:no-drag}
+    #noteLayout{position:relative;--note-sidebar-width:236px;grid-template-columns:var(--note-sidebar-width) minmax(0,1fr)}
+    .note-sidebar-resizer{position:absolute;z-index:8;left:calc(var(--note-sidebar-width) - 5px);top:0;bottom:0;width:10px;cursor:col-resize;touch-action:none;user-select:none;-webkit-app-region:no-drag}
+    .note-sidebar-resizer:focus{outline:none}
+    .note-sidebar-resizer::after{content:"";position:absolute;left:4px;top:0;bottom:0;width:1px;background:var(--line);transition:background .12s ease,width .12s ease}
+    .note-sidebar-resizer:hover::after,.note-sidebar-resizer:focus-visible::after,#noteLayout.sidebar-resizing .note-sidebar-resizer::after{width:2px;background:var(--muted)}
+    #noteLayout.editing .note-sidebar-resizer{display:none}
+    body.resizing-note-sidebar,body.resizing-note-sidebar *{cursor:col-resize!important;user-select:none!important}
     .header{padding:0 4px 8px;-webkit-app-region:no-drag}
     .note-main > .header,.note-sidebar::before{ -webkit-app-region:no-drag }
     .header h1{margin:0;font-size:28px;line-height:1;letter-spacing:0}
@@ -1018,6 +1025,7 @@
             <div class="project-list" id="noteProjectList"></div>
           </div>
         </aside>
+        <div class="note-sidebar-resizer" id="noteSidebarResizeHandle" role="separator" aria-label="调整收藏分类栏宽度" aria-orientation="vertical" aria-valuemin="160" aria-valuemax="420" aria-valuenow="236" tabindex="0" title="左右拖拽调整分类栏宽度"></div>
         <div class="note-main">
           <div class="header">
             <h1>收藏</h1>
@@ -1463,6 +1471,9 @@ const state = {
     browser:{ready:false,loading:false,url:'',title:'',canGoBack:false,canGoForward:false},
     browserVisible:false,
     manualPortal:{available:false,kind:'video',url:'',reason:'',prompting:false},
+    bilibiliLoginMonitorTimer:null,
+    bilibiliLoginMonitorToken:0,
+    bilibiliLoginSourceUrl:'',
     pendingVideoDownload:null,
     browserBoundsFrame:null,
     downloadTasks:[],
@@ -1750,6 +1761,7 @@ function createBrowserFallbackAPI(){
     async getLocalMediaPlaybackUrl(filePath){ return String(filePath||''); },
     async openMediaPortal(url){ return this.openExternal(url); },
     async resetMediaPortal(){ return {ok:true,requestId:Date.now()}; },
+    async getBilibiliSessionStatus(){ return {authenticated:false,sessionFingerprint:''}; },
     async downloadParsedMediaVideo(){ return {ok:false,reason:'预览环境不支持媒体下载'}; },
     async resumeMediaPortalAfterVerification(){ return {ok:false}; },
     async downloadMediaMusicResult(){ return false; },
@@ -1880,6 +1892,7 @@ function createUnifiedAPI(nativeApi, fallback){
     setMediaDownloadTaskPaused: (taskId,paused=true)=> nativeApi.setMediaDownloadTaskPaused ? nativeApi.setMediaDownloadTaskPaused(taskId,paused) : fallback.setMediaDownloadTaskPaused(taskId,paused),
     openMediaPortal: (url,downloadTarget,sourceText,autoSubmit,collection,qualityPreference,automationMode)=> nativeApi.openMediaPortal ? nativeApi.openMediaPortal(url,downloadTarget,sourceText,autoSubmit,collection,qualityPreference,automationMode) : fallback.openMediaPortal(url,downloadTarget,sourceText,autoSubmit,collection,qualityPreference,automationMode),
     resetMediaPortal: (kind)=> nativeApi.resetMediaPortal ? nativeApi.resetMediaPortal(kind) : fallback.resetMediaPortal(kind),
+    getBilibiliSessionStatus: ()=> nativeApi.getBilibiliSessionStatus ? nativeApi.getBilibiliSessionStatus() : fallback.getBilibiliSessionStatus(),
     downloadParsedMediaVideo: (downloadTarget,collection,qualityIndex=0)=> nativeApi.downloadParsedMediaVideo ? nativeApi.downloadParsedMediaVideo(downloadTarget,collection,qualityIndex) : Promise.resolve({ok:false,reason:'当前环境不支持媒体下载'}),
     resumeMediaPortalAfterVerification: ()=> nativeApi.resumeMediaPortalAfterVerification ? nativeApi.resumeMediaPortalAfterVerification() : fallback.resumeMediaPortalAfterVerification(),
     downloadMediaMusicResult: (url,downloadTarget,collection,preferredName)=> nativeApi.downloadMediaMusicResult ? nativeApi.downloadMediaMusicResult(url,downloadTarget,collection,preferredName) : Promise.resolve(false),
@@ -1975,6 +1988,7 @@ async function init(){
   $$('.shot-icon').forEach(el=>{ el.innerHTML=iconSvg('scissors'); });
   bindEvents();
   bindWindowResizeHandles();
+  bindNoteSidebarResize();
   bindMediaBrowserSurface();
   renderMediaDownloadBubble();
   window.nativeAPI?.onUpdateState?.((nextState)=>{
@@ -2854,6 +2868,91 @@ function bindWindowResizeHandles(){
     handle.addEventListener('pointerup', endResize);
     handle.addEventListener('pointercancel', endResize);
   });
+}
+
+const NOTE_SIDEBAR_WIDTH_KEY='xuannian-note-sidebar-width-v1';
+
+function noteSidebarWidthBounds(layout=$('#noteLayout')){
+  const measuredWidth=Math.max(0,Number(layout?.getBoundingClientRect?.().width||layout?.clientWidth||0));
+  const layoutWidth=measuredWidth||Math.max(0,window.innerWidth-62);
+  const min=window.innerWidth<=760?160:200;
+  const max=Math.max(min,Math.min(420,Math.floor(layoutWidth*0.48),Math.floor(layoutWidth-300)));
+  return {min,max};
+}
+
+function applyNoteSidebarWidth(value,{persist=false}={}){
+  const layout=$('#noteLayout');
+  const handle=$('#noteSidebarResizeHandle');
+  if(!layout) return 0;
+  const {min,max}=noteSidebarWidthBounds(layout);
+  const width=Math.round(Math.max(min,Math.min(max,Number(value)||236)));
+  layout.style.setProperty('--note-sidebar-width',`${width}px`);
+  if(handle){
+    handle.setAttribute('aria-valuemin',String(min));
+    handle.setAttribute('aria-valuemax',String(max));
+    handle.setAttribute('aria-valuenow',String(width));
+  }
+  if(persist){
+    try{ localStorage.setItem(NOTE_SIDEBAR_WIDTH_KEY,String(width)); }catch{}
+  }
+  return width;
+}
+
+function bindNoteSidebarResize(){
+  const layout=$('#noteLayout');
+  const handle=$('#noteSidebarResizeHandle');
+  if(!layout||!handle||handle.dataset.resizeBound) return;
+  handle.dataset.resizeBound='1';
+  let savedWidth=236;
+  try{ savedWidth=Number(localStorage.getItem(NOTE_SIDEBAR_WIDTH_KEY)||236); }catch{}
+  let preferredWidth=savedWidth;
+  applyNoteSidebarWidth(savedWidth);
+  let pointerId=null;
+  let pendingWidth=0;
+  let frame=0;
+  const flush=()=>{
+    frame=0;
+    if(pointerId===null||!pendingWidth) return;
+    applyNoteSidebarWidth(pendingWidth);
+  };
+  const queue=event=>{
+    pendingWidth=event.clientX-layout.getBoundingClientRect().left;
+    if(!frame) frame=requestAnimationFrame(flush);
+  };
+  const finish=event=>{
+    if(pointerId===null||(event&&event.pointerId!==pointerId)) return;
+    if(frame){ cancelAnimationFrame(frame); frame=0; }
+    if(pendingWidth) preferredWidth=applyNoteSidebarWidth(pendingWidth,{persist:true});
+    try{ handle.releasePointerCapture(pointerId); }catch{}
+    pointerId=null;
+    pendingWidth=0;
+    layout.classList.remove('sidebar-resizing');
+    document.body.classList.remove('resizing-note-sidebar');
+  };
+  handle.addEventListener('pointerdown',event=>{
+    if(event.button!==0||pointerId!==null) return;
+    event.preventDefault();
+    pointerId=event.pointerId;
+    pendingWidth=0;
+    layout.classList.add('sidebar-resizing');
+    document.body.classList.add('resizing-note-sidebar');
+    try{ handle.setPointerCapture(pointerId); }catch{}
+    queue(event);
+  });
+  handle.addEventListener('pointermove',event=>{
+    if(event.pointerId!==pointerId) return;
+    queue(event);
+  });
+  handle.addEventListener('pointerup',finish);
+  handle.addEventListener('pointercancel',finish);
+  handle.addEventListener('keydown',event=>{
+    if(!['ArrowLeft','ArrowRight','Home'].includes(event.key)) return;
+    event.preventDefault();
+    const current=Number(handle.getAttribute('aria-valuenow')||236);
+    preferredWidth=applyNoteSidebarWidth(event.key==='Home'?236:current+(event.key==='ArrowLeft'?-12:12),{persist:true});
+  });
+  handle.addEventListener('dblclick',()=>{ preferredWidth=applyNoteSidebarWidth(236,{persist:true}); });
+  window.addEventListener('resize',()=>applyNoteSidebarWidth(preferredWidth),{passive:true});
 }
 
 function bindTopTextareaResize(handle, textarea, boundsElement, options={}){
@@ -3833,9 +3932,58 @@ async function toggleMediaManualPortal(kind=state.media.kind,{forceOpen=false}={
   renderMediaBrowserState();
 }
 
+function stopBilibiliLoginMonitor(){
+  clearTimeout(state.media.bilibiliLoginMonitorTimer);
+  state.media.bilibiliLoginMonitorTimer=null;
+  state.media.bilibiliLoginMonitorToken=Number(state.media.bilibiliLoginMonitorToken||0)+1;
+  state.media.bilibiliLoginSourceUrl='';
+}
+
+function startBilibiliLoginMonitor(sourceUrl='',portalIndex=0,{requireSessionChange=false}={}){
+  stopBilibiliLoginMonitor();
+  const source=String(sourceUrl||'').trim();
+  if(!source) return;
+  const token=Number(state.media.bilibiliLoginMonitorToken||0)+1;
+  state.media.bilibiliLoginMonitorToken=token;
+  state.media.bilibiliLoginSourceUrl=source;
+  const deadline=Date.now()+10*60*1000;
+  let initialSessionCaptured=false;
+  let initialFingerprint='';
+  let observedSignedOut=false;
+  const poll=async()=>{
+    if(token!==state.media.bilibiliLoginMonitorToken||state.media.bilibiliLoginSourceUrl!==source) return;
+    const current=resolveMediaVideoProviderFallback($('#mediaVideoInput')?.value||'');
+    if(current?.sourceUrl!==source){ stopBilibiliLoginMonitor(); return; }
+    let status={authenticated:false,sessionFingerprint:''};
+    try{ status=await api.getBilibiliSessionStatus(); }catch{}
+    if(token!==state.media.bilibiliLoginMonitorToken) return;
+    const authenticated=!!status?.authenticated;
+    const fingerprint=String(status?.sessionFingerprint||'');
+    if(!initialSessionCaptured){
+      initialSessionCaptured=true;
+      initialFingerprint=fingerprint;
+    }
+    if(!authenticated) observedSignedOut=true;
+    const sessionChanged=!requireSessionChange||observedSignedOut||!initialFingerprint||fingerprint!==initialFingerprint;
+    if(authenticated&&sessionChanged){
+      stopBilibiliLoginMonitor();
+      state.media.browserVisible=false;
+      clearMediaManualPortal('video');
+      api.setMediaBrowserBounds({},false,'browser');
+      toast('哔哩哔哩登录成功，已自动返回并重新解析');
+      await parseMediaVideo(Number(portalIndex||0),{force:true});
+      return;
+    }
+    if(Date.now()>=deadline){ stopBilibiliLoginMonitor(); return; }
+    state.media.bilibiliLoginMonitorTimer=setTimeout(poll,900);
+  };
+  state.media.bilibiliLoginMonitorTimer=setTimeout(poll,350);
+}
+
 async function offerMediaManualPortal(kind='video',reason='automation-error',url=''){
   const current=state.media.manualPortal||{};
   const bilibiliLogin=kind==='video'&&['bilibili-login-required','bilibili-access-preview-only'].includes(String(reason||''));
+  const bilibiliLoginRequired=reason==='bilibili-login-required';
   const targetUrl=bilibiliLogin
     ?String(state.media.videoParse.sourceUrl||state.media.videoProvider?.sourceUrl||url||'')
     :(kind==='video'?MEDIA_VIDEO_PRIMARY_PORTAL:String(url||state.media.browser.url||''));
@@ -3850,13 +3998,16 @@ async function offerMediaManualPortal(kind='video',reason='automation-error',url
     title:verification?'需要真人验证':(bilibiliLogin?'需要登录会员':'需要手动处理'),
     message:verification
       ?'歌曲宝首次使用可能要求真人验证。点击确认后将在玄念内打开验证页面；完成验证后会自动返回音乐结果页面。'
-      :(bilibiliLogin?`${detail}。点击确认后在玄念内重新登录哔哩哔哩会员；登录完成后收起原站页面并点击重新解析。`:`${detail}。是否在玄念内打开${site}手动完成？`),
+      :(bilibiliLogin?`${detail}。点击确认后在玄念内重新登录哔哩哔哩会员；检测到登录成功后会自动收起原站、返回操作页面并重新解析。`:`${detail}。是否在玄念内打开${site}手动完成？`),
     confirmText:verification?'去验证':(bilibiliLogin?'去登录':'打开原站'),
     cancelText:'取消',
   });
   state.media.manualPortal.prompting=false;
   if(confirmed){
     await toggleMediaManualPortal(kind,{forceOpen:true});
+    if(bilibiliLogin&&state.media.browserVisible){
+      startBilibiliLoginMonitor(targetUrl,Number(state.media.videoParse.portalIndex||0),{requireSessionChange:!bilibiliLoginRequired});
+    }
     if(verification){
       const resumed=await api.resumeMediaPortalAfterVerification();
       if(!resumed?.ok) toast('验证页面状态已失效，请重新搜索音乐');
@@ -3928,6 +4079,7 @@ async function clearMediaLaunchInput(kind='video'){
     state.media.musicPreview={status:'idle',requestId:-1,index:-1,resultUrl:'',previewUrl:'',error:''};
     state.media.musicFormatChoice=null;
   }else{
+    stopBilibiliLoginMonitor();
     clearTimeout(state.media.videoParseTimer);
     state.media.videoParseTimer=null;
     state.media.videoProvider=null;
@@ -3972,6 +4124,7 @@ function updateMediaVideoProvider({autoParse=false}={}){
 }
 
 async function parseMediaVideo(routeSelection=null,{force=false}={}){
+  stopBilibiliLoginMonitor();
   clearTimeout(state.media.videoParseTimer);
   state.media.videoParseTimer=null;
   const value=$('#mediaVideoInput')?.value||'';

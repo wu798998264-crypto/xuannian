@@ -2879,7 +2879,12 @@ async function bilibiliSessionStatus(webContents) {
       && String(cookie?.value || '')
       && (!Number(cookie?.expirationDate || 0) || Number(cookie.expirationDate) > now)
     ));
-    return { authenticated: !!sessionCookie };
+    return {
+      authenticated: !!sessionCookie,
+      sessionFingerprint: sessionCookie
+        ? crypto.createHash('sha256').update(String(sessionCookie.value || '')).digest('hex').slice(0, 16)
+        : '',
+    };
   } catch (error) {
     runtimeLog(`read Bilibili session status failed: ${error?.message || error}`);
     return { authenticated: false };
@@ -7847,6 +7852,7 @@ ipcMain.handle('media:openPortal', (_event, url, downloadTarget = 'download', so
   openMediaPortal(url, downloadTarget, sourceText, autoSubmit, collection, qualityPreference, automationMode)
 ));
 ipcMain.handle('media:resetPortal', (_event, kind = '') => resetMediaPortalAutomation(kind));
+ipcMain.handle('media:bilibiliSessionStatus', () => bilibiliSessionStatus(mediaPortalView?.webContents));
 ipcMain.handle('media:downloadParsedVideo', (_event, downloadTarget = 'download', collection = '', qualityIndex = 0) => {
   runtimeLog(`media:downloadParsedVideo invoked target=${downloadTarget === 'favorite' ? 'favorite' : 'download'} qualityIndex=${Math.max(0, Number(qualityIndex) || 0)}`);
   return downloadParsedMediaVideo(downloadTarget, collection, qualityIndex);

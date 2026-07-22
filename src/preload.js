@@ -396,6 +396,9 @@ contextBridge.exposeInMainWorld('nativeAPI', {
   async resetMediaPortal(kind = '') {
     return ipcRenderer.invoke('media:resetPortal', kind === 'audio' ? 'audio' : 'video');
   },
+  async getBilibiliSessionStatus() {
+    return ipcRenderer.invoke('media:bilibiliSessionStatus');
+  },
   async downloadParsedMediaVideo(downloadTarget = 'download', collection = '', qualityIndex = 0) {
     return ipcRenderer.invoke('media:downloadParsedVideo', downloadTarget || 'download', collection || '', Math.max(0, Number(qualityIndex) || 0));
   },
