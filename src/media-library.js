@@ -83,6 +83,7 @@ const VIDEO_PROVIDERS = [
 const PORTAL_HOSTS = new Set([
   'seekin.ai',
   'gequbao.com',
+  'bilibili.com',
 ]);
 
 function mediaKindForPath(filePath) {
@@ -189,11 +190,33 @@ function bilibiliQualityLabel(value, fallback = '') {
   return BILIBILI_QUALITY_LABELS[quality] || String(fallback || '').trim() || `清晰度 ${quality}`;
 }
 
+function bilibiliPlaybackAccess(payload = {}) {
+  const result = payload?.result || payload?.data || {};
+  const enabled = (value) => value === true || value === 1 || value === '1';
+  const downloads = Array.isArray(result.durl) ? result.durl : [];
+  const sourceDurationMs = Math.max(0, Number(result.timelength || 0));
+  const deliveredDurationMs = downloads.reduce((total, item) => (
+    total + Math.max(0, Number(item?.length || 0))
+  ), 0);
+  const explicitlyPreview = enabled(result.is_preview) || enabled(result.isPreview);
+  const clearlyTruncated = sourceDurationMs >= 90000
+    && deliveredDurationMs > 0
+    && deliveredDurationMs + 5000 < sourceDurationMs * 0.5;
+  return {
+    previewOnly: explicitlyPreview || clearlyTruncated,
+    drm: enabled(result.is_drm) || enabled(result.isDrm),
+    sourceDurationMs,
+    deliveredDurationMs,
+  };
+}
+
 function bilibiliProgressiveOptions(payloads = []) {
   const options = new Map();
   for (const payload of Array.isArray(payloads) ? payloads : []) {
     const result = payload?.result || payload?.data;
     if (!result || Number(payload?.code || 0) !== 0) continue;
+    const access = bilibiliPlaybackAccess(payload);
+    if (access.previewOnly || access.drm) continue;
     const quality = Number(result.quality || 0);
     const downloads = Array.isArray(result.durl) ? result.durl : [];
     if (!quality || downloads.length !== 1 || !/^https?:\/\//i.test(String(downloads[0]?.url || ''))) continue;
@@ -596,6 +619,7 @@ module.exports = {
   VIDEO_EXTENSIONS,
   VIDEO_PROVIDERS,
   bilibiliEpisodeId,
+  bilibiliPlaybackAccess,
   bilibiliProgressiveOptions,
   bilibiliProgressiveApiUrl,
   bilibiliQualityLabel,

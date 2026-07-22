@@ -972,6 +972,7 @@ async function run() {
       const pausedDownloadTasks=[];
       const createdMediaCollections=[];
       const browserBoundsRequests=[];
+      const resetMediaPortals=[];
       const localPlaybackRequests=[];
       let verificationResumeCalls=0;
       const nativeMediaBridgeAvailableBeforeStub=typeof api.downloadParsedMediaVideo==='function'&&typeof api.downloadMediaMusicResult==='function'&&typeof api.openHighQualityMusic==='function';
@@ -981,6 +982,7 @@ async function run() {
       const syntheticDownloads=Array.from({length:5000},(_,index)=>({path:'C:/Downloads/archive/video-'+index+'.mp4',directory:'C:/Downloads/archive',name:'video-'+index+'.mp4',kind:'video',size:4096+index,modifiedAt:index,favorite:false,location:'downloads',collection:'项目视频'}));
       api.resolveMediaVideoProvider=async value=>resolveMediaVideoProviderFallback(value);
       api.openMediaPortal=async(url,target,sourceText,autoSubmit,collection,qualityPreference,automationMode)=>{ openedPortals.push(url); portalTargets.push(target); portalInputs.push({sourceText,autoSubmit,collection,qualityPreference,automationMode}); return true; };
+      api.resetMediaPortal=async kind=>{ resetMediaPortals.push(kind); return {ok:true,requestId:900+resetMediaPortals.length}; };
       api.getMediaMusicSearchUrl=async keyword=>'https://www.gequbao.com/s/'+encodeURIComponent(keyword);
       api.downloadParsedMediaVideo=async(target,collection,qualityIndex)=>{ downloadedVideos.push({target,collection}); downloadedVideoQualities.push(qualityIndex); return {ok:true}; };
       api.resumeMediaPortalAfterVerification=async()=>{ verificationResumeCalls+=1; return {ok:true}; };
@@ -1329,11 +1331,38 @@ async function run() {
       const dailyFallback={index:dailyFallbackIndex,route:douyinRoutes[dailyFallbackIndex]||null,health:readMediaPortalHealth()};
       localStorage.removeItem(MEDIA_PORTAL_HEALTH_KEY);
       localStorage.removeItem(MEDIA_FAVORITE_ORDER_KEY);
+      setMediaKind('video');
+      setMediaTab('portal');
+      videoInput.value='https://www.bilibili.com/video/BV1clear';
+      videoInput.dispatchEvent(new Event('input',{bubbles:true}));
+      const videoClearVisibleBefore=!document.querySelector('#mediaClearVideoInput').hidden;
+      document.querySelector('#mediaClearVideoInput').click();
+      await new Promise(resolve=>setTimeout(resolve,20));
+      setMediaKind('audio');
+      musicInput.value='待清空歌曲';
+      musicInput.dispatchEvent(new Event('input',{bubbles:true}));
+      state.media.musicSearch={status:'ready',requestId:15,query:musicInput.value,results:[{title:'旧结果'}],error:''};
+      renderMediaPortalWorkspace();
+      const musicClearVisibleBefore=!document.querySelector('#mediaClearMusicInput').hidden;
+      document.querySelector('#mediaClearMusicInput').click();
+      await new Promise(resolve=>setTimeout(resolve,20));
+      const mediaInputClear={
+        videoClearVisibleBefore,
+        musicClearVisibleBefore,
+        videoValue:videoInput.value,
+        musicValue:musicInput.value,
+        videoClearHidden:document.querySelector('#mediaClearVideoInput').hidden,
+        musicClearHidden:document.querySelector('#mediaClearMusicInput').hidden,
+        videoStatus:state.media.videoParse.status,
+        musicStatus:state.media.musicSearch.status,
+        musicResults:state.media.musicSearch.results.length,
+        resetKinds:[...resetMediaPortals],
+      };
       return {
         openedPortals,portalTargets,portalInputs,externalUrls,copiedText,copiedFiles,draggedFiles,contextMenus,favoriteCollections,movedFavorites,deletedFavorites,
         downloadedVideos,downloadedVideoQualities,downloadedSongs,previewedSongs,highQualityRequests,openedDownloadHistory,downloadHistoryContextMenus,deletedDownloadHistory,cancelledDownloadTasks,pausedDownloadTasks,createdMediaCollections,localPlaybackRequests,nativeMediaBridgeAvailableBeforeStub,videoUi,videoProgressUi,favoritePreviewModal,videoButtonHitTargets,pickerCreateVisible,createdCollectionChoice,musicUi,backgroundPortal,browserTogglePersistence,downloadedMusicControls,manualPortalInitiallyVisible,
         providerRouting:{douyinProvider,tiktokProvider,dailyFallback,failureClassification},
-        verificationFlow,musicDownloadStates,pausedTask,interruptedTask,
+        verificationFlow,musicDownloadStates,pausedTask,interruptedTask,mediaInputClear,
         activeView:document.querySelector('.view.active')?.id||'',
         activeNav:document.querySelector('.nav-btn.active')?.dataset.view||'',
         rows:document.querySelectorAll('#mediaDownloadsList [data-media-row]').length,
@@ -1376,6 +1405,18 @@ async function run() {
   assert.deepStrictEqual(mediaLibraryMetrics.videoUi, {previewSrc:'https://cdn.example.com/runtime.mp4',actions:['下载视频','下载并收藏'],topActions:false,fallbackHidden:true,qualityChoiceHidden:false,qualityOptions:['1080P · 80 MB','720P · 40 MB'],selectedQualityIndex:1,exhaustedFallbackHidden:true});
   assert.deepStrictEqual(mediaLibraryMetrics.videoProgressUi, {controls:true,controlsAttribute:true,customProgressPresent:false,sourceDurationEndsWith:true,longDurationFormat:'02:00:00'});
   assert.deepStrictEqual(mediaLibraryMetrics.musicUi, {rows:2,actions:['下载','下载并收藏','下载','下载并收藏'],formatChoices:['普通音质','高清音质'],previewButtons:2,activeAudioControls:true,topFormatControls:false});
+  assert.deepStrictEqual(mediaLibraryMetrics.mediaInputClear, {
+    videoClearVisibleBefore:true,
+    musicClearVisibleBefore:true,
+    videoValue:'',
+    musicValue:'',
+    videoClearHidden:true,
+    musicClearHidden:true,
+    videoStatus:'idle',
+    musicStatus:'idle',
+    musicResults:0,
+    resetKinds:['video','audio'],
+  });
   assert.deepStrictEqual(mediaLibraryMetrics.previewedSongs, ['https://www.gequbao.com/music/102','https://www.gequbao.com/music/101']);
   assert.deepStrictEqual(mediaLibraryMetrics.backgroundPortal, {browserHidden:true,directVisible:true});
   assert.strictEqual(mediaLibraryMetrics.manualPortalInitiallyVisible, true, 'manual-site controls must remain visible at the right edge before and after automatic routes run');

@@ -21,6 +21,7 @@ const {
   deleteMediaCollection,
   detectVideoProvider,
   bilibiliEpisodeId,
+  bilibiliPlaybackAccess,
   bilibiliProgressiveOptions,
   bilibiliProgressiveApiUrl,
   bilibiliViewApiUrl,
@@ -2868,8 +2869,25 @@ async function fetchBilibiliJson(webContents, url, timeoutMs = 10000) {
   }
 }
 
-async function resolveBilibiliProgressiveOptions(webContents, sourceUrl) {
-  if (!webContents || webContents.isDestroyed()) return [];
+async function bilibiliSessionStatus(webContents) {
+  if (!webContents || webContents.isDestroyed()) return { authenticated: false };
+  try {
+    const cookies = await webContents.session.cookies.get({ url: 'https://www.bilibili.com/' });
+    const now = Date.now() / 1000;
+    const sessionCookie = cookies.find((cookie) => (
+      cookie?.name === 'SESSDATA'
+      && String(cookie?.value || '')
+      && (!Number(cookie?.expirationDate || 0) || Number(cookie.expirationDate) > now)
+    ));
+    return { authenticated: !!sessionCookie };
+  } catch (error) {
+    runtimeLog(`read Bilibili session status failed: ${error?.message || error}`);
+    return { authenticated: false };
+  }
+}
+
+async function resolveBilibiliProgressiveResult(webContents, sourceUrl) {
+  if (!webContents || webContents.isDestroyed()) return { options: [], reason: '' };
   try {
     let cid = '';
     let playbackSourceUrl = sourceUrl;
@@ -2889,8 +2907,23 @@ async function resolveBilibiliProgressiveOptions(webContents, sourceUrl) {
       }
     }
     const initialUrl = bilibiliProgressiveApiUrl(playbackSourceUrl, 127, cid);
-    if (!initialUrl) return [];
+    if (!initialUrl) return { options: [], reason: '' };
     const initial = await fetchBilibiliJson(webContents, initialUrl);
+    const access = bilibiliPlaybackAccess(initial);
+    const sessionStatus = await bilibiliSessionStatus(webContents);
+    if (access.drm) {
+      runtimeLog('Bilibili response is DRM protected; direct download disabled');
+      return { options: [], reason: 'bilibili-drm-protected', access, ...sessionStatus };
+    }
+    if (access.previewOnly) {
+      runtimeLog(`Bilibili preview-only response authenticated=${sessionStatus.authenticated} sourceMs=${access.sourceDurationMs} deliveredMs=${access.deliveredDurationMs}`);
+      return {
+        options: [],
+        reason: sessionStatus.authenticated ? 'bilibili-access-preview-only' : 'bilibili-login-required',
+        access,
+        ...sessionStatus,
+      };
+    }
     const result = initial?.result || initial?.data || {};
     const requestedQualities = [...new Set([
       127,
@@ -2911,11 +2944,16 @@ async function resolveBilibiliProgressiveOptions(webContents, sourceUrl) {
     if (options.length) {
       runtimeLog(`resolved Bilibili playable MP4 options=${options.map((option) => option.label).join(', ')}`);
     }
-    return options;
+    return { options, reason: '', access, ...sessionStatus };
   } catch (error) {
     runtimeLog(`resolve Bilibili quality options failed: ${error?.message || error}`);
-    return [];
+    return { options: [], reason: '' };
   }
+}
+
+async function resolveBilibiliProgressiveOptions(webContents, sourceUrl) {
+  const result = await resolveBilibiliProgressiveResult(webContents, sourceUrl);
+  return result.options;
 }
 
 async function resolveBilibiliProgressiveDownload(webContents, sourceUrl) {
@@ -3569,6 +3607,39 @@ function scheduleMediaPortalIdleDestroy() {
     runtimeLog('destroying idle media portal view');
     destroyMediaPortalView();
   }, MEDIA_PORTAL_IDLE_DESTROY_MS);
+}
+
+function resetMediaPortalAutomation(kind = '') {
+  const targetKind = kind === 'audio' ? 'audio' : 'video';
+  const mode = String(mediaPortalInputState?.automationMode || '');
+  const cancellable = targetKind === 'video'
+    ? mode === 'video-parse'
+    : mode === 'music-search' || mode === 'music-preview';
+  if (cancellable || (targetKind === 'video' && mediaPortalParsedVideo)) {
+    clearMediaPortalInputTimer();
+    clearMediaPortalVisibilityNudgeTimer();
+    clearMediaPortalProgressTimer();
+    clearMediaPortalVerificationMonitor();
+    if (targetKind === 'video') clearMediaPortalPreviewCapture();
+    if (cancellable) mediaPortalInputState = null;
+    if (targetKind === 'video') mediaPortalParsedVideo = null;
+    mediaPortalRequestId += 1;
+  }
+  if (!activeMediaPortalDownloads && mediaPortalView && !mediaPortalView.webContents.isDestroyed()) {
+    mediaPortalView.setVisible(false);
+    scheduleMediaPortalIdleDestroy();
+  }
+  sendMediaPortalEvent('media:portalProgress', {
+    requestId: mediaPortalRequestId,
+    kind: targetKind,
+    operation: targetKind === 'audio' ? 'search' : 'parse',
+    status: 'idle',
+    percent: 0,
+    message: '',
+    reason: '',
+  });
+  notifyMediaBrowserState({ opening: false, autoActionMissing: false, reset: true });
+  return { ok: true, requestId: mediaPortalRequestId };
 }
 
 function trimMediaPortalHistory(webContents) {
@@ -4273,20 +4344,32 @@ async function completeMediaPortalAutomation(state, result = {}) {
       capturedFilename: '',
       capturedLocalPath: '',
     };
-    if (parsed.ok && parsed.downloadReady) {
-      const canResolveBilibiliQualities = !!bilibiliViewApiUrl(state.value)
-        || !!bilibiliProgressiveApiUrl(state.value, 80);
-      if (canResolveBilibiliQualities) {
-        const bilibiliOptions = await resolveBilibiliProgressiveOptions(mediaPortalView?.webContents, state.value);
-        if (state.requestId !== mediaPortalRequestId) return;
-        if (bilibiliOptions.length) {
-          parsed.qualityOptions = bilibiliOptions;
-          parsed.candidateCount = bilibiliOptions.length;
-          parsed.qualityLabel = String(bilibiliOptions[0].label || parsed.qualityLabel || '最高可用画质');
-          parsed.qualityHref = sanitizeRemoteMediaUrl(bilibiliOptions[0].href);
-          parsed.downloadActionReady = true;
-        }
+    const canResolveBilibiliQualities = !!bilibiliViewApiUrl(state.value)
+      || !!bilibiliProgressiveApiUrl(state.value, 80);
+    if (canResolveBilibiliQualities) {
+      const bilibiliResult = await resolveBilibiliProgressiveResult(mediaPortalView?.webContents, state.value);
+      if (state.requestId !== mediaPortalRequestId) return;
+      if (bilibiliResult.reason) {
+        parsed.ok = false;
+        parsed.downloadReady = false;
+        parsed.downloadActionReady = false;
+        parsed.previewUrl = '';
+        parsed.qualityHref = '';
+        parsed.qualityOptions = [];
+        parsed.candidateCount = 0;
+        parsed.reason = bilibiliResult.reason;
+      } else if (bilibiliResult.options.length) {
+        parsed.ok = true;
+        parsed.downloadReady = true;
+        parsed.reason = '';
+        parsed.qualityOptions = bilibiliResult.options;
+        parsed.candidateCount = bilibiliResult.options.length;
+        parsed.qualityLabel = String(bilibiliResult.options[0].label || parsed.qualityLabel || '最高可用画质');
+        parsed.qualityHref = sanitizeRemoteMediaUrl(bilibiliResult.options[0].href);
+        parsed.downloadActionReady = true;
       }
+    }
+    if (parsed.ok && parsed.downloadReady) {
       emitMediaPortalProgress(state, {
         percent: 96,
         message: '正在准备视频预览',
@@ -7763,6 +7846,7 @@ ipcMain.handle('media:cancelDownloadTask', (_event, taskId) => {
 ipcMain.handle('media:openPortal', (_event, url, downloadTarget = 'download', sourceText = '', autoSubmit = false, collection = '', qualityPreference = '', automationMode = '') => (
   openMediaPortal(url, downloadTarget, sourceText, autoSubmit, collection, qualityPreference, automationMode)
 ));
+ipcMain.handle('media:resetPortal', (_event, kind = '') => resetMediaPortalAutomation(kind));
 ipcMain.handle('media:downloadParsedVideo', (_event, downloadTarget = 'download', collection = '', qualityIndex = 0) => {
   runtimeLog(`media:downloadParsedVideo invoked target=${downloadTarget === 'favorite' ? 'favorite' : 'download'} qualityIndex=${Math.max(0, Number(qualityIndex) || 0)}`);
   return downloadParsedMediaVideo(downloadTarget, collection, qualityIndex);

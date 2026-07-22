@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>玄念8.3.1</title>
+  <title>玄念8.3.2</title>
   <link rel="icon" href="src/xuannian-logo-256.png" />
   <link rel="stylesheet" href="src/media-library.css" />
   <style>
@@ -1116,11 +1116,17 @@
       <div class="media-panels">
         <section class="media-panel active" data-media-panel="portal">
           <div class="media-launch-band" data-media-launcher="video">
-            <input class="media-launch-input" id="mediaVideoInput" placeholder="粘贴抖音、TikTok、B站、小红书或快手链接" autocomplete="off" spellcheck="false" />
+            <div class="media-launch-field">
+              <input class="media-launch-input" id="mediaVideoInput" placeholder="粘贴抖音、TikTok、B站、小红书或快手链接" autocomplete="off" spellcheck="false" />
+              <button class="media-launch-clear" id="mediaClearVideoInput" type="button" title="清空视频链接" aria-label="清空视频链接" hidden><svg viewBox="0 0 24 24"><path d="M6 6l12 12"></path><path d="M18 6 6 18"></path></svg></button>
+            </div>
           </div>
           <div class="media-provider-line" data-media-launcher="video"><span id="mediaVideoProvider">等待识别平台</span><button class="media-manual-portal" id="mediaVideoManualPortal" type="button" title="打开原下载站手动处理" aria-label="打开原下载站手动处理" hidden><svg viewBox="0 0 24 24"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"></path><circle cx="12" cy="12" r="2.5"></circle></svg></button></div>
           <div class="media-launch-band" data-media-launcher="audio" hidden>
-            <input class="media-launch-input" id="mediaMusicInput" placeholder="输入歌曲名、歌手或专辑" autocomplete="off" />
+            <div class="media-launch-field">
+              <input class="media-launch-input" id="mediaMusicInput" placeholder="输入歌曲名、歌手或专辑" autocomplete="off" />
+              <button class="media-launch-clear" id="mediaClearMusicInput" type="button" title="清空音乐搜索" aria-label="清空音乐搜索" hidden><svg viewBox="0 0 24 24"><path d="M6 6l12 12"></path><path d="M18 6 6 18"></path></svg></button>
+            </div>
             <button class="black-btn media-search-command" id="mediaSearchMusic" type="button">搜索音乐</button>
           </div>
           <div class="media-provider-line" data-media-launcher="audio" hidden><span class="media-provider-pill" id="mediaMusicProvider">歌曲宝</span><button class="media-manual-portal" id="mediaMusicManualPortal" type="button" title="打开歌曲宝手动处理" aria-label="打开歌曲宝手动处理" hidden><svg viewBox="0 0 24 24"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"></path><circle cx="12" cy="12" r="2.5"></circle></svg></button></div>
@@ -1743,6 +1749,7 @@ function createBrowserFallbackAPI(){
     async setMediaDownloadTaskPaused(_taskId,paused=true){ return {ok:true,paused:!!paused}; },
     async getLocalMediaPlaybackUrl(filePath){ return String(filePath||''); },
     async openMediaPortal(url){ return this.openExternal(url); },
+    async resetMediaPortal(){ return {ok:true,requestId:Date.now()}; },
     async downloadParsedMediaVideo(){ return {ok:false,reason:'预览环境不支持媒体下载'}; },
     async resumeMediaPortalAfterVerification(){ return {ok:false}; },
     async downloadMediaMusicResult(){ return false; },
@@ -1872,6 +1879,7 @@ function createUnifiedAPI(nativeApi, fallback){
     cancelMediaDownloadTask: (taskId)=> nativeApi.cancelMediaDownloadTask ? nativeApi.cancelMediaDownloadTask(taskId) : fallback.cancelMediaDownloadTask(taskId),
     setMediaDownloadTaskPaused: (taskId,paused=true)=> nativeApi.setMediaDownloadTaskPaused ? nativeApi.setMediaDownloadTaskPaused(taskId,paused) : fallback.setMediaDownloadTaskPaused(taskId,paused),
     openMediaPortal: (url,downloadTarget,sourceText,autoSubmit,collection,qualityPreference,automationMode)=> nativeApi.openMediaPortal ? nativeApi.openMediaPortal(url,downloadTarget,sourceText,autoSubmit,collection,qualityPreference,automationMode) : fallback.openMediaPortal(url,downloadTarget,sourceText,autoSubmit,collection,qualityPreference,automationMode),
+    resetMediaPortal: (kind)=> nativeApi.resetMediaPortal ? nativeApi.resetMediaPortal(kind) : fallback.resetMediaPortal(kind),
     downloadParsedMediaVideo: (downloadTarget,collection,qualityIndex=0)=> nativeApi.downloadParsedMediaVideo ? nativeApi.downloadParsedMediaVideo(downloadTarget,collection,qualityIndex) : Promise.resolve({ok:false,reason:'当前环境不支持媒体下载'}),
     resumeMediaPortalAfterVerification: ()=> nativeApi.resumeMediaPortalAfterVerification ? nativeApi.resumeMediaPortalAfterVerification() : fallback.resumeMediaPortalAfterVerification(),
     downloadMediaMusicResult: (url,downloadTarget,collection,preferredName)=> nativeApi.downloadMediaMusicResult ? nativeApi.downloadMediaMusicResult(url,downloadTarget,collection,preferredName) : Promise.resolve(false),
@@ -2368,7 +2376,10 @@ function bindEvents(){
       options[(index+(event.key==='ArrowDown'?1:-1)+options.length)%options.length].focus();
     }
   });
-  $('#mediaVideoInput')?.addEventListener('input',()=>updateMediaVideoProvider({autoParse:true}));
+  $('#mediaVideoInput')?.addEventListener('input',()=>{
+    syncMediaLaunchClearButtons();
+    updateMediaVideoProvider({autoParse:true});
+  });
   $('#mediaVideoInput')?.addEventListener('keydown',event=>{
     if(event.key==='Enter'){
       event.preventDefault();
@@ -2377,6 +2388,7 @@ function bindEvents(){
   });
   $('#mediaVideoFallback')?.addEventListener('click',()=>parseMediaVideo(Number(state.media.videoParse.portalIndex||0)+1,{force:true}));
   $('#mediaVideoRetry')?.addEventListener('click',()=>parseMediaVideo(Number(state.media.videoParse.portalIndex||0),{force:true}));
+  $('#mediaClearVideoInput')?.addEventListener('click',()=>clearMediaLaunchInput('video'));
   bindReliableMediaButton($('#mediaDownloadVideo'),()=>downloadParsedVideo(false));
   bindReliableMediaButton($('#mediaDownloadFavoriteVideo'),()=>downloadParsedVideo(true));
   const mediaVideoPreview=$('#mediaVideoPreview');
@@ -2386,12 +2398,14 @@ function bindEvents(){
     state.media.videoParse.selectedQualityIndex=Math.max(0,Math.min(options.length-1,Number(event.target.value)||0));
     renderMediaPortalWorkspace();
   });
+  $('#mediaMusicInput')?.addEventListener('input',syncMediaLaunchClearButtons);
   $('#mediaMusicInput')?.addEventListener('keydown',event=>{
     if(event.key==='Enter'){
       event.preventDefault();
       searchMediaMusic();
     }
   });
+  $('#mediaClearMusicInput')?.addEventListener('click',()=>clearMediaLaunchInput('audio'));
   $('#mediaSearchMusic')?.addEventListener('click',searchMediaMusic);
   $('#mediaMusicResults')?.addEventListener('click',event=>{
     const preview=event.target.closest('[data-music-preview]');
@@ -3467,7 +3481,7 @@ function selectFileSearchResult(index,{ensureVisible=false}={}){
 }
 
 const MEDIA_VIDEO_PRIMARY_PORTAL='https://www.seekin.ai/zh/downloader/';
-const MEDIA_PORTAL_CONTENT_FAILURES=new Set(['protected-or-private','content-unavailable','content-not-video']);
+const MEDIA_PORTAL_CONTENT_FAILURES=new Set(['protected-or-private','content-unavailable','content-not-video','bilibili-drm-protected']);
 
 function resolveMediaVideoProviderFallback(value=''){
   const match=String(value||'').trim().match(/https?:\/\/[^\s<>"']+/i);
@@ -3750,12 +3764,16 @@ function mediaPortalFailureMessage(reason='',kind='video'){
     'vpn-required':'前面的下载站今日不可用，当前备用站需要 VPN；请开启 VPN 后点击重新解析',
     'daily-portals-unavailable':'今天可用的下载站都已验证失败，请稍后或明天重试',
     'preview-unavailable':'这个音乐版本没有提供可用试听地址',
+    'bilibili-login-required':'当前玄念媒体会话未登录哔哩哔哩，接口只下发了约一分钟试看',
+    'bilibili-access-preview-only':'当前哔哩哔哩登录会话仍只获得试看，可能是登录已失效、账号没有该片权益或存在地区限制',
+    'bilibili-drm-protected':'该视频使用哔哩哔哩 DRM 保护，玄念不会绕过保护下载',
     'load-error':'下载站页面加载失败，请检查网络或 VPN',
     'automation-error':'下载站页面结构发生变化，自动处理未完成',
   };
   const fallback=kind==='audio'?'没有找到可下载的音乐版本':'视频解析未完成';
   const message=messages[String(reason||'')]||fallback;
   if(kind==='audio') return message+'。请检查关键词后重试';
+  if(String(reason||'').startsWith('bilibili-')) return message;
   return MEDIA_PORTAL_CONTENT_FAILURES.has(String(reason||''))?message+'。请检查原视频状态':message+'。请重新解析或切换备用站';
 }
 
@@ -3817,18 +3835,23 @@ async function toggleMediaManualPortal(kind=state.media.kind,{forceOpen=false}={
 
 async function offerMediaManualPortal(kind='video',reason='automation-error',url=''){
   const current=state.media.manualPortal||{};
-  const targetUrl=kind==='video'?MEDIA_VIDEO_PRIMARY_PORTAL:String(url||state.media.browser.url||'');
+  const bilibiliLogin=kind==='video'&&['bilibili-login-required','bilibili-access-preview-only'].includes(String(reason||''));
+  const targetUrl=bilibiliLogin
+    ?String(state.media.videoParse.sourceUrl||state.media.videoProvider?.sourceUrl||url||'')
+    :(kind==='video'?MEDIA_VIDEO_PRIMARY_PORTAL:String(url||state.media.browser.url||''));
   state.media.manualPortal={available:true,kind,url:targetUrl,reason,prompting:!!current.prompting};
   renderMediaManualPortal();
   if(current.prompting) return;
   state.media.manualPortal.prompting=true;
-  const site=kind==='audio'?'歌曲宝':'Seekin';
+  const site=bilibiliLogin?'哔哩哔哩':(kind==='audio'?'歌曲宝':'Seekin');
   const detail=mediaPortalFailureMessage(reason,kind).replace(/。请.*$/,'');
   const verification=kind==='audio'&&reason==='human-verification';
   const confirmed=await showConfirmModal({
-    title:verification?'需要真人验证':'需要手动处理',
-    message:verification?'歌曲宝首次使用可能要求真人验证。点击确认后将在玄念内打开验证页面；完成验证后会自动返回音乐结果页面。':`${detail}。是否在玄念内打开${site}手动完成？`,
-    confirmText:verification?'去验证':'打开原站',
+    title:verification?'需要真人验证':(bilibiliLogin?'需要登录会员':'需要手动处理'),
+    message:verification
+      ?'歌曲宝首次使用可能要求真人验证。点击确认后将在玄念内打开验证页面；完成验证后会自动返回音乐结果页面。'
+      :(bilibiliLogin?`${detail}。点击确认后在玄念内重新登录哔哩哔哩会员；登录完成后收起原站页面并点击重新解析。`:`${detail}。是否在玄念内打开${site}手动完成？`),
+    confirmText:verification?'去验证':(bilibiliLogin?'去登录':'打开原站'),
     cancelText:'取消',
   });
   state.media.manualPortal.prompting=false;
@@ -3885,6 +3908,40 @@ function renderMediaAutomationProgress(){
   if($('#mediaAutomationProgressText')) $('#mediaAutomationProgressText').textContent=progress.message||'正在处理';
   if($('#mediaAutomationProgressPercent')) $('#mediaAutomationProgressPercent').textContent=Math.round(progress.percent||0)+'%';
   if($('#mediaAutomationProgressBar')) $('#mediaAutomationProgressBar').style.width=Math.max(0,Math.min(100,progress.percent||0))+'%';
+}
+
+function syncMediaLaunchClearButtons(){
+  const videoInput=$('#mediaVideoInput');
+  const musicInput=$('#mediaMusicInput');
+  if($('#mediaClearVideoInput')) $('#mediaClearVideoInput').hidden=!String(videoInput?.value||'');
+  if($('#mediaClearMusicInput')) $('#mediaClearMusicInput').hidden=!String(musicInput?.value||'');
+}
+
+async function clearMediaLaunchInput(kind='video'){
+  const audio=kind==='audio';
+  const input=$(audio?'#mediaMusicInput':'#mediaVideoInput');
+  if(input) input.value='';
+  syncMediaLaunchClearButtons();
+  if(audio){
+    $$('#mediaMusicResults audio').forEach(element=>element.pause());
+    state.media.musicSearch={status:'idle',requestId:-1,query:'',results:[],error:''};
+    state.media.musicPreview={status:'idle',requestId:-1,index:-1,resultUrl:'',previewUrl:'',error:''};
+    state.media.musicFormatChoice=null;
+  }else{
+    clearTimeout(state.media.videoParseTimer);
+    state.media.videoParseTimer=null;
+    state.media.videoProvider=null;
+    state.media.pendingVideoDownload=null;
+    state.media.videoParse={status:'idle',requestId:-1,sourceUrl:'',previewUrl:'',embeddedPreview:false,title:'',qualityLabel:'',qualityOptions:[],selectedQualityIndex:0,downloadReady:false,error:'',portalIndex:0,portalUrl:''};
+  }
+  state.media.portalProgress={status:'idle',requestId:0,kind:audio?'audio':'video',operation:audio?'search':'parse',percent:0,message:'',reason:''};
+  state.media.browserVisible=false;
+  clearMediaManualPortal(audio?'audio':'video');
+  renderMediaPortalWorkspace();
+  renderMediaBrowserState();
+  api.setMediaBrowserBounds({},false,'browser');
+  try{ await api.resetMediaPortal(audio?'audio':'video'); }catch{}
+  input?.focus();
 }
 
 function updateMediaVideoProvider({autoParse=false}={}){
@@ -4171,6 +4228,7 @@ function resetMediaVideoProgress(){
 }
 
 function renderMediaPortalWorkspace(){
+  syncMediaLaunchClearButtons();
   $$('[data-media-workspace]').forEach(element=>{ element.hidden=element.dataset.mediaWorkspace!==state.media.kind; });
   const video=state.media.videoParse||{};
   const videoReady=video.status==='ready';

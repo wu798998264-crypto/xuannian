@@ -393,6 +393,9 @@ contextBridge.exposeInMainWorld('nativeAPI', {
   async openMediaPortal(url, downloadTarget = 'download', sourceText = '', autoSubmit = false, collection = '', qualityPreference = '', automationMode = '') {
     return ipcRenderer.invoke('media:openPortal', url || '', downloadTarget || 'download', sourceText || '', !!autoSubmit, collection || '', qualityPreference || '', automationMode || '');
   },
+  async resetMediaPortal(kind = '') {
+    return ipcRenderer.invoke('media:resetPortal', kind === 'audio' ? 'audio' : 'video');
+  },
   async downloadParsedMediaVideo(downloadTarget = 'download', collection = '', qualityIndex = 0) {
     return ipcRenderer.invoke('media:downloadParsedVideo', downloadTarget || 'download', collection || '', Math.max(0, Number(qualityIndex) || 0));
   },

@@ -8,6 +8,7 @@ const {
   deleteMediaCollection,
   detectVideoProvider,
   bilibiliEpisodeId,
+  bilibiliPlaybackAccess,
   bilibiliProgressiveOptions,
   bilibiliProgressiveApiUrl,
   bilibiliVideoIdentity,
@@ -72,6 +73,31 @@ async function run() {
   assert.deepStrictEqual(bilibiliVideoIdentity('https://www.bilibili.com/video/av12345'), { bvid: '', aid: '12345' });
   assert.strictEqual(bilibiliViewApiUrl('https://www.bilibili.com/video/BV1STE56zEdA'), 'https://api.bilibili.com/x/web-interface/view?bvid=BV1STE56zEdA');
   assert.strictEqual(bilibiliProgressiveApiUrl('https://www.bilibili.com/video/BV1STE56zEdA', 64, '987654'), 'https://api.bilibili.com/x/player/playurl?bvid=BV1STE56zEdA&cid=987654&qn=64&fnval=0&fourk=1');
+  const bilibiliPreviewPayload = {
+    code: 0,
+    result: {
+      quality: 64,
+      is_preview: 1,
+      is_drm: false,
+      timelength: 439296,
+      durl: [{ url: 'https://cdn.example.com/member-preview.mp4', length: 60160, size: 512000 }],
+    },
+  };
+  assert.deepStrictEqual(bilibiliPlaybackAccess(bilibiliPreviewPayload), {
+    previewOnly: true,
+    drm: false,
+    sourceDurationMs: 439296,
+    deliveredDurationMs: 60160,
+  });
+  assert.deepStrictEqual(bilibiliProgressiveOptions([bilibiliPreviewPayload]), [], 'one-minute Bilibili trials must never be advertised as full downloads');
+  assert.strictEqual(bilibiliPlaybackAccess({
+    code: 0,
+    data: { timelength: 439296, durl: [{ length: 439296 }] },
+  }).previewOnly, false);
+  assert.strictEqual(bilibiliPlaybackAccess({
+    code: 0,
+    data: { timelength: 439296, durl: [{ length: 60000 }] },
+  }).previewOnly, true, 'clearly truncated responses must be rejected even when the preview flag is absent');
   assert.deepStrictEqual(bilibiliProgressiveOptions([
     { code: 0, data: { quality: 32, accept_quality: [80, 64, 32, 16], accept_description: ['1080P', '720P', '480P', '360P'], durl: [{ url: 'https://cdn.example.com/video-480.mp4', size: 20 * 1024 * 1024 }] } },
     { code: 0, data: { quality: 32, accept_quality: [80, 64, 32, 16], accept_description: ['1080P', '720P', '480P', '360P'], durl: [{ url: 'https://cdn.example.com/video-480-duplicate.mp4', size: 18 * 1024 * 1024 }] } },
@@ -119,6 +145,7 @@ async function run() {
   assert.strictEqual(mediaKindForPath('setup.exe'), '');
   assert.strictEqual(isAllowedPortalUrl('https://www.hellotik.app/zh/kuaishou'), false);
   assert.strictEqual(isAllowedPortalUrl('https://www.hellotik.app/zh/douyin'), false);
+  assert.strictEqual(isAllowedPortalUrl('https://www.bilibili.com/bangumi/play/ep3648907/'), true);
   assert.strictEqual(isAllowedPortalUrl('https://evil.example/'), false);
   assert.strictEqual(musicSearchUrl('测试 歌曲'), 'https://www.gequbao.com/s/%E6%B5%8B%E8%AF%95%20%E6%AD%8C%E6%9B%B2');
   assert(scoreMediaDownloadQualityLabel('下载原画 65 MB') > scoreMediaDownloadQualityLabel('下载 4K 40 MB'));
