@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>玄念8.3.3</title>
+  <title>玄念8.3.4</title>
   <link rel="icon" href="src/xuannian-logo-256.png" />
   <link rel="stylesheet" href="src/media-library.css" />
   <style>
@@ -822,6 +822,8 @@
     .clipboard-batch-btn:hover:not(:disabled){background:var(--panel);box-shadow:0 8px 20px rgba(0,0,0,.08)}
     .clipboard-batch-btn.icon-only{width:40px;padding:0;display:grid;place-items:center;color:var(--muted)}
     .clipboard-batch-btn.icon-only svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+    .clipboard-batch-btn.select-all{border-color:rgba(66,133,244,.4);color:#326fcd}
+    body.dark .clipboard-batch-btn.select-all{border-color:rgba(121,164,255,.42);color:#9abaff}
     .clipboard-batch-btn.confirm{min-width:88px;border-color:rgba(225,65,79,.45);background:rgba(225,65,79,.1);color:var(--danger)}
     .clipboard-batch-btn[hidden]{display:none}
     .clipboard-batch-btn:disabled{opacity:.46;cursor:not-allowed}
@@ -993,6 +995,7 @@
         </div>
       </div>
       <div class="chips" id="clipboardFilters">
+        <button class="clipboard-batch-btn select-all" id="selectAllClipboardBatchDelete" hidden>全选</button>
         <button class="chip active" data-type="all">全部</button>
         <button class="chip" data-type="text">文本</button>
         <button class="chip" data-type="image">图片</button>
@@ -1191,6 +1194,12 @@
               <button class="media-search-clear" id="clearMediaDownloadsSearch" type="button" title="清空搜索">×</button>
             </div>
             <span class="media-list-summary" id="mediaDownloadsSummary"></span>
+            <button class="media-batch-btn select-all" data-media-batch-select-all="downloads" type="button" hidden>全选</button>
+            <div class="media-batch-actions" data-media-batch-actions="downloads">
+              <button class="media-batch-btn" data-media-batch-cancel="downloads" type="button" hidden>取消</button>
+              <button class="media-batch-btn icon-only" data-media-batch-start="downloads" type="button" title="批量删除" aria-label="批量删除"><svg viewBox="0 0 24 24"><path d="M4 7h16"></path><path d="M9 7V4h6v3"></path><path d="M7 7l1 13h8l1-13"></path><path d="M10 11v5M14 11v5"></path></svg></button>
+              <button class="media-batch-btn confirm" data-media-batch-confirm="downloads" type="button" hidden>确认删除</button>
+            </div>
             <button class="media-icon-button" data-media-refresh type="button" title="刷新"><svg viewBox="0 0 24 24"><path d="M20 7v5h-5"></path><path d="M4 17v-5h5"></path><path d="M6.1 9a7 7 0 0 1 11.7-2.6L20 8"></path><path d="m4 16 2.2 1.6A7 7 0 0 0 18 15"></path></svg></button>
           </div>
           <div class="media-local-player" id="mediaLocalPlayer" hidden>
@@ -1209,6 +1218,12 @@
               <button class="media-search-clear" id="clearMediaFavoritesSearch" type="button" title="清空搜索">×</button>
             </div>
             <span class="media-list-summary" id="mediaFavoritesSummary"></span>
+            <button class="media-batch-btn select-all" data-media-batch-select-all="favorites" type="button" hidden>全选</button>
+            <div class="media-batch-actions" data-media-batch-actions="favorites">
+              <button class="media-batch-btn" data-media-batch-cancel="favorites" type="button" hidden>取消</button>
+              <button class="media-batch-btn icon-only" data-media-batch-start="favorites" type="button" title="批量删除" aria-label="批量删除"><svg viewBox="0 0 24 24"><path d="M4 7h16"></path><path d="M9 7V4h6v3"></path><path d="M7 7l1 13h8l1-13"></path><path d="M10 11v5M14 11v5"></path></svg></button>
+              <button class="media-batch-btn confirm" data-media-batch-confirm="favorites" type="button" hidden>确认删除</button>
+            </div>
             <button class="media-icon-button" data-media-refresh type="button" title="刷新"><svg viewBox="0 0 24 24"><path d="M20 7v5h-5"></path><path d="M4 17v-5h5"></path><path d="M6.1 9a7 7 0 0 1 11.7-2.6L20 8"></path><path d="m4 16 2.2 1.6A7 7 0 0 0 18 15"></path></svg></button>
           </div>
           <div class="media-list-meta-row">
@@ -1480,6 +1495,10 @@ const state = {
     downloadsExpanded:false,
     renderVersion:0,
     virtualRanges:{downloads:{key:'',start:-1,end:-1},favorites:{key:'',start:-1,end:-1}},
+    batchDelete:{
+      downloads:{video:{active:false,selectedPaths:new Set(),revision:0,busy:false},audio:{active:false,selectedPaths:new Set(),revision:0,busy:false}},
+      favorites:{video:{active:false,selectedPaths:new Set(),revision:0,busy:false},audio:{active:false,selectedPaths:new Set(),revision:0,busy:false}},
+    },
     localPlayer:{path:'',name:'',url:''},
     favoriteOrders:{},
     draggedFavoritePath:'',
@@ -1755,6 +1774,7 @@ function createBrowserFallbackAPI(){
     async deleteMediaCollection(){ return {ok:false,reason:'预览环境不支持收藏夹操作'}; },
     async moveLocalMedia(){ return {ok:false,reason:'预览环境不支持移动文件'}; },
     async deleteLocalMedia(){ return {ok:false,reason:'预览环境不支持删除文件'}; },
+    async deleteLocalMediaBatch(){ return {ok:false,reason:'预览环境不支持批量删除文件',deletedPaths:[]}; },
     async deleteMediaDownloadHistoryItem(){ return {ok:false,reason:'预览环境不支持删除下载记录'}; },
     async cancelMediaDownloadTask(){ return {ok:true}; },
     async setMediaDownloadTaskPaused(_taskId,paused=true){ return {ok:true,paused:!!paused}; },
@@ -1887,6 +1907,7 @@ function createUnifiedAPI(nativeApi, fallback){
     deleteMediaCollection: (location,kind,name)=> nativeApi.deleteMediaCollection ? nativeApi.deleteMediaCollection(location,kind,name) : fallback.deleteMediaCollection(location,kind,name),
     moveLocalMedia: (filePath,location,collection)=> nativeApi.moveLocalMedia ? nativeApi.moveLocalMedia(filePath,location,collection) : fallback.moveLocalMedia(filePath,location,collection),
     deleteLocalMedia: (filePath,location)=> nativeApi.deleteLocalMedia ? nativeApi.deleteLocalMedia(filePath,location) : fallback.deleteLocalMedia(filePath,location),
+    deleteLocalMediaBatch: (filePaths,location)=> nativeApi.deleteLocalMediaBatch ? nativeApi.deleteLocalMediaBatch(filePaths,location) : fallback.deleteLocalMediaBatch(filePaths,location),
     deleteMediaDownloadHistoryItem: (taskId)=> nativeApi.deleteMediaDownloadHistoryItem ? nativeApi.deleteMediaDownloadHistoryItem(taskId) : fallback.deleteMediaDownloadHistoryItem(taskId),
     cancelMediaDownloadTask: (taskId)=> nativeApi.cancelMediaDownloadTask ? nativeApi.cancelMediaDownloadTask(taskId) : fallback.cancelMediaDownloadTask(taskId),
     setMediaDownloadTaskPaused: (taskId,paused=true)=> nativeApi.setMediaDownloadTaskPaused ? nativeApi.setMediaDownloadTaskPaused(taskId,paused) : fallback.setMediaDownloadTaskPaused(taskId,paused),
@@ -2494,6 +2515,10 @@ function bindEvents(){
   $('#mediaFavoriteCollections')?.addEventListener('dragover',handleMediaFavoriteDragOver);
   $('#mediaFavoriteCollections')?.addEventListener('dragleave',handleMediaFavoriteDragLeave);
   $('#mediaFavoriteCollections')?.addEventListener('drop',handleMediaFavoriteDrop);
+  $$('[data-media-batch-start]').forEach(button=>button.addEventListener('click',()=>startMediaBatchDelete(button.dataset.mediaBatchStart)));
+  $$('[data-media-batch-select-all]').forEach(button=>button.addEventListener('click',()=>toggleMediaBatchSelectAll(button.dataset.mediaBatchSelectAll)));
+  $$('[data-media-batch-cancel]').forEach(button=>button.addEventListener('click',()=>cancelMediaBatchDelete(button.dataset.mediaBatchCancel)));
+  $$('[data-media-batch-confirm]').forEach(button=>button.addEventListener('click',()=>confirmMediaBatchDelete(button.dataset.mediaBatchConfirm)));
   document.addEventListener('click',event=>{
     if(!event.target.closest('#mediaKindTabs')) setMediaKindMenuExpanded(false);
   });
@@ -2511,6 +2536,7 @@ function bindEvents(){
     state.clipType=btn.dataset.type; state.clipboardRenderLimit=60; renderClipboardFilters(); renderClipboard();
   });
   $('#startClipboardBatchDelete')?.addEventListener('click',()=>startClipboardBatchDelete());
+  $('#selectAllClipboardBatchDelete')?.addEventListener('click',toggleClipboardBatchSelectAll);
   $('#cancelClipboardBatchDelete')?.addEventListener('click',()=>cancelClipboardBatchDelete());
   $('#confirmClipboardBatchDelete')?.addEventListener('click',()=>confirmClipboardBatchDelete());
   $('#clipboardList').addEventListener('click',async event=>{
@@ -4662,6 +4688,22 @@ function removeMediaFavoriteOrder(item){
   state.media.renderVersion+=1;
 }
 
+function removeMediaFavoriteOrders(items){
+  let changed=false;
+  for(const item of Array.isArray(items)?items:[]){
+    if(!item) continue;
+    const key=mediaFavoriteOrderKey(item.kind,item.collection||'');
+    const previous=state.media.favoriteOrders[key]||[];
+    const next=previous.filter(name=>name!==item.name);
+    if(next.length===previous.length) continue;
+    state.media.favoriteOrders[key]=next;
+    changed=true;
+  }
+  if(!changed) return;
+  saveMediaFavoriteOrders();
+  state.media.renderVersion+=1;
+}
+
 function renameMediaFavoriteOrderCollection(kind,currentName,nextName){
   const currentKey=mediaFavoriteOrderKey(kind,currentName);
   const nextKey=mediaFavoriteOrderKey(kind,nextName);
@@ -4792,6 +4834,153 @@ function filteredMediaItems(tab){
     .some(value=>String(value||'').toLocaleLowerCase().includes(query)));
 }
 
+function mediaBatchState(tab,kind=state.media.kind){
+  const location=tab==='favorites'?'favorites':'downloads';
+  const mediaKind=kind==='audio'?'audio':'video';
+  return state.media.batchDelete[location][mediaKind];
+}
+
+function mediaBatchItems(tab,kind=state.media.kind){
+  const location=tab==='favorites'?'favorites':'downloads';
+  const mediaKind=kind==='audio'?'audio':'video';
+  return state.media.items.filter(item=>item.location===location&&item.kind===mediaKind&&item.path);
+}
+
+function selectedMediaBatchItems(tab,kind=state.media.kind){
+  const batch=mediaBatchState(tab,kind);
+  return mediaBatchItems(tab,kind).filter(item=>batch.selectedPaths.has(item.path));
+}
+
+function pruneMediaBatchSelections(){
+  for(const tab of ['downloads','favorites']){
+    for(const kind of ['video','audio']){
+      const batch=mediaBatchState(tab,kind);
+      const existingPaths=new Set(mediaBatchItems(tab,kind).map(item=>item.path));
+      let changed=false;
+      for(const filePath of batch.selectedPaths){
+        if(existingPaths.has(filePath)) continue;
+        batch.selectedPaths.delete(filePath);
+        changed=true;
+      }
+      if(changed) batch.revision+=1;
+    }
+  }
+}
+
+function renderMediaBatchActions(tab,visibleItems=filteredMediaItems(tab)){
+  const batch=mediaBatchState(tab);
+  const selectedCount=selectedMediaBatchItems(tab).length;
+  const allVisibleSelected=visibleItems.length>0&&visibleItems.every(item=>batch.selectedPaths.has(item.path));
+  const selectAll=$(`[data-media-batch-select-all="${tab}"]`);
+  const start=$(`[data-media-batch-start="${tab}"]`);
+  const cancel=$(`[data-media-batch-cancel="${tab}"]`);
+  const confirm=$(`[data-media-batch-confirm="${tab}"]`);
+  const panel=$(`[data-media-panel="${tab}"]`);
+  panel?.classList.toggle('media-batch-mode',batch.active);
+  if(selectAll){
+    selectAll.hidden=!batch.active;
+    selectAll.disabled=batch.busy||visibleItems.length===0;
+    selectAll.textContent=allVisibleSelected?'取消全选':'全选';
+    selectAll.title=visibleItems.length?`${allVisibleSelected?'取消选择':'选择'}当前筛选结果中的 ${visibleItems.length} 个文件`:'当前筛选结果为空';
+  }
+  if(start){
+    start.hidden=batch.active;
+    start.disabled=visibleItems.length===0;
+  }
+  if(cancel){
+    cancel.hidden=!batch.active;
+    cancel.disabled=batch.busy;
+  }
+  if(confirm){
+    confirm.hidden=!batch.active;
+    confirm.disabled=batch.busy||selectedCount===0;
+    confirm.textContent=selectedCount?`确认删除 (${selectedCount})`:'确认删除';
+    confirm.title=selectedCount?`删除已选择的 ${selectedCount} 个文件`:'请先选择要删除的文件';
+  }
+}
+
+function startMediaBatchDelete(tab,initialPath=''){
+  const batch=mediaBatchState(tab);
+  batch.active=true;
+  batch.busy=false;
+  if(initialPath&&mediaBatchItems(tab).some(item=>item.path===initialPath)) batch.selectedPaths.add(initialPath);
+  batch.revision+=1;
+  resetMediaListRenderRange(tab);
+  renderMediaList(tab,{force:true});
+}
+
+function cancelMediaBatchDelete(tab){
+  const batch=mediaBatchState(tab);
+  if(batch.busy) return;
+  batch.active=false;
+  batch.selectedPaths.clear();
+  batch.revision+=1;
+  resetMediaListRenderRange(tab);
+  renderMediaList(tab,{force:true});
+}
+
+function toggleMediaBatchSelection(tab,filePath){
+  const batch=mediaBatchState(tab);
+  if(!batch.active||batch.busy||!mediaBatchItems(tab).some(item=>item.path===filePath)) return;
+  if(batch.selectedPaths.has(filePath)) batch.selectedPaths.delete(filePath);
+  else batch.selectedPaths.add(filePath);
+  batch.revision+=1;
+  resetMediaListRenderRange(tab);
+  renderMediaList(tab,{force:true});
+}
+
+function toggleMediaBatchSelectAll(tab){
+  const batch=mediaBatchState(tab);
+  if(!batch.active||batch.busy) return;
+  const visibleItems=filteredMediaItems(tab);
+  if(!visibleItems.length) return;
+  const allVisibleSelected=visibleItems.every(item=>batch.selectedPaths.has(item.path));
+  visibleItems.forEach(item=>{
+    if(allVisibleSelected) batch.selectedPaths.delete(item.path);
+    else batch.selectedPaths.add(item.path);
+  });
+  batch.revision+=1;
+  resetMediaListRenderRange(tab);
+  renderMediaList(tab,{force:true});
+}
+
+async function confirmMediaBatchDelete(tab){
+  const batch=mediaBatchState(tab);
+  const selectedItems=selectedMediaBatchItems(tab);
+  if(batch.busy||!selectedItems.length) return;
+  const label=tab==='favorites'?'收藏':'已下载';
+  const confirmed=await showConfirmModal({
+    title:`批量删除${label}文件`,
+    message:`确定删除已选择的 ${selectedItems.length} 个${label}文件吗？文件会移入系统回收站。`,
+    confirmText:'确认删除',
+    danger:true,
+  });
+  if(!confirmed) return;
+  batch.busy=true;
+  renderMediaBatchActions(tab);
+  try{
+    const result=await api.deleteLocalMediaBatch(selectedItems.map(item=>item.path),tab);
+    const deletedPaths=new Set(Array.isArray(result?.deletedPaths)?result.deletedPaths:(result?.ok?selectedItems.map(item=>item.path):[]));
+    if(!deletedPaths.size){
+      toast(result?.reason||'批量删除失败，请稍后重试');
+      return;
+    }
+    if(state.media.localPlayer?.path&&deletedPaths.has(state.media.localPlayer.path)) closeMediaLocalPlayer();
+    if(tab==='favorites') removeMediaFavoriteOrders(selectedItems.filter(item=>deletedPaths.has(item.path)));
+    batch.active=false;
+    batch.selectedPaths.clear();
+    batch.revision+=1;
+    await refreshMediaLibrary({quiet:true});
+    const failedCount=Math.max(0,selectedItems.length-deletedPaths.size);
+    toast(failedCount?`已删除 ${deletedPaths.size} 个文件，${failedCount} 个未能删除`:`已删除 ${deletedPaths.size} 个文件`);
+  }catch{
+    toast('批量删除失败，请稍后重试');
+  }finally{
+    batch.busy=false;
+    renderMediaList(tab,{force:true});
+  }
+}
+
 function mediaKindIcon(kind){
   if(kind==='video') return '<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="m10 9 5 3-5 3Z"></path></svg>';
   return '<svg viewBox="0 0 24 24"><path d="M9 18V5l10-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="16" cy="16" r="3"></circle></svg>';
@@ -4825,10 +5014,14 @@ function renderMediaLocalPlayer(){
 const MEDIA_LIBRARY_ROW_HEIGHT=64;
 const MEDIA_LIBRARY_OVERSCAN=10;
 
+function resetMediaListRenderRange(tab){
+  if(state.media.virtualRanges?.[tab]) state.media.virtualRanges[tab]={key:'',start:-1,end:-1};
+}
+
 function resetMediaListViewport(tab){
   const list=$(tab==='favorites'?'#mediaFavoritesList':'#mediaDownloadsList');
   if(list) list.scrollTop=0;
-  if(state.media.virtualRanges?.[tab]) state.media.virtualRanges[tab]={key:'',start:-1,end:-1};
+  resetMediaListRenderRange(tab);
 }
 
 function scheduleMediaListRender(tab){
@@ -4838,8 +5031,10 @@ function scheduleMediaListRender(tab){
 function mediaRowHtml(item,index,tab){
   const favoriteActive=tab==='favorites'||!!item.favorite;
   const favoriteTitle=tab==='favorites'?'取消收藏':(item.favorite?'已收藏':'收藏');
-  return `<div class="media-row" data-media-row="${index}" data-media-list="${tab}" data-media-path="${escapeHtml(item.path||'')}" draggable="true" title="${escapeHtml(item.path||'')}">
-    <div class="media-primary"><span class="media-kind ${item.kind}">${mediaKindIcon(item.kind)}</span><span class="media-name-wrap"><span class="media-name">${escapeHtml(item.name||'')}</span><span class="media-type-label">${item.kind==='video'?'视频':'音乐'}</span></span></div>
+  const batch=mediaBatchState(tab,item.kind);
+  const batchSelected=batch.selectedPaths.has(item.path);
+  return `<div class="media-row ${batch.active?'batch-selectable':''} ${batchSelected?'batch-selected':''}" data-media-row="${index}" data-media-list="${tab}" data-media-path="${escapeHtml(item.path||'')}" draggable="${batch.active?'false':'true'}" title="${batch.active?(batchSelected?'点击取消选择':'点击选择'):escapeHtml(item.path||'')}">
+    <div class="media-primary">${batch.active?`<span class="media-batch-check ${batchSelected?'selected':''}" role="checkbox" aria-checked="${batchSelected}" title="${batchSelected?'取消选择':'选择'}"><svg viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"></path></svg></span>`:''}<span class="media-kind ${item.kind}">${mediaKindIcon(item.kind)}</span><span class="media-name-wrap"><span class="media-name">${escapeHtml(item.name||'')}</span><span class="media-type-label">${item.kind==='video'?'视频':'音乐'}</span></span></div>
     <div class="media-path">${escapeHtml(item.directory||'')}</div>
     <div class="media-size">${escapeHtml(formatFileSize(item.size))}</div>
     <div class="media-date">${escapeHtml(formatFileModified(item.modifiedAt))}</div>
@@ -4857,6 +5052,9 @@ function renderMediaList(tab,{force=false}={}){
   const summary=$(tab==='favorites'?'#mediaFavoritesSummary':'#mediaDownloadsSummary');
   if(!list||!summary) return;
   const items=filteredMediaItems(tab);
+  const batch=mediaBatchState(tab);
+  list.classList.toggle('batch-mode',batch.active);
+  renderMediaBatchActions(tab,items);
   const query=String($(tab==='favorites'?'#mediaFavoritesSearch':'#mediaDownloadsSearch')?.value||'').trim();
   summary.textContent=state.media.loading?'正在刷新':`${state.media.kind==='video'?'视频':'音乐'} · ${items.length} 个${query?'匹配':'文件'}`;
   if(!items.length){
@@ -4869,7 +5067,7 @@ function renderMediaList(tab,{force=false}={}){
   if(list.scrollTop>maxScroll) list.scrollTop=maxScroll;
   const start=Math.max(0,Math.floor(list.scrollTop/MEDIA_LIBRARY_ROW_HEIGHT)-MEDIA_LIBRARY_OVERSCAN);
   const end=Math.min(items.length,Math.ceil((list.scrollTop+viewportHeight)/MEDIA_LIBRARY_ROW_HEIGHT)+MEDIA_LIBRARY_OVERSCAN);
-  const key=[state.media.renderVersion,state.media.kind,tab,query,tab==='favorites'?activeMediaCollection('favorites'):'',items.length,viewportHeight].join('|');
+  const key=[state.media.renderVersion,state.media.kind,tab,query,tab==='favorites'?activeMediaCollection('favorites'):'',items.length,viewportHeight,batch.revision].join('|');
   const previous=state.media.virtualRanges[tab];
   if(!force&&previous?.key===key&&previous.start===start&&previous.end===end) return;
   state.media.virtualRanges[tab]={key,start,end};
@@ -4908,6 +5106,7 @@ async function refreshMediaLibrary({quiet=false}={}){
     state.media.downloadPath=result?.downloadPath||state.media.downloadPath;
     state.media.favoritePath=result?.favoritePath||state.media.favoritePath;
     state.media.collections=result?.collections||state.media.collections;
+    pruneMediaBatchSelections();
     if(state.media.localPlayer?.path&&!state.media.items.some(item=>item.path===state.media.localPlayer.path)) closeMediaLocalPlayer();
     for(const location of ['downloads','favorites']){
       for(const kind of ['video','audio']){
@@ -4988,13 +5187,21 @@ async function performMediaAction(action,tab,index){
 }
 
 function handleMediaListClick(event,tab){
+  const row=event.target.closest('[data-media-row]');
+  const batch=mediaBatchState(tab);
+  if(batch.active&&row){
+    event.preventDefault();
+    event.stopPropagation();
+    const item=mediaItemAt(tab,row.dataset.mediaRow);
+    if(item?.path) toggleMediaBatchSelection(tab,item.path);
+    return;
+  }
   const action=event.target.closest('[data-media-action]');
   if(action){
     event.stopPropagation();
     performMediaAction(action.dataset.mediaAction,tab,action.dataset.mediaIndex);
     return;
   }
-  const row=event.target.closest('[data-media-row]');
   if(!row) return;
   clearTimeout(state.media.clickTimer);
   if(event.detail>1) return;
@@ -5002,6 +5209,7 @@ function handleMediaListClick(event,tab){
 }
 
 function handleMediaListDoubleClick(event,tab){
+  if(mediaBatchState(tab).active) return;
   if(event.target.closest('[data-media-action]')) return;
   const row=event.target.closest('[data-media-row]');
   if(!row) return;
@@ -5016,6 +5224,10 @@ async function handleMediaListContextMenu(event,tab){
   if(!item?.path) return;
   event.preventDefault();
   clearTimeout(state.media.clickTimer);
+  if(mediaBatchState(tab).active){
+    toggleMediaBatchSelection(tab,item.path);
+    return;
+  }
   const action=await api.showItemContextMenu('media',{
     location:tab,
     favorite:!!item.favorite,
@@ -5023,6 +5235,10 @@ async function handleMediaListContextMenu(event,tab){
     collections:tab==='favorites'?mediaCollectionsFor('favorites',item.kind):[],
   });
   if(!action) return;
+  if(action==='batch-delete'){
+    startMediaBatchDelete(tab,item.path);
+    return;
+  }
   if(action.startsWith('move:')){
     const collection=action.slice(5);
     const result=await api.moveLocalMedia(item.path,tab,collection);
@@ -5055,6 +5271,7 @@ function beginNativeFileDrag(event,filePath,row){
 }
 
 function handleMediaFileDragStart(event,tab){
+  if(mediaBatchState(tab).active){ event.preventDefault(); return; }
   if(event.target.closest('[data-media-action]')){ event.preventDefault(); return; }
   const row=event.target.closest('[data-media-row]');
   const item=mediaItemAt(tab,row?.dataset.mediaRow);
@@ -5318,12 +5535,21 @@ function renderClipboardBatchActions(){
   const batch=state.clipboardBatchDelete;
   const selectedCount=batch.active?selectedClipboardBatchIds().length:0;
   const start=$('#startClipboardBatchDelete');
+  const selectAll=$('#selectAllClipboardBatchDelete');
   const cancel=$('#cancelClipboardBatchDelete');
   const confirm=$('#confirmClipboardBatchDelete');
+  const visibleIds=batch.active?filteredRecords().map(item=>item.id):[];
+  const allVisibleSelected=visibleIds.length>0&&visibleIds.every(id=>batch.selectedIds.has(id));
   $('#clipboardView')?.classList.toggle('clipboard-batch-mode',batch.active);
   if(start){
     start.hidden=batch.active;
     start.disabled=!state.records.length;
+  }
+  if(selectAll){
+    selectAll.hidden=!batch.active;
+    selectAll.disabled=batch.busy||visibleIds.length===0;
+    selectAll.textContent=allVisibleSelected?'取消全选':'全选';
+    selectAll.title=visibleIds.length?`${allVisibleSelected?'取消选择':'选择'}当前筛选结果中的 ${visibleIds.length} 条记录`:'当前筛选结果为空';
   }
   if(cancel){
     cancel.hidden=!batch.active;
@@ -5342,6 +5568,22 @@ function startClipboardBatchDelete(initialRecordId=''){
   batch.active=true;
   batch.busy=false;
   if(initialRecordId&&state.records.some(item=>item.id===initialRecordId)) batch.selectedIds.add(initialRecordId);
+  batch.revision+=1;
+  state.clipboardRenderSnapshot=null;
+  renderClipboardBatchActions();
+  if(state.view==='clipboard') renderClipboard();
+}
+
+function toggleClipboardBatchSelectAll(){
+  const batch=state.clipboardBatchDelete;
+  if(!batch.active||batch.busy) return;
+  const visibleIds=filteredRecords().map(item=>item.id);
+  if(!visibleIds.length) return;
+  const allVisibleSelected=visibleIds.every(id=>batch.selectedIds.has(id));
+  visibleIds.forEach(id=>{
+    if(allVisibleSelected) batch.selectedIds.delete(id);
+    else batch.selectedIds.add(id);
+  });
   batch.revision+=1;
   state.clipboardRenderSnapshot=null;
   renderClipboardBatchActions();

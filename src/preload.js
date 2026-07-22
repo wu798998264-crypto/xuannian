@@ -378,6 +378,9 @@ contextBridge.exposeInMainWorld('nativeAPI', {
   async deleteLocalMedia(filePath, location) {
     return ipcRenderer.invoke('media:deleteLocal', filePath || '', location || 'downloads');
   },
+  async deleteLocalMediaBatch(filePaths, location) {
+    return ipcRenderer.invoke('media:deleteLocalBatch', Array.isArray(filePaths) ? filePaths : [], location || 'downloads');
+  },
   async deleteMediaDownloadHistoryItem(taskId) {
     return ipcRenderer.invoke('media:deleteDownloadHistoryItem', taskId || '');
   },

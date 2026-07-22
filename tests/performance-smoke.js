@@ -153,6 +153,8 @@ async function run() {
   assert(mainSource.includes('history.removeEntryAtIndex(removeIndex)'), 'embedded media history must prune old entries');
   assert(mainSource.includes('await portalSession.clearCache()'), 'oversized embedded website cache must be cleared');
   assert(mainSource.includes("action('batch-delete'"), 'clipboard native context menus need a batch-delete entry');
+  assert(mainSource.includes("ipcMain.handle('media:deleteLocalBatch'") && mainSource.includes("status: 'batch-deleted'"), 'media batch deletion must use one native operation and one refresh notification');
+  assert(/kind === 'media'[\s\S]*?action\('batch-delete', '批量删除'\)/.test(mainSource), 'media native context menus need a batch-delete entry');
   assert(mediaLibrarySource.includes('async function scanMediaDirectory'), 'local media files must be derived from the selected folders');
   assert(mediaLibrarySource.includes('async function listManagedMediaFiles'), 'media scanning must enumerate only supported media files');
   assert(mediaLibrarySource.includes('async function deleteMediaCollection'), 'media collections need a file-preserving delete path');
@@ -244,10 +246,14 @@ async function run() {
   assert(indexSource.includes('data-file-index="${index}" draggable="true"'), 'full-disk result rows must be draggable');
   assert(indexSource.includes("handleMediaFileDragStart(event,'downloads')") && indexSource.includes("handleMediaFileDragStart(event,'favorites')"), 'downloaded and favorite media rows must both start native file drags');
   assert(indexSource.includes('function beginNativeFileDrag(') && indexSource.includes('api.startFileDrag?.(filePath)'), 'renderer file drags must cross the preload bridge');
-  assert(indexSource.includes('id="startClipboardBatchDelete"') && indexSource.includes('id="confirmClipboardBatchDelete"') && indexSource.includes('id="cancelClipboardBatchDelete"'), 'clipboard toolbar must expose enter, confirm, and cancel batch-delete controls');
+  assert(indexSource.includes('id="startClipboardBatchDelete"') && indexSource.includes('id="selectAllClipboardBatchDelete"') && indexSource.includes('id="confirmClipboardBatchDelete"') && indexSource.includes('id="cancelClipboardBatchDelete"'), 'clipboard toolbar must expose select-all, enter, confirm, and cancel batch-delete controls');
   assert(indexSource.includes('clipboardBatchDelete: {active:false,selectedIds:new Set(),revision:0,busy:false}'), 'clipboard batch selection must use persistent in-memory state');
+  assert(indexSource.includes('function toggleClipboardBatchSelectAll()') && indexSource.includes('const visibleIds=filteredRecords().map'), 'clipboard select-all must operate on the current filtered result set');
   assert(indexSource.includes("else if(action==='batch-delete') startClipboardBatchDelete(record?.id)"), 'right-click batch delete must enter selection mode with the clicked record selected');
   assert(indexSource.includes('state.records=await api.saveRecords(state.records.filter(item=>!selectedSet.has(item.id)))'), 'batch deletion must persist all removals in one write');
+  assert(indexSource.includes('data-media-batch-select-all="downloads"') && indexSource.includes('data-media-batch-select-all="favorites"'), 'downloaded and favorite media panels must expose select-all controls');
+  assert(indexSource.includes('function confirmMediaBatchDelete(tab)') && indexSource.includes('api.deleteLocalMediaBatch('), 'media batch deletion must persist through the native bulk API');
+  assert(indexSource.includes('batchDelete:{') && indexSource.includes('selectedPaths:new Set()'), 'media batch selection must persist independently of virtual rows');
   assert(indexSource.includes("state.media.refreshTimer=setInterval"), 'local media deletion checks must run only while the local media view is active');
   assert(mediaStyleSource.includes('.media-row{height:64px'), 'media rows need stable dimensions');
   assert(indexSource.includes('const FILE_THUMBNAIL_PREFETCH_ROWS = 10'), 'file thumbnails must prefetch exactly ten rows below the viewport');

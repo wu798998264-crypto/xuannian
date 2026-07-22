@@ -275,7 +275,14 @@ async function run() {
         selected:state.clipboardBatchDelete.selectedIds.size,
       };
       document.querySelector('#startClipboardBatchDelete').click();
-      document.querySelector('[data-record-card="batch-a"]').click();
+      document.querySelector('#clipboardSearch').value='alpha';
+      document.querySelector('#selectAllClipboardBatchDelete').click();
+      const filteredSelection={
+        selected:[...state.clipboardBatchDelete.selectedIds],
+        selectAllText:document.querySelector('#selectAllClipboardBatchDelete').textContent,
+      };
+      document.querySelector('#clipboardSearch').value='';
+      renderClipboard();
       document.querySelector('[data-record-card="batch-b"]').click();
       const beforeSwitch={
         active:state.clipboardBatchDelete.active,
@@ -299,6 +306,7 @@ async function run() {
       const result={
         contextEntry,
         cancelled,
+        filteredSelection,
         beforeSwitch,
         activeAway,
         afterReturn,
@@ -325,6 +333,7 @@ async function run() {
   console.log(`clipboard batch-delete metrics ${JSON.stringify(clipboardBatchDeleteMetrics)}`);
   assert.deepStrictEqual(clipboardBatchDeleteMetrics.contextEntry, {active:true,selected:['batch-a']}, 'right-click batch delete must preselect the clicked record');
   assert.deepStrictEqual(clipboardBatchDeleteMetrics.cancelled, {active:false,selected:0}, 'cancel must be the only non-destructive exit from batch mode');
+  assert.deepStrictEqual(clipboardBatchDeleteMetrics.filteredSelection, {selected:['batch-a'],selectAllText:'取消全选'}, 'select all must cover the current clipboard filter without selecting hidden records');
   assert.deepStrictEqual(clipboardBatchDeleteMetrics.beforeSwitch, {active:true,selected:['batch-a','batch-b'],confirmText:'确认删除 (2)'});
   assert.strictEqual(clipboardBatchDeleteMetrics.activeAway, true, 'batch mode must remain active outside the clipboard view');
   assert.deepStrictEqual(clipboardBatchDeleteMetrics.afterReturn, {active:true,selected:['batch-a','batch-b'],selectedCards:2}, 'batch selection must survive switching away and back');
@@ -334,6 +343,131 @@ async function run() {
   assert.deepStrictEqual(clipboardBatchDeleteMetrics.savePayloads, [['batch-c']], 'batch deletion must save exactly once');
   assert.strictEqual(clipboardBatchDeleteMetrics.activeAfterConfirm, false);
   assert.strictEqual(clipboardBatchDeleteMetrics.normalEntryVisible, true);
+  const mediaBatchDeleteMetrics = await window.webContents.executeJavaScript(`
+    (async()=>{
+      const original={
+        items:state.media.items,
+        kind:state.media.kind,
+        tab:state.media.tab,
+        loaded:state.media.loaded,
+        renderVersion:state.media.renderVersion,
+        collections:state.media.collections,
+        activeCollections:state.media.activeCollections,
+        favoriteOrders:state.media.favoriteOrders,
+        listLocalMedia:api.listLocalMedia,
+        deleteLocalMediaBatch:api.deleteLocalMediaBatch,
+        showItemContextMenu:api.showItemContextMenu,
+      };
+      for(const tab of ['downloads','favorites']) for(const kind of ['video','audio']){
+        const batch=mediaBatchState(tab,kind);
+        batch.active=false;
+        batch.busy=false;
+        batch.selectedPaths.clear();
+        batch.revision+=1;
+      }
+      let currentItems=[
+        {location:'downloads',kind:'video',path:'C:\\\\media\\\\alpha.mp4',directory:'C:\\\\media',name:'alpha.mp4',size:10,modifiedAt:1},
+        {location:'downloads',kind:'video',path:'C:\\\\media\\\\beta.mp4',directory:'C:\\\\media',name:'beta.mp4',size:20,modifiedAt:2},
+        {location:'downloads',kind:'video',path:'C:\\\\media\\\\gamma.mp4',directory:'C:\\\\media',name:'gamma.mp4',size:30,modifiedAt:3},
+        {location:'downloads',kind:'audio',path:'C:\\\\media\\\\song.mp3',directory:'C:\\\\media',name:'song.mp3',size:40,modifiedAt:4},
+        {location:'favorites',kind:'video',path:'C:\\\\favorites\\\\saved.mp4',directory:'C:\\\\favorites',name:'saved.mp4',collection:'',size:50,modifiedAt:5},
+      ];
+      const deleteCalls=[];
+      state.media.items=currentItems;
+      state.media.kind='video';
+      state.media.tab='downloads';
+      state.media.loaded=true;
+      state.media.renderVersion+=1;
+      state.media.collections={downloads:{video:[],audio:[]},favorites:{video:[],audio:[]}};
+      state.media.activeCollections={downloads:{video:'',audio:''},favorites:{video:'',audio:''}};
+      state.media.favoriteOrders={};
+      document.querySelector('#mediaDownloadsSearch').value='alpha';
+      document.querySelector('#mediaFavoritesSearch').value='';
+      api.listLocalMedia=async()=>({ok:true,items:currentItems,downloadPath:'C:\\\\media',favoritePath:'C:\\\\favorites',collections:state.media.collections});
+      api.deleteLocalMediaBatch=async(paths,location)=>{
+        deleteCalls.push({paths:[...paths].sort(),location});
+        currentItems=currentItems.filter(item=>!paths.includes(item.path));
+        return {ok:true,deletedPaths:[...paths]};
+      };
+      api.showItemContextMenu=async kind=>kind==='media'?'batch-delete':'';
+      renderMediaList('downloads',{force:true});
+      document.querySelector('[data-media-batch-start="downloads"]').click();
+      document.querySelector('[data-media-batch-select-all="downloads"]').click();
+      const filteredSelection={
+        selected:[...mediaBatchState('downloads').selectedPaths],
+        selectAllText:document.querySelector('[data-media-batch-select-all="downloads"]').textContent,
+      };
+      document.querySelector('#mediaDownloadsSearch').value='';
+      renderMediaList('downloads',{force:true});
+      [...document.querySelectorAll('#mediaDownloadsList [data-media-path]')]
+        .find(row=>row.dataset.mediaPath==='C:\\\\media\\\\beta.mp4').click();
+      state.media.kind='audio';
+      renderMediaLists({force:true});
+      const videoBatchActiveWhileAudio=mediaBatchState('downloads','video').active;
+      state.media.kind='video';
+      renderMediaLists({force:true});
+      const afterKindReturn={
+        active:mediaBatchState('downloads').active,
+        selected:[...mediaBatchState('downloads').selectedPaths].sort(),
+        selectedRows:document.querySelectorAll('#mediaDownloadsList .batch-selected').length,
+      };
+      renderMediaList('favorites',{force:true});
+      document.querySelector('#mediaFavoritesList [data-media-row]').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true}));
+      await new Promise(resolve=>setTimeout(resolve,10));
+      const favoriteContextEntry={
+        active:mediaBatchState('favorites').active,
+        selected:[...mediaBatchState('favorites').selectedPaths],
+      };
+      cancelMediaBatchDelete('favorites');
+      renderMediaList('downloads',{force:true});
+      document.querySelector('[data-media-batch-confirm="downloads"]').click();
+      await new Promise(resolve=>setTimeout(resolve,0));
+      const confirmTitle=document.querySelector('#modalBox h3')?.textContent||'';
+      document.querySelector('#confirmModal').click();
+      await new Promise(resolve=>setTimeout(resolve,30));
+      const result={
+        filteredSelection,
+        videoBatchActiveWhileAudio,
+        afterKindReturn,
+        favoriteContextEntry,
+        confirmTitle,
+        deleteCalls,
+        remaining:state.media.items.filter(item=>item.location==='downloads'&&item.kind==='video').map(item=>item.name).sort(),
+        activeAfterConfirm:mediaBatchState('downloads').active,
+      };
+      for(const tab of ['downloads','favorites']) for(const kind of ['video','audio']){
+        const batch=mediaBatchState(tab,kind);
+        batch.active=false;
+        batch.busy=false;
+        batch.selectedPaths.clear();
+        batch.revision+=1;
+      }
+      state.media.items=original.items;
+      state.media.kind=original.kind;
+      state.media.tab=original.tab;
+      state.media.loaded=original.loaded;
+      state.media.renderVersion=original.renderVersion+1;
+      state.media.collections=original.collections;
+      state.media.activeCollections=original.activeCollections;
+      state.media.favoriteOrders=original.favoriteOrders;
+      api.listLocalMedia=original.listLocalMedia;
+      api.deleteLocalMediaBatch=original.deleteLocalMediaBatch;
+      api.showItemContextMenu=original.showItemContextMenu;
+      document.querySelector('#mediaDownloadsSearch').value='';
+      document.querySelector('#mediaFavoritesSearch').value='';
+      renderMediaLists({force:true});
+      return result;
+    })()
+  `, true);
+  console.log(`media batch-delete metrics ${JSON.stringify(mediaBatchDeleteMetrics)}`);
+  assert.deepStrictEqual(mediaBatchDeleteMetrics.filteredSelection, {selected:['C:\\media\\alpha.mp4'],selectAllText:'取消全选'}, 'media select all must cover only the current filtered rows');
+  assert.strictEqual(mediaBatchDeleteMetrics.videoBatchActiveWhileAudio, true, 'video batch state must survive switching to audio');
+  assert.deepStrictEqual(mediaBatchDeleteMetrics.afterKindReturn, {active:true,selected:['C:\\media\\alpha.mp4','C:\\media\\beta.mp4'],selectedRows:2}, 'media batch selection must survive virtual rerenders and kind switches');
+  assert.deepStrictEqual(mediaBatchDeleteMetrics.favoriteContextEntry, {active:true,selected:['C:\\favorites\\saved.mp4']}, 'media right-click batch delete must preselect the clicked file');
+  assert.strictEqual(mediaBatchDeleteMetrics.confirmTitle, '批量删除已下载文件');
+  assert.deepStrictEqual(mediaBatchDeleteMetrics.deleteCalls, [{paths:['C:\\media\\alpha.mp4','C:\\media\\beta.mp4'],location:'downloads'}], 'media batch deletion must cross the bridge once');
+  assert.deepStrictEqual(mediaBatchDeleteMetrics.remaining, ['gamma.mp4']);
+  assert.strictEqual(mediaBatchDeleteMetrics.activeAfterConfirm, false);
   const nativeIconMetrics = await window.webContents.executeJavaScript(`
     (async()=>{
       let active=0;

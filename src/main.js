@@ -7805,6 +7805,46 @@ ipcMain.handle('media:deleteLocal', async (_event, filePath, location) => {
     return { ok: true };
   });
 });
+ipcMain.handle('media:deleteLocalBatch', async (_event, filePaths, location) => {
+  const directories = mediaDirectories();
+  const root = location === 'favorites' ? directories.favoritePath : directories.downloadPath;
+  const uniquePaths = new Map();
+  for (const candidate of Array.isArray(filePaths) ? filePaths : []) {
+    const value = String(candidate || '').trim();
+    if (!value || !path.isAbsolute(value)) continue;
+    const resolved = path.resolve(value);
+    uniquePaths.set(process.platform === 'win32' ? resolved.toLocaleLowerCase('en-US') : resolved, resolved);
+  }
+  if (!uniquePaths.size) return { ok: false, reason: '没有可删除的媒体文件', deletedPaths: [] };
+  return runMediaFileOperation('batch delete media files', async () => {
+    const deletedPaths = [];
+    const skippedPaths = [];
+    const failedPaths = [];
+    for (const value of uniquePaths.values()) {
+      if (!isPathInside(value, root) || !mediaKindForPath(value) || !fs.existsSync(value)) {
+        skippedPaths.push(value);
+        continue;
+      }
+      try {
+        await shell.trashItem(value);
+        deletedPaths.push(value);
+      } catch (error) {
+        failedPaths.push(value);
+        runtimeLog(`batch delete media file failed ${value}: ${error?.message || error}`);
+      }
+    }
+    if (deletedPaths.length) {
+      notifyMediaDownloadsChanged({ status: 'batch-deleted', count: deletedPaths.length });
+    }
+    return {
+      ok: deletedPaths.length > 0,
+      reason: deletedPaths.length ? '' : '所选文件已被移动、删除或暂时无法访问',
+      deletedPaths,
+      skippedPaths,
+      failedPaths,
+    };
+  });
+});
 ipcMain.handle('media:deleteDownloadHistoryItem', async (_event, taskId) => {
   const id = String(taskId || '').trim();
   const task = loadMediaDownloadHistory().find((item) => item.id === id);
@@ -8416,6 +8456,7 @@ ipcMain.handle('ui:showItemContextMenu', (event, kind, options = {}) => {
       });
     }
     items.push({ type: 'separator' });
+    items.push(action('batch-delete', '批量删除'));
     items.push(action('delete', '删除'));
   } else if (kind === 'media-folder') {
     items.push(action('rename', '修改收藏夹名称'));
