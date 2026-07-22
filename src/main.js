@@ -2664,6 +2664,17 @@ function forgetCompletedMediaDownload(taskId) {
   }
 }
 
+function clearCompletedMediaDownloadHistory() {
+  try {
+    const cleared = loadMediaDownloadHistory().length;
+    writeJsonAtomicSync(mediaDownloadHistoryFile(), JSON.stringify({ version: 1, items: [] }));
+    return { ok: true, cleared };
+  } catch (error) {
+    runtimeLog(`media download history clear failed: ${error?.stack || error}`);
+    return { ok: false, cleared: 0, reason: '下载记录清除失败' };
+  }
+}
+
 function notifyMediaDownloadsChanged(payload = {}) {
   if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
   mainWindow.webContents.send('media:downloadsChanged', payload || {});
@@ -7947,6 +7958,11 @@ ipcMain.handle('media:deleteDownloadHistoryItem', async (_event, taskId) => {
     return { ok: true, missing: !existed };
   });
   return removed;
+});
+ipcMain.handle('media:clearDownloadHistory', () => {
+  const result = clearCompletedMediaDownloadHistory();
+  if (result.ok) notifyMediaDownloadsChanged({ status: 'history-cleared', count: result.cleared });
+  return result;
 });
 ipcMain.handle('media:setDownloadTaskPaused', (_event, taskId, shouldPause = true) => {
   const id = String(taskId || '').trim();

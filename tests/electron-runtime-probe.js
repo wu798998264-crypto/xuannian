@@ -1152,6 +1152,7 @@ async function run() {
       const openedDownloadHistory=[];
       const downloadHistoryContextMenus=[];
       const deletedDownloadHistory=[];
+      let clearedDownloadHistory=0;
       const cancelledDownloadTasks=[];
       const pausedDownloadTasks=[];
       const createdMediaCollections=[];
@@ -1178,6 +1179,7 @@ async function run() {
       api.openPath=async filePath=>{ openedDownloadHistory.push(filePath); return true; };
       api.showFileContextMenu=async filePath=>{ downloadHistoryContextMenus.push(filePath); return true; };
       api.deleteMediaDownloadHistoryItem=async taskId=>{ deletedDownloadHistory.push(taskId); return {ok:true}; };
+      api.clearMediaDownloadHistory=async()=>{ clearedDownloadHistory+=1; return {ok:true,cleared:9}; };
       api.cancelMediaDownloadTask=async taskId=>{ cancelledDownloadTasks.push(taskId); return {ok:true,cancelled:true}; };
       api.setMediaDownloadTaskPaused=async(taskId,paused)=>{ pausedDownloadTasks.push({taskId,paused}); return {ok:true,paused}; };
       api.getLocalMediaPlaybackUrl=async filePath=>{ localPlaybackRequests.push(filePath); return 'file:///C:/Downloads/music.flac'; };
@@ -1469,6 +1471,24 @@ async function run() {
         deleted:[...deletedDownloadHistory],
         stillPresent:!!mediaDownloadTaskById('runtime-completed-11'),
       };
+      const clearButtonVisibleBefore=!document.querySelector('#mediaDownloadClear').hidden;
+      const clearHistoryPromise=clearMediaDownloadHistory();
+      await new Promise(resolve=>setTimeout(resolve,20));
+      const clearConfirm={
+        title:document.querySelector('#modalBox .modal-header h3')?.textContent.trim()||'',
+        message:document.querySelector('#modalBox .modal-message')?.textContent.trim()||'',
+      };
+      document.querySelector('#confirmModal').click();
+      await clearHistoryPromise;
+      const clearedHistory={
+        calls:clearedDownloadHistory,
+        completed:state.media.downloadTasks.filter(task=>task.status==='completed').length,
+        activePreserved:!!state.media.downloadTasks.find(task=>task.status==='downloading'),
+        clearButtonVisibleBefore,
+        clearButtonHiddenAfter:document.querySelector('#mediaDownloadClear').hidden,
+        confirmTitle:clearConfirm.title,
+        confirmMessage:clearConfirm.message,
+      };
       const bubbleVisibility={};
       for(const tab of ['portal','downloads','favorites']){
         setMediaTab(tab);
@@ -1586,7 +1606,7 @@ async function run() {
         hasAllFilter:!!document.querySelector('[data-media-filters] [data-media-type="all"]'),
         copyActions:document.querySelectorAll('#mediaDownloadsList [data-media-action="copy"]').length,
         deleteActions:document.querySelectorAll('#mediaDownloadsList [data-media-action="delete"]').length,
-        downloadBubble,completedHistory,completedHistoryActions,bubbleVisibility,mediaLayout,
+        downloadBubble,completedHistory,completedHistoryActions,clearedHistory,bubbleVisibility,mediaLayout,
         bubblePanel:document.querySelector('#mediaDownloadBubble').closest('[data-media-panel]')?.dataset.mediaPanel||'',
         provider:document.querySelector('#mediaVideoProvider').textContent.trim(),
       };
@@ -1710,6 +1730,15 @@ async function run() {
     contextMenus:['C:/Downloads/completed-11.mp4'],
     deleted:['runtime-completed-11'],
     stillPresent:false,
+  });
+  assert.deepStrictEqual(mediaLibraryMetrics.clearedHistory, {
+    calls:1,
+    completed:0,
+    activePreserved:true,
+    clearButtonVisibleBefore:true,
+    clearButtonHiddenAfter:true,
+    confirmTitle:'清除下载记录',
+    confirmMessage:'确定清除最近 9 条已完成的下载记录吗？已经下载到磁盘的文件会保留，正在进行、暂停或等待重试的任务不会受到影响。',
   });
   assert.deepStrictEqual(mediaLibraryMetrics.bubbleVisibility, {portal:true,downloads:true,favorites:true});
   assert.deepStrictEqual(mediaLibraryMetrics.mediaLayout, {

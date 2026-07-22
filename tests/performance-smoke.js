@@ -173,6 +173,7 @@ async function run() {
   assert(!mediaLibrarySource.includes('fetch('), 'media library must not call third-party private download APIs');
 
   const indexSource = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  assert(mainSource.includes("ipcMain.handle('media:clearDownloadHistory'") && indexSource.includes('clearMediaDownloadHistory()'), 'completed download history must support one-click clearing without touching media files');
   const quickSource = fs.readFileSync(path.join(__dirname, '..', 'quick.html'), 'utf8');
   const stickySource = fs.readFileSync(path.join(__dirname, '..', 'sticky.html'), 'utf8');
   const wheelSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'wheel-scroll.js'), 'utf8');

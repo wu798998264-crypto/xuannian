@@ -159,8 +159,12 @@
     body.dark .media-download-count{background:#f1f1f1;color:#222}
     .media-download-popover{position:absolute;right:0;top:46px;width:340px;max-width:calc(100vw - 110px);max-height:320px;display:none;flex-direction:column;border:1px solid var(--line);border-radius:8px;background:var(--panel);box-shadow:var(--shadow);overflow:hidden}
     .media-download-bubble.open .media-download-popover{display:flex}
-    .media-download-head{height:42px;flex:none;display:flex;align-items:center;justify-content:space-between;padding:0 12px;border-bottom:1px solid var(--line);font-size:12px;font-weight:800}
+    .media-download-head{height:42px;flex:none;display:flex;align-items:center;justify-content:space-between;padding:0 9px 0 12px;border-bottom:1px solid var(--line);font-size:12px;font-weight:800}
+    .media-download-head-meta{display:flex;align-items:center;gap:8px;min-width:0}
     .media-download-head span{color:var(--muted);font-size:10px}
+    .media-download-clear{height:26px;padding:0 9px;border:1px solid var(--line);border-radius:5px;background:var(--panel-soft);color:var(--muted);font-size:10px;font-weight:800}
+    .media-download-clear:hover{border-color:color-mix(in srgb,var(--danger) 45%,var(--line));background:color-mix(in srgb,var(--danger) 9%,var(--panel));color:var(--danger)}
+    .media-download-clear[hidden]{display:none}
     .media-download-list{min-height:74px;max-height:276px;overflow:auto}
     .media-download-task{padding:10px 12px;border-bottom:1px solid var(--line);cursor:default}
     .media-download-task:last-child{border-bottom:0}
@@ -1118,7 +1122,7 @@
               <span class="media-download-count" id="mediaDownloadCount">0</span>
             </button>
             <div class="media-download-popover" id="mediaDownloadPopover">
-              <div class="media-download-head"><strong>下载记录</strong><span id="mediaDownloadSummary">暂无任务</span></div>
+              <div class="media-download-head"><strong>下载记录</strong><div class="media-download-head-meta"><span id="mediaDownloadSummary">暂无任务</span><button class="media-download-clear" id="mediaDownloadClear" type="button" title="一键清除已完成的下载记录" hidden>清空</button></div></div>
               <div class="media-download-list" id="mediaDownloadTaskList"></div>
             </div>
           </div>
@@ -1777,6 +1781,7 @@ function createBrowserFallbackAPI(){
     async deleteLocalMedia(){ return {ok:false,reason:'预览环境不支持删除文件'}; },
     async deleteLocalMediaBatch(){ return {ok:false,reason:'预览环境不支持批量删除文件',deletedPaths:[]}; },
     async deleteMediaDownloadHistoryItem(){ return {ok:false,reason:'预览环境不支持删除下载记录'}; },
+    async clearMediaDownloadHistory(){ return {ok:true,cleared:0}; },
     async cancelMediaDownloadTask(){ return {ok:true}; },
     async setMediaDownloadTaskPaused(_taskId,paused=true){ return {ok:true,paused:!!paused}; },
     async getLocalMediaPlaybackUrl(filePath){ return String(filePath||''); },
@@ -1911,6 +1916,7 @@ function createUnifiedAPI(nativeApi, fallback){
     deleteLocalMedia: (filePath,location)=> nativeApi.deleteLocalMedia ? nativeApi.deleteLocalMedia(filePath,location) : fallback.deleteLocalMedia(filePath,location),
     deleteLocalMediaBatch: (filePaths,location)=> nativeApi.deleteLocalMediaBatch ? nativeApi.deleteLocalMediaBatch(filePaths,location) : fallback.deleteLocalMediaBatch(filePaths,location),
     deleteMediaDownloadHistoryItem: (taskId)=> nativeApi.deleteMediaDownloadHistoryItem ? nativeApi.deleteMediaDownloadHistoryItem(taskId) : fallback.deleteMediaDownloadHistoryItem(taskId),
+    clearMediaDownloadHistory: ()=> nativeApi.clearMediaDownloadHistory ? nativeApi.clearMediaDownloadHistory() : fallback.clearMediaDownloadHistory(),
     cancelMediaDownloadTask: (taskId)=> nativeApi.cancelMediaDownloadTask ? nativeApi.cancelMediaDownloadTask(taskId) : fallback.cancelMediaDownloadTask(taskId),
     setMediaDownloadTaskPaused: (taskId,paused=true)=> nativeApi.setMediaDownloadTaskPaused ? nativeApi.setMediaDownloadTaskPaused(taskId,paused) : fallback.setMediaDownloadTaskPaused(taskId,paused),
     openMediaPortal: (url,downloadTarget,sourceText,autoSubmit,collection,qualityPreference,automationMode)=> nativeApi.openMediaPortal ? nativeApi.openMediaPortal(url,downloadTarget,sourceText,autoSubmit,collection,qualityPreference,automationMode) : fallback.openMediaPortal(url,downloadTarget,sourceText,autoSubmit,collection,qualityPreference,automationMode),
@@ -2491,6 +2497,11 @@ function bindEvents(){
   $('#mediaDownloadTaskList')?.addEventListener('click',handleMediaDownloadTaskClick);
   $('#mediaDownloadTaskList')?.addEventListener('dblclick',handleMediaDownloadTaskDoubleClick);
   $('#mediaDownloadTaskList')?.addEventListener('contextmenu',handleMediaDownloadTaskContextMenu);
+  $('#mediaDownloadClear')?.addEventListener('click',event=>{
+    event.preventDefault();
+    event.stopPropagation();
+    clearMediaDownloadHistory();
+  });
   $$('[data-media-refresh]').forEach(button=>button.addEventListener('click',()=>refreshMediaLibrary()));
   $$('[data-media-collection-bar]').forEach(bar=>bar.addEventListener('click',event=>{
     const button=event.target.closest('[data-media-collection]');
@@ -3756,6 +3767,8 @@ function renderMediaDownloadBubble(){
   $('#mediaDownloadRing')?.setAttribute('stroke-dasharray',`${Math.max(0,Math.min(100,percent))} 100`);
   const summary=$('#mediaDownloadSummary');
   if(summary) summary.textContent=active.length?(external.length===active.length?`${external.length} 项等待云盘客户端下载`:`${active.length} 项进行中 · ${percent}%`):(completed.length?`最近 ${completed.length} 条已完成`:'暂无任务');
+  const clearButton=$('#mediaDownloadClear');
+  if(clearButton) clearButton.hidden=completed.length===0;
   const list=$('#mediaDownloadTaskList');
   if(!list) return;
   list.innerHTML=tasks.length?tasks.map(task=>{
@@ -3830,6 +3843,23 @@ async function deleteMediaDownloadTask(taskId){
   renderMediaDownloadBubble();
   toast(result.missing?'文件已不存在，下载记录已清除':'文件已移入回收站');
   if(state.view==='media') await refreshMediaLibrary({quiet:true});
+}
+
+async function clearMediaDownloadHistory(){
+  const completed=state.media.downloadTasks.filter(task=>task.status==='completed');
+  if(!completed.length) return;
+  const confirmed=await showConfirmModal({
+    title:'清除下载记录',
+    message:`确定清除最近 ${completed.length} 条已完成的下载记录吗？已经下载到磁盘的文件会保留，正在进行、暂停或等待重试的任务不会受到影响。`,
+    confirmText:'确认清除',
+    danger:true,
+  });
+  if(!confirmed) return;
+  const result=await api.clearMediaDownloadHistory();
+  if(!result?.ok){ toast(result?.reason||'下载记录清除失败'); return; }
+  state.media.downloadTasks=state.media.downloadTasks.filter(task=>task.status!=='completed');
+  renderMediaDownloadBubble();
+  toast(`已清除 ${Number(result.cleared??completed.length)} 条下载记录`);
 }
 
 async function toggleMediaDownloadTaskPause(taskId){
