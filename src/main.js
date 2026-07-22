@@ -39,6 +39,7 @@ const {
   isHttpUrl,
   isMediaUrl,
   mediaPortalLoadFailureAction,
+  shouldExtendMediaPortalVideoResultWait,
   shouldRetryMediaPortalVideoAutomation,
 } = require('./media-portal-automation');
 const { findInstalledMusicClient } = require('./media-app-launcher');
@@ -192,6 +193,10 @@ const MEDIA_PORTAL_WORKER_HEIGHT = 900;
 const MEDIA_PORTAL_MUSIC_WAKE_MAX = 3;
 const MEDIA_PORTAL_MUSIC_WAKE_DELAY_MS = 3000;
 const MEDIA_PORTAL_MUSIC_WAKE_VISIBLE_MS = 700;
+const MEDIA_PORTAL_VIDEO_WAKE_MAX = 4;
+const MEDIA_PORTAL_VIDEO_WAKE_DELAY_MS = 3000;
+const MEDIA_PORTAL_VIDEO_WAKE_REPEAT_MS = 12000;
+const MEDIA_PORTAL_VIDEO_WAKE_VISIBLE_MS = 180;
 const MEDIA_PREVIEW_CACHE_DIRECTORY = 'media-preview-cache';
 const MEDIA_PREVIEW_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const MEDIA_PREVIEW_DOWNLOAD_TIMEOUT_MS = 8 * 60 * 1000;
@@ -3426,22 +3431,29 @@ function scheduleMediaPortalVisibilityNudge(state, view, {
   visibleMsOverride = null,
   rerunAfterWake = false,
 } = {}) {
-  if (state?.automationMode !== 'music-search'
+  const musicSearch = state?.automationMode === 'music-search';
+  const videoResult = state?.automationMode === 'video-parse' && state?.phase === 'result';
+  const wakeMax = musicSearch ? MEDIA_PORTAL_MUSIC_WAKE_MAX : MEDIA_PORTAL_VIDEO_WAKE_MAX;
+  const wakeCount = Number(state?.visibilityNudgeCount || 0);
+  if ((!musicSearch && !videoResult)
     || mediaPortalVisibilityNudgeTimer
     || mediaPortalVisibilityRestoreTimer
-    || Number(state.visibilityNudgeCount || 0) >= MEDIA_PORTAL_MUSIC_WAKE_MAX) return;
+    || wakeCount >= wakeMax) return;
   const delayMs = Number.isFinite(delayMsOverride)
     ? Math.max(0, Number(delayMsOverride))
-    : (Number(state.visibilityNudgeCount || 0) > 0
-      ? Math.max(1200, MEDIA_PORTAL_MUSIC_WAKE_DELAY_MS - MEDIA_PORTAL_MUSIC_WAKE_VISIBLE_MS)
-      : MEDIA_PORTAL_MUSIC_WAKE_DELAY_MS);
+    : (musicSearch
+      ? (wakeCount > 0
+        ? Math.max(1200, MEDIA_PORTAL_MUSIC_WAKE_DELAY_MS - MEDIA_PORTAL_MUSIC_WAKE_VISIBLE_MS)
+        : MEDIA_PORTAL_MUSIC_WAKE_DELAY_MS)
+      : (wakeCount > 0 ? MEDIA_PORTAL_VIDEO_WAKE_REPEAT_MS : MEDIA_PORTAL_VIDEO_WAKE_DELAY_MS));
+  const minimumVisibleMs = musicSearch ? MEDIA_PORTAL_MUSIC_WAKE_VISIBLE_MS : MEDIA_PORTAL_VIDEO_WAKE_VISIBLE_MS;
   const visibleMs = Number.isFinite(visibleMsOverride)
-    ? Math.max(MEDIA_PORTAL_MUSIC_WAKE_VISIBLE_MS, Number(visibleMsOverride))
-    : MEDIA_PORTAL_MUSIC_WAKE_VISIBLE_MS;
+    ? Math.max(minimumVisibleMs, Number(visibleMsOverride))
+    : minimumVisibleMs;
   mediaPortalVisibilityNudgeTimer = setTimeout(async () => {
     mediaPortalVisibilityNudgeTimer = null;
     if (mediaPortalInputState !== state || state.requestId !== mediaPortalRequestId || !view || view.webContents.isDestroyed()) return;
-    state.visibilityNudgeCount = Number(state.visibilityNudgeCount || 0) + 1;
+    state.visibilityNudgeCount = wakeCount + 1;
     const content = mainWindow?.getContentBounds();
     const width = Math.max(320, Number(content?.width || MEDIA_PORTAL_WORKER_WIDTH));
     const height = Math.max(240, Number(content?.height || MEDIA_PORTAL_WORKER_HEIGHT));
@@ -3450,19 +3462,28 @@ function scheduleMediaPortalVisibilityNudge(state, view, {
     const wakeWidth = Math.max(120, width - x);
     const wakeHeight = Math.max(80, height - y);
     const restoreMainFocus = !!mainWindow?.isFocused?.();
-    view.setBounds({
-      x,
-      y,
-      width: wakeWidth,
-      height: wakeHeight,
-    });
+    if (musicSearch) {
+      view.setBounds({
+        x,
+        y,
+        width: wakeWidth,
+        height: wakeHeight,
+      });
+    } else {
+      keepMediaPortalWorkerVisible(view);
+    }
     view.setVisible(true);
     view.webContents.setAudioMuted(true);
     try { view.webContents.focus(); } catch {}
-    runtimeLog(`music search visibility wake ${state.visibilityNudgeCount}/${MEDIA_PORTAL_MUSIC_WAKE_MAX}`);
+    const wakeKind = musicSearch ? 'music search' : 'video result';
+    runtimeLog(`${wakeKind} visibility wake ${state.visibilityNudgeCount}/${wakeMax}`);
     emitMediaPortalProgress(state, {
-      percent: Math.min(76, 68 + state.visibilityNudgeCount * 2),
-      message: `正在激活音乐页面并读取结果（${state.visibilityNudgeCount}/${MEDIA_PORTAL_MUSIC_WAKE_MAX}）`,
+      percent: musicSearch
+        ? Math.min(76, 68 + state.visibilityNudgeCount * 2)
+        : Math.min(86, 58 + state.visibilityNudgeCount * 5),
+      message: musicSearch
+        ? `正在激活音乐页面并读取结果（${state.visibilityNudgeCount}/${wakeMax}）`
+        : `正在唤醒后台视频页面并读取结果（${state.visibilityNudgeCount}/${wakeMax}）`,
     });
     const visibilityScript = [
       '(async () => {',
@@ -3588,7 +3609,11 @@ function mediaPortalProgressPayload(state, extra = {}) {
     percent = previewPercent > 0
       ? Math.min(99, 94 + Math.round(previewPercent * 0.05))
       : (resultPhase ? Math.min(94, 34 + Math.round((elapsedMs / 45000) * 60)) : Math.min(32, 6 + Math.round((elapsedMs / 7000) * 26)));
-    message = previewPercent > 0 ? `正在下载临时预览 ${previewPercent}%` : (resultPhase ? '正在分析清晰度并生成预览' : '正在提交视频链接');
+    message = previewPercent > 0
+      ? `正在下载临时预览 ${previewPercent}%`
+      : (resultPhase
+        ? (Number(state?.videoResultWaitCount || 0) > 0 ? '视频较长，下载站仍在生成结果' : '正在分析清晰度并生成预览')
+        : '正在提交视频链接');
   } else if (mode === 'music-search') {
     kind = 'audio';
     operation = 'search';
@@ -3844,21 +3869,35 @@ function setMediaPortalPresentationMode(mode = 'browser', previewUrl = '') {
     'if (!overlay) {',
     "overlay = document.createElement('div');",
     'overlay.id = id;',
-    "overlay.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:#111;display:grid;place-items:center;margin:0;padding:0;';",
+    "overlay.style.cssText = 'position:fixed;inset:0;z-index:2147483647;background:#111;display:flex;flex-direction:column;margin:0;padding:0;';",
     "const video = document.createElement('video');",
     'video.controls = true;',
     "video.controlsList.add('nodownload', 'noremoteplayback');",
     'video.disablePictureInPicture = true;',
     "video.addEventListener('contextmenu', (event) => event.preventDefault());",
     "video.preload = 'metadata';",
-    "video.style.cssText = 'width:100%;height:100%;object-fit:contain;background:#111;';",
+    "video.style.cssText = 'width:100%;flex:1;min-height:0;object-fit:contain;background:#111;';",
     'overlay.appendChild(video);',
+    "const progress = document.createElement('div');",
+    "progress.style.cssText = 'height:36px;flex:none;width:100%;display:grid;grid-template-columns:52px minmax(0,1fr) 52px;align-items:center;gap:9px;padding:0 12px;background:#181818;color:#d7d7d7;font:11px -apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;font-variant-numeric:tabular-nums;box-sizing:border-box;';",
+    "const current = document.createElement('span'); current.textContent = '00:00'; current.style.textAlign = 'right';",
+    "const seek = document.createElement('input'); seek.type = 'range'; seek.min = '0'; seek.max = '0'; seek.value = '0'; seek.step = '0.05'; seek.disabled = true; seek.setAttribute('aria-label', '视频播放进度'); seek.style.cssText = 'width:100%;height:18px;margin:0;padding:0;cursor:pointer;accent-color:#4d8d74;';",
+    "const duration = document.createElement('span'); duration.textContent = '00:00';",
+    'progress.append(current, seek, duration);',
+    'overlay.appendChild(progress);',
+    "const formatTime = (value) => { const total = Math.max(0, Math.floor(Number.isFinite(Number(value)) ? Number(value) : 0)); const hours = Math.floor(total / 3600); const minutes = Math.floor((total % 3600) / 60); const seconds = total % 60; return hours > 0 ? [hours, minutes, seconds].map((part) => String(part).padStart(2, '0')).join(':') : [minutes, seconds].map((part) => String(part).padStart(2, '0')).join(':'); };",
+    "const syncProgress = () => { const total = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 0; const position = seek.dataset.scrubbing === 'true' ? Math.max(0, Number(seek.value) || 0) : (Number.isFinite(video.currentTime) ? Math.max(0, video.currentTime) : 0); seek.disabled = total <= 0; seek.max = total > 0 ? String(total) : '0'; if (seek.dataset.scrubbing !== 'true') seek.value = String(total > 0 ? Math.min(position, total) : 0); current.textContent = formatTime(position); duration.textContent = formatTime(total); seek.setAttribute('aria-valuetext', current.textContent + ' / ' + duration.textContent); };",
+    "['loadedmetadata','durationchange','timeupdate','emptied'].forEach((type) => video.addEventListener(type, syncProgress));",
+    "seek.addEventListener('pointerdown', () => { seek.dataset.scrubbing = 'true'; });",
+    "seek.addEventListener('input', () => { const value = Math.max(0, Number(seek.value) || 0); try { if (Number.isFinite(video.duration) && video.duration > 0) video.currentTime = Math.min(value, video.duration); } catch {} current.textContent = formatTime(value); seek.setAttribute('aria-valuetext', current.textContent + ' / ' + duration.textContent); });",
+    "const finishSeek = () => { delete seek.dataset.scrubbing; syncProgress(); };",
+    "seek.addEventListener('change', finishSeek); seek.addEventListener('pointerup', finishSeek); seek.addEventListener('pointercancel', finishSeek); seek.addEventListener('blur', finishSeek);",
     'document.body.appendChild(overlay);',
     '}',
     "const video = overlay.querySelector('video');",
     'const next = ' + JSON.stringify(source) + ';',
     'if (next && video.src !== next) { video.src = next; video.load(); }',
-    "overlay.style.display = 'grid';",
+    "overlay.style.display = 'flex';",
     '} else if (overlay) {',
     "overlay.style.display = 'none';",
     "overlay.querySelector('video')?.pause();",
@@ -3921,6 +3960,31 @@ function publishMediaPortalVideo(state, parsed) {
   });
 }
 
+function continueMediaPortalVideoResultWait(state, result = {}) {
+  const reason = String(result.reason || 'automation-error');
+  const waitCount = Number(state.videoResultWaitCount || 0);
+  if (!shouldExtendMediaPortalVideoResultWait(reason, state.phase, waitCount)) return false;
+  const view = mediaPortalView;
+  if (!view || view.webContents.isDestroyed() || !isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId)) return false;
+  state.videoResultWaitCount = waitCount + 1;
+  state.retryCount = 0;
+  state.visibilityNudgeCount = 0;
+  state.automationRerunRequested = false;
+  clearMediaPortalInputTimer();
+  runtimeLog(`media portal video extended wait request=${state.requestId} attempt=${state.videoResultWaitCount} reason=${reason}`);
+  emitMediaPortalProgress(state, {
+    percent: 94,
+    message: '视频较长，下载站仍在生成结果，玄念将继续等待',
+    reason: '',
+  });
+  scheduleMediaPortalVisibilityNudge(state, view, {
+    delayMsOverride: 0,
+    visibleMsOverride: 420,
+    rerunAfterWake: true,
+  });
+  return true;
+}
+
 function recoverMediaPortalVideoAutomation(state, result = {}) {
   const reason = String(result.reason || 'automation-error');
   const recoveryCount = Number(state.videoRecoveryCount || 0);
@@ -3932,6 +3996,7 @@ function recoverMediaPortalVideoAutomation(state, result = {}) {
   state.loadRetryCount = 0;
   state.phase = 'input';
   state.previewDownloadPercent = 0;
+  state.visibilityNudgeCount = 0;
   state.automationRerunRequested = false;
   clearMediaPortalInputTimer();
   runtimeLog(`media portal video recovery request=${state.requestId} attempt=${state.videoRecoveryCount} reason=${reason}`);
@@ -3975,6 +4040,7 @@ async function completeMediaPortalAutomation(state, result = {}) {
   }
   if (humanVerification) rememberMediaPortalVerificationResume(state);
   if (mode === 'video-parse') {
+    if (!result.ok && continueMediaPortalVideoResultWait(state, result)) return;
     if (!result.ok && recoverMediaPortalVideoAutomation(state, result)) return;
     const parsed = {
       requestId: state.requestId,
@@ -4128,7 +4194,7 @@ function scheduleMediaPortalInput() {
       phase: state.phase || '',
       value: state.value || '',
       timeoutMs: state.automationMode === 'video-parse' && state.phase === 'result'
-        ? 45000
+        ? (Number(state.videoResultWaitCount || 0) > 0 ? 75000 : 60000)
         : (state.automationMode === 'music-download' ? 55000 : (state.automationMode === 'music-search' && state.visibilityRetryCount ? 15000 : 30000)),
     }, scoreMediaDownloadQualityLabel);
     try {
@@ -4605,9 +4671,10 @@ function keepMediaPortalWorkerVisible(view = mediaPortalView) {
   if (!view || view.webContents.isDestroyed()) return false;
   const content = mainWindow?.getContentBounds();
   const width = Math.max(1, Number(content?.width || 1));
+  const height = Math.max(1, Number(content?.height || 1));
   view.setBounds({
-    x: width + 8,
-    y: 0,
+    x: Math.max(0, width - 2),
+    y: Math.max(0, height - 2),
     width: MEDIA_PORTAL_WORKER_WIDTH,
     height: MEDIA_PORTAL_WORKER_HEIGHT,
   });
@@ -4757,6 +4824,8 @@ function openMediaPortal(url, downloadTarget = 'download', sourceText = '', auto
       loadRetryCount: 0,
       navigationAbortCount: 0,
       videoRecoveryCount: 0,
+      videoResultWaitCount: 0,
+      visibilityNudgeCount: 0,
       automationRunning: false,
       automationRerunRequested: false,
     }

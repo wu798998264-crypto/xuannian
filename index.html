@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>玄念8.2.5</title>
+  <title>玄念8.2.9</title>
   <link rel="icon" href="src/xuannian-logo-256.png" />
   <link rel="stylesheet" href="src/media-library.css" />
   <style>
@@ -1137,7 +1137,12 @@
               </div>
               <div class="media-video-result" id="mediaVideoResult" hidden>
                 <div class="media-video-frame"><video id="mediaVideoPreview" controls controlslist="nodownload noremoteplayback" disablepictureinpicture preload="metadata"></video></div>
-                <div class="media-video-meta"><strong id="mediaVideoTitle">已解析视频</strong><span id="mediaVideoQuality"></span></div>
+                <div class="media-video-progress" id="mediaVideoProgress" hidden>
+                  <span id="mediaVideoCurrentTime">00:00</span>
+                  <input id="mediaVideoSeek" type="range" min="0" max="0" value="0" step="0.05" aria-label="视频播放进度" disabled />
+                  <span id="mediaVideoDuration">00:00</span>
+                </div>
+                <div class="media-video-meta"><strong id="mediaVideoTitle">已解析视频</strong><div class="media-video-meta-details"><span id="mediaVideoQuality"></span><span class="media-video-source-duration" id="mediaVideoSourceDuration" hidden></span></div></div>
                 <div class="media-video-actions">
                   <button class="ghost-btn" id="mediaVideoFallback" type="button" hidden>备用站解析</button>
                   <button class="ghost-btn" id="mediaDownloadVideo" type="button">下载视频</button>
@@ -2370,6 +2375,24 @@ function bindEvents(){
   $('#mediaVideoRetry')?.addEventListener('click',()=>parseMediaVideo(Number(state.media.videoParse.portalIndex||0),{force:true}));
   bindReliableMediaButton($('#mediaDownloadVideo'),()=>downloadParsedVideo(false));
   bindReliableMediaButton($('#mediaDownloadFavoriteVideo'),()=>downloadParsedVideo(true));
+  const mediaVideoPreview=$('#mediaVideoPreview');
+  const mediaVideoSeek=$('#mediaVideoSeek');
+  ['loadedmetadata','durationchange','timeupdate','emptied'].forEach(type=>mediaVideoPreview?.addEventListener(type,()=>syncMediaVideoProgress()));
+  mediaVideoSeek?.addEventListener('pointerdown',()=>{ mediaVideoSeek.dataset.scrubbing='true'; });
+  mediaVideoSeek?.addEventListener('input',()=>{
+    const value=Math.max(0,Number(mediaVideoSeek.value)||0);
+    try{ if(mediaVideoPreview&&Number.isFinite(mediaVideoPreview.duration)&&mediaVideoPreview.duration>0) mediaVideoPreview.currentTime=Math.min(value,mediaVideoPreview.duration); }catch{}
+    syncMediaVideoProgress({currentOverride:value});
+  });
+  const finishMediaVideoSeek=()=>{
+    if(!mediaVideoSeek) return;
+    delete mediaVideoSeek.dataset.scrubbing;
+    syncMediaVideoProgress();
+  };
+  mediaVideoSeek?.addEventListener('change',finishMediaVideoSeek);
+  mediaVideoSeek?.addEventListener('pointerup',finishMediaVideoSeek);
+  mediaVideoSeek?.addEventListener('pointercancel',finishMediaVideoSeek);
+  mediaVideoSeek?.addEventListener('blur',finishMediaVideoSeek);
   $('#mediaMusicInput')?.addEventListener('keydown',event=>{
     if(event.key==='Enter'){
       event.preventDefault();
@@ -4093,6 +4116,55 @@ async function downloadMediaMusicVersion(index,format='mp3',favorite=false){
   toast(favorite?'普通音质下载已开始，完成后自动进入收藏':'正在准备所选普通音质版本');
 }
 
+function formatMediaVideoTime(value){
+  const total=Math.max(0,Math.floor(Number.isFinite(Number(value))?Number(value):0));
+  const hours=Math.floor(total/3600);
+  const minutes=Math.floor((total%3600)/60);
+  const seconds=total%60;
+  return hours>0
+    ?`${String(hours).padStart(2,'0')}:${String(minutes).padStart(2,'0')}:${String(seconds).padStart(2,'0')}`
+    :`${String(minutes).padStart(2,'0')}:${String(seconds).padStart(2,'0')}`;
+}
+
+function syncMediaVideoProgress({currentOverride=null}={}){
+  const preview=$('#mediaVideoPreview');
+  const seek=$('#mediaVideoSeek');
+  if(!preview||!seek) return;
+  const duration=Number.isFinite(preview.duration)&&preview.duration>0?preview.duration:0;
+  const overridden=currentOverride!==null&&Number.isFinite(Number(currentOverride));
+  const current=overridden
+    ?Math.max(0,Number(currentOverride))
+    :(seek.dataset.scrubbing==='true'?Math.max(0,Number(seek.value)||0):(Number.isFinite(preview.currentTime)?Math.max(0,preview.currentTime):0));
+  seek.disabled=duration<=0;
+  seek.max=duration>0?String(duration):'0';
+  if(seek.dataset.scrubbing!=='true'||overridden) seek.value=String(duration>0?Math.min(current,duration):0);
+  seek.setAttribute('aria-valuetext',`${formatMediaVideoTime(current)} / ${formatMediaVideoTime(duration)}`);
+  if($('#mediaVideoCurrentTime')) $('#mediaVideoCurrentTime').textContent=formatMediaVideoTime(current);
+  if($('#mediaVideoDuration')) $('#mediaVideoDuration').textContent=formatMediaVideoTime(duration);
+  const sourceDuration=$('#mediaVideoSourceDuration');
+  if(sourceDuration){
+    sourceDuration.hidden=!duration||!preview.dataset.src;
+    sourceDuration.textContent=duration?`下载源 ${formatMediaVideoTime(duration)}`:'';
+    sourceDuration.title='这是下载站实际返回文件的总时长；如果短于原视频，说明原站只向下载站提供了公开或试看片段。';
+  }
+}
+
+function resetMediaVideoProgress(){
+  const seek=$('#mediaVideoSeek');
+  if(seek){
+    delete seek.dataset.scrubbing;
+    seek.value='0';
+    seek.max='0';
+    seek.disabled=true;
+  }
+  if($('#mediaVideoCurrentTime')) $('#mediaVideoCurrentTime').textContent='00:00';
+  if($('#mediaVideoDuration')) $('#mediaVideoDuration').textContent='00:00';
+  if($('#mediaVideoSourceDuration')){
+    $('#mediaVideoSourceDuration').hidden=true;
+    $('#mediaVideoSourceDuration').textContent='';
+  }
+}
+
 function renderMediaPortalWorkspace(){
   $$('[data-media-workspace]').forEach(element=>{ element.hidden=element.dataset.mediaWorkspace!==state.media.kind; });
   const video=state.media.videoParse||{};
@@ -4121,6 +4193,7 @@ function renderMediaPortalWorkspace(){
     const next=String(video.previewUrl||'');
     const embedded=!!video.embeddedPreview;
     if(next&&preview.dataset.src!==next){
+      resetMediaVideoProgress();
       preview.dataset.src=next;
       preview.src=next;
       preview.load();
@@ -4129,9 +4202,12 @@ function renderMediaPortalWorkspace(){
       preview.removeAttribute('src');
       preview.dataset.src='';
       preview.load();
+      resetMediaVideoProgress();
     }
     preview.hidden=!next;
     preview.closest('.media-video-frame')?.classList.toggle('no-preview',!next&&!embedded);
+    if($('#mediaVideoProgress')) $('#mediaVideoProgress').hidden=!next;
+    syncMediaVideoProgress();
   }
   if($('#mediaVideoTitle')) $('#mediaVideoTitle').textContent=video.title||'已解析视频';
   if($('#mediaVideoQuality')) $('#mediaVideoQuality').textContent=(video.previewUrl||video.embeddedPreview)?(video.qualityLabel||'可预览'):'该网站未提供可直接预览的视频地址';

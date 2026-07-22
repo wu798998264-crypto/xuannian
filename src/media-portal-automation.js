@@ -96,10 +96,16 @@ function shouldRetryMediaPortalVideoAutomation(reason, recoveryCount = 0) {
   return limit > 0 && Number(recoveryCount || 0) < limit;
 }
 
+function shouldExtendMediaPortalVideoResultWait(reason, phase, waitCount = 0) {
+  return String(reason || '') === 'parse-timeout'
+    && String(phase || '') === 'result'
+    && Number(waitCount || 0) < 1;
+}
+
 function buildPortalScript({ mode, value = '', phase = '', timeoutMs = 30000, candidateIndex = 0 } = {}, qualityScorer = () => -1) {
   const normalizedMode = String(mode || '');
   const normalizedPhase = String(phase || '');
-  const deadlineMs = Math.max(1000, Math.min(60000, Number(timeoutMs) || 30000));
+  const deadlineMs = Math.max(1000, Math.min(90000, Number(timeoutMs) || 30000));
   const qualityScorerSource = typeof qualityScorer === 'function' ? qualityScorer.toString() : '(() => -1)';
   return `(() => new Promise((resolve) => {
     const mode = ${safeJson(normalizedMode)};
@@ -559,5 +565,6 @@ module.exports = {
   isHttpUrl,
   isMediaUrl,
   mediaPortalLoadFailureAction,
+  shouldExtendMediaPortalVideoResultWait,
   shouldRetryMediaPortalVideoAutomation,
 };

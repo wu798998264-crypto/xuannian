@@ -6,6 +6,7 @@ const {
   isCurrentMediaPortalRequest,
   isMediaUrl,
   mediaPortalLoadFailureAction,
+  shouldExtendMediaPortalVideoResultWait,
   shouldRetryMediaPortalVideoAutomation,
 } = require('../src/media-portal-automation');
 const { scoreMediaDownloadQualityLabel } = require('../src/media-library');
@@ -57,9 +58,14 @@ function run() {
   assert.strictEqual(shouldRetryMediaPortalVideoAutomation('parse-timeout', 0), true);
   assert.strictEqual(shouldRetryMediaPortalVideoAutomation('parse-timeout', 1), false);
   assert.strictEqual(shouldRetryMediaPortalVideoAutomation('content-unavailable', 0), false);
+  assert.strictEqual(shouldExtendMediaPortalVideoResultWait('parse-timeout', 'result', 0), true);
+  assert.strictEqual(shouldExtendMediaPortalVideoResultWait('parse-timeout', 'result', 1), false);
+  assert.strictEqual(shouldExtendMediaPortalVideoResultWait('parse-timeout', 'input', 0), false);
 
   const parseScript = buildPortalScript({ mode: 'video-parse', phase: 'result', timeoutMs: 45000 }, scoreMediaDownloadQualityLabel);
   assert(parseScript.includes("mode === 'video-parse'"));
+  const extendedParseScript = buildPortalScript({ mode: 'video-parse', phase: 'result', timeoutMs: 75000 }, scoreMediaDownloadQualityLabel);
+  assert(extendedParseScript.includes('Date.now() + 75000'));
   assert(!parseScript.includes('window.open = () => null'));
   assert(parseScript.includes('window.alert = () => undefined'));
   assert(parseScript.includes("reason: 'human-verification'"));

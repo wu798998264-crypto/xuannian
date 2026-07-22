@@ -64,9 +64,16 @@ body.dark .media-tab.active{background:#3d3e42;box-shadow:none}
 .media-video-frame video{width:100%;height:100%;max-height:440px;object-fit:contain;background:#111}
 .media-video-frame.no-preview{background:var(--panel-soft)}
 .media-video-frame.no-preview::after{content:'该网站没有提供可直接预览的视频地址';color:var(--muted);font-size:12px}
+.media-video-progress{width:min(760px,100%);height:30px;flex:none;display:grid;grid-template-columns:46px minmax(0,1fr) 46px;align-items:center;gap:9px;color:var(--muted);font-size:11px;font-variant-numeric:tabular-nums}
+.media-video-progress[hidden]{display:none}
+.media-video-progress span:first-child{text-align:right}
+.media-video-progress input{width:100%;height:18px;margin:0;padding:0;cursor:pointer;accent-color:#4d8d74}
+.media-video-progress input:disabled{cursor:default;opacity:.55}
 .media-video-meta{width:min(760px,100%);min-height:24px;flex:none;display:flex;align-items:center;justify-content:space-between;gap:12px}
 .media-video-meta strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.media-video-meta span{flex:none;color:var(--muted)}
+.media-video-meta-details{min-width:0;flex:none;display:flex;align-items:center;justify-content:flex-end;gap:8px;color:var(--muted)}
+.media-video-meta-details span{flex:none}
+.media-video-source-duration{padding-left:8px;border-left:1px solid var(--line);font-variant-numeric:tabular-nums}
 .media-video-actions{position:relative;z-index:30;width:min(760px,100%);min-height:48px;flex:none;display:flex;align-items:center;justify-content:flex-end;gap:10px;padding:5px 0 3px;pointer-events:auto;-webkit-app-region:no-drag}
 .media-video-actions .black-btn,.media-video-actions .ghost-btn{position:relative;z-index:31;height:40px;min-width:112px;box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;padding:0 18px;pointer-events:auto;touch-action:manipulation;-webkit-app-region:no-drag;cursor:pointer}
 .media-video-actions .black-btn>*,.media-video-actions .ghost-btn>*{pointer-events:none}

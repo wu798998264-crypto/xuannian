@@ -1021,6 +1021,26 @@ async function run() {
       await parseMediaVideo(false);
       state.media.videoParse={status:'ready',sourceUrl:'https://v.douyin.com/runtime',previewUrl:'https://cdn.example.com/runtime.mp4',title:'测试视频',qualityLabel:'1080P 无水印下载',downloadReady:true,error:''};
       renderMediaPortalWorkspace();
+      const videoPreview=document.querySelector('#mediaVideoPreview');
+      let syntheticVideoTime=65.5;
+      Object.defineProperty(videoPreview,'duration',{configurable:true,get:()=>435.259});
+      Object.defineProperty(videoPreview,'currentTime',{configurable:true,get:()=>syntheticVideoTime,set:value=>{syntheticVideoTime=Number(value)||0;}});
+      videoPreview.dispatchEvent(new Event('loadedmetadata'));
+      const videoSeek=document.querySelector('#mediaVideoSeek');
+      videoSeek.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,pointerType:'mouse'}));
+      videoSeek.value='120.5';
+      videoSeek.dispatchEvent(new Event('input',{bubbles:true}));
+      videoSeek.dispatchEvent(new Event('change',{bubbles:true}));
+      const videoProgressUi={
+        hidden:document.querySelector('#mediaVideoProgress').hidden,
+        disabled:videoSeek.disabled,
+        max:Number(videoSeek.max),
+        current:document.querySelector('#mediaVideoCurrentTime').textContent,
+        duration:document.querySelector('#mediaVideoDuration').textContent,
+        sourceDurationEndsWith:document.querySelector('#mediaVideoSourceDuration').textContent.endsWith('07:15'),
+        seekApplied:syntheticVideoTime,
+        longDurationFormat:formatMediaVideoTime(7200.9),
+      };
       const videoUi={
         previewSrc:document.querySelector('#mediaVideoPreview').src,
         actions:[document.querySelector('#mediaDownloadVideo').textContent.trim(),document.querySelector('#mediaDownloadFavoriteVideo').textContent.trim()],
@@ -1300,7 +1320,7 @@ async function run() {
       localStorage.removeItem(MEDIA_FAVORITE_ORDER_KEY);
       return {
         openedPortals,portalTargets,portalInputs,externalUrls,copiedText,copiedFiles,draggedFiles,contextMenus,favoriteCollections,movedFavorites,deletedFavorites,
-        downloadedVideos,downloadedSongs,previewedSongs,highQualityRequests,openedDownloadHistory,downloadHistoryContextMenus,deletedDownloadHistory,cancelledDownloadTasks,createdMediaCollections,localPlaybackRequests,nativeMediaBridgeAvailableBeforeStub,videoUi,favoritePreviewModal,videoButtonHitTargets,pickerCreateVisible,createdCollectionChoice,musicUi,backgroundPortal,browserTogglePersistence,localAudioPlayer,manualPortalInitiallyVisible,
+        downloadedVideos,downloadedSongs,previewedSongs,highQualityRequests,openedDownloadHistory,downloadHistoryContextMenus,deletedDownloadHistory,cancelledDownloadTasks,createdMediaCollections,localPlaybackRequests,nativeMediaBridgeAvailableBeforeStub,videoUi,videoProgressUi,favoritePreviewModal,videoButtonHitTargets,pickerCreateVisible,createdCollectionChoice,musicUi,backgroundPortal,browserTogglePersistence,localAudioPlayer,manualPortalInitiallyVisible,
         providerRouting:{douyinProvider,tiktokProvider,dailyFallback,failureClassification},
         verificationFlow,musicDownloadStates,interruptedTask,
         activeView:document.querySelector('.view.active')?.id||'',
@@ -1342,6 +1362,7 @@ async function run() {
   assert.deepStrictEqual(mediaLibraryMetrics.downloadedSongs, [{url:'https://www.gequbao.com/music/101',target:'download',collection:'',preferredName:'测试歌曲 - 测试歌手'}]);
   assert.strictEqual(mediaLibraryMetrics.nativeMediaBridgeAvailableBeforeStub, true);
   assert.deepStrictEqual(mediaLibraryMetrics.videoUi, {previewSrc:'https://cdn.example.com/runtime.mp4',actions:['下载视频','下载并收藏'],topActions:false,fallbackHidden:true,exhaustedFallbackHidden:true});
+  assert.deepStrictEqual(mediaLibraryMetrics.videoProgressUi, {hidden:false,disabled:false,max:435.259,current:'02:00',duration:'07:15',sourceDurationEndsWith:true,seekApplied:120.5,longDurationFormat:'02:00:00'});
   assert.deepStrictEqual(mediaLibraryMetrics.musicUi, {rows:2,actions:['下载','下载并收藏','下载','下载并收藏'],formatChoices:['普通音质','高清音质'],previewButtons:2,activeAudioControls:true,topFormatControls:false});
   assert.deepStrictEqual(mediaLibraryMetrics.previewedSongs, ['https://www.gequbao.com/music/102','https://www.gequbao.com/music/101']);
   assert.deepStrictEqual(mediaLibraryMetrics.backgroundPortal, {browserHidden:true,directVisible:true});
