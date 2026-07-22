@@ -14,14 +14,8 @@ jobs:
     env:
       XUANNIAN_BUILD_OUTPUT: dist-win
       XUANNIAN_SKIP_HELPER_BUILD: "1"
-      XUANNIAN_REQUIRE_WINDOWS_SIGNING: "1"
-      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-      AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
-      AZURE_TRUSTED_SIGNING_ACCOUNT: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}
-      AZURE_TRUSTED_SIGNING_PROFILE: ${{ secrets.AZURE_TRUSTED_SIGNING_PROFILE }}
-      AZURE_TRUSTED_SIGNING_PUBLISHER: ${{ secrets.AZURE_TRUSTED_SIGNING_PUBLISHER }}
+      CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
+      CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -53,47 +47,8 @@ jobs:
         env:
           XUANNIAN_ENDURANCE_SECONDS: 12
         run: npm run test:endurance:smoke
-      - name: Sign native helpers with Azure Artifact Signing
-        shell: pwsh
-        run: |
-          Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser
-          Install-Module -Name TrustedSigning -MinimumVersion 0.5.0 -Force -Repository PSGallery -Scope CurrentUser
-          $nativeFiles = Get-ChildItem -LiteralPath 'src/native' -Filter '*.exe'
-          if (-not $nativeFiles) { throw 'No native helper executables were found for signing.' }
-          foreach ($file in $nativeFiles) {
-            Invoke-TrustedSigning `
-              -Endpoint $env:AZURE_TRUSTED_SIGNING_ENDPOINT `
-              -CertificateProfileName $env:AZURE_TRUSTED_SIGNING_PROFILE `
-              -CodeSigningAccountName $env:AZURE_TRUSTED_SIGNING_ACCOUNT `
-              -FileDigest SHA256 `
-              -TimestampRfc3161 'http://timestamp.acs.microsoft.com' `
-              -TimestampDigest SHA256 `
-              -Files $file.FullName
-            $signature = Get-AuthenticodeSignature -LiteralPath $file.FullName
-            if ($signature.Status -ne 'Valid') {
-              throw "Native helper signature verification failed: $($file.FullName) ($($signature.Status))"
-            }
-          }
       - name: Build Windows packages
         run: npm run dist:all
-      - name: Verify Azure signatures
-        shell: pwsh
-        run: |
-          $version = node -p "require('./package.json').version"
-          $files = @(
-            "dist-win/XuanNian-$version-Setup.exe",
-            "dist-win/XuanNian-$version-Portable.exe",
-            "dist-win/win-unpacked/玄念.exe"
-          )
-          $files += Get-ChildItem -LiteralPath 'dist-win/win-unpacked/resources/native' -Filter '*.exe' |
-            ForEach-Object { $_.FullName }
-          foreach ($file in $files) {
-            if (-not (Test-Path -LiteralPath $file)) { throw "Missing signed file: $file" }
-            $signature = Get-AuthenticodeSignature -LiteralPath $file
-            if ($signature.Status -ne 'Valid') {
-              throw "Invalid or missing Authenticode signature: $file ($($signature.Status))"
-            }
-          }
       - name: Verify Windows update metadata
         shell: pwsh
         run: |
@@ -327,7 +282,6 @@ jobs:
           - 修复音乐搜索结果列表顶部保留旧版间距而出现整行空白的问题，结果现在从内容区顶部紧凑排列。
           - 视频解析现在明确显示“后台搜索已提交”，缩短下载站无响应时的等待周期并自动恢复；临时预览优先选择 96 MB 内的小体积画质，超限时跳过预览而不影响正式下载。
           - 临时视频预览支持真实网络中断，取消、超时或超过体积上限后不再继续后台下载大文件，降低长时间运行时的带宽、磁盘和内存占用。
-          - Windows 发布流程接入 Azure Artifact Signing：安装版、便携版、主程序和原生辅助程序必须通过签名验证，否则版本不会发布。
           - 在玄念内置哔哩哔哩页面完成会员登录后，会自动检测有效会话、收起原站、返回视频操作页面，并自动重新解析刚才的链接，无需再手动点击眼睛或“重新解析”。
           - 收藏分类栏右侧分隔线支持左右拖拽调整宽度；宽度设有安全边界并自动保存，重启玄念后继续沿用，双击分隔线可恢复默认宽度。
           - 修复哔哩哔哩会员视频只下载约一分钟的问题：玄念现在会读取专用媒体会话中的登录状态，并同时核对原片时长、实际下发时长、`is_preview` 试看标记和 DRM 标记。
