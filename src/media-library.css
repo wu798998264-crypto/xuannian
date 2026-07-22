@@ -68,8 +68,8 @@ body.dark .media-tab.active{background:#3d3e42;box-shadow:none}
 .media-video-meta strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .media-video-meta span{flex:none;color:var(--muted)}
 .media-video-actions{position:relative;z-index:30;width:min(760px,100%);min-height:48px;flex:none;display:flex;align-items:center;justify-content:flex-end;gap:10px;padding:5px 0 3px;pointer-events:auto;-webkit-app-region:no-drag}
-.media-video-actions .black-btn,.media-video-actions .ghost-btn{position:relative;z-index:31;height:40px;min-width:112px;padding:0 18px;pointer-events:auto;touch-action:manipulation;-webkit-app-region:no-drag}
-.media-video-actions .black-btn::before,.media-video-actions .ghost-btn::before{content:"";position:absolute;inset:-4px;z-index:1;background:transparent}
+.media-video-actions .black-btn,.media-video-actions .ghost-btn{position:relative;z-index:31;height:40px;min-width:112px;box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;padding:0 18px;pointer-events:auto;touch-action:manipulation;-webkit-app-region:no-drag;cursor:pointer}
+.media-video-actions .black-btn>*,.media-video-actions .ghost-btn>*{pointer-events:none}
 .media-search-command{height:42px;white-space:nowrap}
 .media-music-results{height:100%;min-height:0;overflow:auto;padding:34px 2px 2px;scrollbar-gutter:stable}
 .media-music-result{min-height:64px;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--line)}
@@ -90,6 +90,7 @@ body.dark .media-tab.active{background:#3d3e42;box-shadow:none}
 .media-music-format-choices span{margin-right:4px;color:var(--muted);font-weight:700}
 .media-music-format-choices button{height:30px;min-width:54px;padding:0 12px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--text);font-size:11px;font-weight:800}
 .media-music-format-choices button:hover{background:var(--panel-soft);border-color:#aab1ba}
+.media-picker-create{width:100%;margin-top:10px;border:1px solid var(--line);border-radius:7px;background:var(--panel-soft)}
 .media-browser-shell{flex:1;min-height:260px;display:flex;flex-direction:column;border:1px solid var(--line);border-radius:8px;background:var(--panel);overflow:hidden}
 .media-browser-toolbar{height:42px;flex:none;display:flex;align-items:center;gap:5px;padding:0 52px 0 8px;border-bottom:1px solid var(--line);background:var(--panel-soft)}
 .media-browser-control{width:30px;height:30px;display:grid;place-items:center;border-radius:6px;color:var(--muted)}

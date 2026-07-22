@@ -967,6 +967,8 @@ async function run() {
       const openedDownloadHistory=[];
       const downloadHistoryContextMenus=[];
       const deletedDownloadHistory=[];
+      const cancelledDownloadTasks=[];
+      const createdMediaCollections=[];
       const browserBoundsRequests=[];
       const localPlaybackRequests=[];
       let verificationResumeCalls=0;
@@ -986,6 +988,7 @@ async function run() {
       api.openPath=async filePath=>{ openedDownloadHistory.push(filePath); return true; };
       api.showFileContextMenu=async filePath=>{ downloadHistoryContextMenus.push(filePath); return true; };
       api.deleteMediaDownloadHistoryItem=async taskId=>{ deletedDownloadHistory.push(taskId); return {ok:true}; };
+      api.cancelMediaDownloadTask=async taskId=>{ cancelledDownloadTasks.push(taskId); return {ok:true,cancelled:true}; };
       api.getLocalMediaPlaybackUrl=async filePath=>{ localPlaybackRequests.push(filePath); return 'file:///C:/Downloads/music.flac'; };
       api.setMediaBrowserBounds=(bounds,visible,mode)=>{ browserBoundsRequests.push({visible,mode}); return true; };
       api.openExternal=async url=>{ externalUrls.push(url); return true; };
@@ -996,6 +999,7 @@ async function run() {
       api.favoriteLocalMedia=async(filePath,collection)=>{ favoriteCollections.push({filePath,collection}); return {ok:true}; };
       api.moveLocalMedia=async(filePath,location,collection)=>{ movedFavorites.push({filePath,location,collection}); return {ok:true}; };
       api.deleteLocalMedia=async(filePath,location)=>{ deletedFavorites.push({filePath,location}); return {ok:true}; };
+      api.createMediaCollection=async(location,kind,name)=>{ createdMediaCollections.push({location,kind,name}); return {ok:true,name}; };
       api.listLocalMedia=async()=>({
         ok:true,
         downloadPath:'C:/Downloads',
@@ -1034,7 +1038,18 @@ async function run() {
       videoUi.exhaustedFallbackHidden=document.querySelector('#mediaVideoFallback').hidden;
       state.media.videoParse=readyVideoParse;
       renderMediaPortalWorkspace();
-      document.querySelector('#mediaDownloadVideo').click();
+      const videoDownloadButton=document.querySelector('#mediaDownloadVideo');
+      const videoDownloadRect=videoDownloadButton.getBoundingClientRect();
+      const videoButtonHitElements=[
+        document.elementFromPoint(videoDownloadRect.left+6,videoDownloadRect.top+videoDownloadRect.height/2),
+        document.elementFromPoint(videoDownloadRect.left+videoDownloadRect.width/2,videoDownloadRect.top+6),
+        document.elementFromPoint(videoDownloadRect.left+videoDownloadRect.width/2,videoDownloadRect.top+videoDownloadRect.height/2),
+        document.elementFromPoint(videoDownloadRect.right-6,videoDownloadRect.top+videoDownloadRect.height/2),
+        document.elementFromPoint(videoDownloadRect.left+videoDownloadRect.width/2,videoDownloadRect.bottom-6),
+      ];
+      const videoButtonHitTargets=videoButtonHitElements.map(element=>element?.closest?.('#mediaDownloadVideo')===videoDownloadButton);
+      videoDownloadButton.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true,button:0,pointerType:'mouse'}));
+      videoDownloadButton.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,button:0,detail:1}));
       await new Promise(resolve=>setTimeout(resolve,20));
       state.media.videoParse={...state.media.videoParse,embeddedPreview:true,previewUrl:''};
       const favoriteBoundsStart=browserBoundsRequests.length;
@@ -1047,6 +1062,14 @@ async function run() {
       const favoritePreviewModal={
         requests:browserBoundsRequests.slice(favoriteBoundsStart),
       };
+      const createCollectionPromise=showMediaCollectionPicker('video');
+      await new Promise(resolve=>setTimeout(resolve,20));
+      const pickerCreateVisible=!!document.querySelector('#createMediaCollectionFromPicker');
+      document.querySelector('#createMediaCollectionFromPicker').click();
+      await new Promise(resolve=>setTimeout(resolve,20));
+      document.querySelector('#textInputModal').value='新建视频分类';
+      document.querySelector('#confirmModal').click();
+      const createdCollectionChoice=await createCollectionPromise;
       videoInput.value='https://www.bilibili.com/video/BV1runtime';
       await parseMediaVideo(false);
       document.querySelector('#mediaKindTabs [data-media-kind="audio"]').click();
@@ -1187,6 +1210,13 @@ async function run() {
       };
       state.media.downloadTasks=state.media.downloadTasks.filter(task=>!['runtime-music-preparing','runtime-quark-external'].includes(task.id));
       renderMediaDownloadBubble();
+      updateMediaDownloadTask({id:'runtime-interrupted',name:'等待重试.mp4',status:'interrupted',receivedBytes:1024,totalBytes:4096,percent:25});
+      const interruptedTask={
+        status:document.querySelector('[data-download-task-id="runtime-interrupted"] .media-download-task-status')?.textContent.trim(),
+        hasDelete:!!document.querySelector('[data-download-task-id="runtime-interrupted"] [data-download-task-delete]'),
+      };
+      await deleteMediaDownloadTask('runtime-interrupted');
+      interruptedTask.removed=!mediaDownloadTaskById('runtime-interrupted');
       for(let index=0;index<12;index+=1){
         updateMediaDownloadTask({
           id:'runtime-completed-'+index,
@@ -1270,9 +1300,9 @@ async function run() {
       localStorage.removeItem(MEDIA_FAVORITE_ORDER_KEY);
       return {
         openedPortals,portalTargets,portalInputs,externalUrls,copiedText,copiedFiles,draggedFiles,contextMenus,favoriteCollections,movedFavorites,deletedFavorites,
-        downloadedVideos,downloadedSongs,previewedSongs,highQualityRequests,openedDownloadHistory,downloadHistoryContextMenus,deletedDownloadHistory,localPlaybackRequests,nativeMediaBridgeAvailableBeforeStub,videoUi,favoritePreviewModal,musicUi,backgroundPortal,browserTogglePersistence,localAudioPlayer,manualPortalInitiallyVisible,
+        downloadedVideos,downloadedSongs,previewedSongs,highQualityRequests,openedDownloadHistory,downloadHistoryContextMenus,deletedDownloadHistory,cancelledDownloadTasks,createdMediaCollections,localPlaybackRequests,nativeMediaBridgeAvailableBeforeStub,videoUi,favoritePreviewModal,videoButtonHitTargets,pickerCreateVisible,createdCollectionChoice,musicUi,backgroundPortal,browserTogglePersistence,localAudioPlayer,manualPortalInitiallyVisible,
         providerRouting:{douyinProvider,tiktokProvider,dailyFallback,failureClassification},
-        verificationFlow,musicDownloadStates,
+        verificationFlow,musicDownloadStates,interruptedTask,
         activeView:document.querySelector('.view.active')?.id||'',
         activeNav:document.querySelector('.nav-btn.active')?.dataset.view||'',
         rows:document.querySelectorAll('#mediaDownloadsList [data-media-row]').length,
@@ -1304,7 +1334,11 @@ async function run() {
   assert.deepStrictEqual(mediaLibraryMetrics.copiedText, []);
   assert.deepStrictEqual(mediaLibraryMetrics.highQualityRequests, ['测试歌曲（现场版） - 现场歌手']);
   assert.deepStrictEqual(mediaLibraryMetrics.downloadedVideos, [{target:'download',collection:''},{target:'favorite',collection:'项目收藏'}]);
+  assert.deepStrictEqual(mediaLibraryMetrics.videoButtonHitTargets, [true,true,true,true,true], 'the full visible video download button must be clickable');
   assert.strictEqual(mediaLibraryMetrics.favoritePreviewModal.requests[0]?.visible, false, 'embedded preview must hide before the favorite picker opens');
+  assert.strictEqual(mediaLibraryMetrics.pickerCreateVisible, true);
+  assert.strictEqual(mediaLibraryMetrics.createdCollectionChoice, '新建视频分类');
+  assert.deepStrictEqual(mediaLibraryMetrics.createdMediaCollections, [{location:'favorites',kind:'video',name:'新建视频分类'}]);
   assert.deepStrictEqual(mediaLibraryMetrics.downloadedSongs, [{url:'https://www.gequbao.com/music/101',target:'download',collection:'',preferredName:'测试歌曲 - 测试歌手'}]);
   assert.strictEqual(mediaLibraryMetrics.nativeMediaBridgeAvailableBeforeStub, true);
   assert.deepStrictEqual(mediaLibraryMetrics.videoUi, {previewSrc:'https://cdn.example.com/runtime.mp4',actions:['下载视频','下载并收藏'],topActions:false,fallbackHidden:true,exhaustedFallbackHidden:true});
@@ -1371,6 +1405,8 @@ async function run() {
   assert(mediaLibraryMetrics.musicDownloadStates.statuses.includes('正在准备音乐文件'));
   assert(mediaLibraryMetrics.musicDownloadStates.statuses.includes('等待云盘客户端下载'));
   assert(mediaLibraryMetrics.musicDownloadStates.summary.includes('3 项进行中'));
+  assert.deepStrictEqual(mediaLibraryMetrics.interruptedTask, {status:'等待重试 · 4.00 KB',hasDelete:true,removed:true});
+  assert.deepStrictEqual(mediaLibraryMetrics.cancelledDownloadTasks, ['runtime-interrupted']);
   assert.strictEqual(mediaLibraryMetrics.completedHistory.count, 10);
   assert.strictEqual(mediaLibraryMetrics.completedHistory.rendered, 11, 'active task plus ten completed records should be visible');
   assert.strictEqual(mediaLibraryMetrics.completedHistory.deleteButtons, 10, 'every completed download record with a file must expose a delete button');

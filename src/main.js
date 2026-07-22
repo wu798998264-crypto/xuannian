@@ -159,6 +159,8 @@ const mediaPortalDownloadTargets = new WeakMap();
 const mediaPortalExpectedPopupDownloads = new WeakMap();
 const mediaPortalDownloadStartCounts = new WeakMap();
 const activeMediaDownloadNotifications = new Set();
+const activeMediaDownloadItems = new Map();
+const dismissedMediaDownloadTaskIds = new Set();
 const recentClipboardDigests = new Map();
 const recentClipboardSequences = new Map();
 const pendingClipboardSequences = new Set();
@@ -2809,7 +2811,9 @@ function mediaExtensionForDownloadUrl(value, fallback = '.mp4') {
 
 function mediaDownloadReferer(value, fallback = '') {
   try {
-    const pathname = new URL(String(value || '')).pathname;
+    const parsed = new URL(String(value || ''));
+    const pathname = parsed.pathname;
+    if (/(?:^|\.)xhscdn\.com$/i.test(parsed.hostname)) return 'https://www.xiaohongshu.com/';
     if (/\/upgcxcode\//i.test(pathname)) return 'https://www.bilibili.com/';
   } catch {}
   return String(fallback || '').trim();
@@ -2949,13 +2953,13 @@ async function streamMediaPortalUrlToFile(webContents, url, destination, options
   let responseTimeout = null;
   let output = null;
   let reader = null;
+  const referer = mediaDownloadReferer(url, options.referer);
+  const userAgent = String(webContents?.getUserAgent?.() || '').trim();
   try {
     const headers = {
       Accept: 'video/mp4,video/*;q=0.9,audio/*;q=0.8,application/octet-stream;q=0.7,*/*;q=0.5',
     };
-    const referer = mediaDownloadReferer(url, options.referer);
     if (referer) headers.Referer = referer;
-    const userAgent = String(webContents?.getUserAgent?.() || '').trim();
     if (userAgent) headers['User-Agent'] = userAgent;
     const response = await Promise.race([
       webContents.session.fetch(url, {
@@ -3261,6 +3265,7 @@ function configureMediaDownloadSession(electronSession) {
     activeMediaPortalDownloads += 1;
     cancelMediaPortalIdleDestroy();
     const taskId = claimMediaPortalTaskId(target, 'media');
+    activeMediaDownloadItems.set(taskId, item);
     let lastProgressAt = 0;
     const progressPayload = (status) => {
       const receivedBytes = Math.max(0, Number(item.getReceivedBytes() || 0));
@@ -3279,14 +3284,19 @@ function configureMediaDownloadSession(electronSession) {
     };
     notifyMediaDownloadProgress(progressPayload('downloading'));
     item.on('updated', (_updatedEvent, state) => {
+      if (dismissedMediaDownloadTaskIds.has(taskId)) return;
       const now = Date.now();
       if (now - lastProgressAt < 120 && state === 'progressing') return;
       lastProgressAt = now;
       notifyMediaDownloadProgress(progressPayload(state === 'interrupted' ? 'interrupted' : (item.isPaused() ? 'paused' : 'downloading')));
     });
     item.once('done', (_doneEvent, state) => {
+      activeMediaDownloadItems.delete(taskId);
+      const dismissed = dismissedMediaDownloadTaskIds.delete(taskId);
       activeMediaPortalDownloads = Math.max(0, activeMediaPortalDownloads - 1);
-      if (state === 'completed') {
+      if (dismissed) {
+        runtimeLog(`dismissed media download task ${taskId}`);
+      } else if (state === 'completed') {
         const completedTask = progressPayload('completed');
         rememberCompletedMediaDownload(completedTask);
         notifyMediaDownloadProgress(completedTask);
@@ -3886,6 +3896,9 @@ function sanitizeMusicResults(results) {
 function publishMediaPortalVideo(state, parsed) {
   mediaPortalInputState = null;
   mediaPortalParsedVideo = parsed.ok && parsed.downloadReady ? parsed : null;
+  if (mediaPortalView && !mediaPortalView.webContents.isDestroyed() && !parsed.embeddedPreview) {
+    mediaPortalView.setVisible(false);
+  }
   const {
     capturedDownloadUrl: _capturedDownloadUrl,
     capturedFilename: _capturedFilename,
@@ -7254,6 +7267,21 @@ ipcMain.handle('media:deleteDownloadHistoryItem', async (_event, taskId) => {
     return { ok: true, missing: !existed };
   });
   return removed;
+});
+ipcMain.handle('media:cancelDownloadTask', (_event, taskId) => {
+  const id = String(taskId || '').trim();
+  if (!id) return { ok: false, reason: '下载任务不存在' };
+  const item = activeMediaDownloadItems.get(id);
+  activeMediaDownloadItems.delete(id);
+  if (item) {
+    dismissedMediaDownloadTaskIds.add(id);
+    try { item.cancel(); } catch {}
+  }
+  if (mediaExternalAudioTrackers.has(id)) {
+    mediaExternalAudioTrackers.delete(id);
+    stopMediaExternalAudioMonitorIfIdle();
+  }
+  return { ok: true, cancelled: !!item };
 });
 ipcMain.handle('media:openPortal', (_event, url, downloadTarget = 'download', sourceText = '', autoSubmit = false, collection = '', qualityPreference = '', automationMode = '') => (
   openMediaPortal(url, downloadTarget, sourceText, autoSubmit, collection, qualityPreference, automationMode)

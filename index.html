@@ -755,8 +755,8 @@
     body.dark .first-run-option .option-icon{background:#35363a}
     .first-run-option b{display:block;font-size:14px}
     .first-run-option span:last-child{display:block;margin-top:3px;color:var(--muted);font-size:11px;font-weight:500}
-    .page-coach{position:fixed;right:22px;bottom:22px;z-index:95;width:min(350px,calc(100vw - 92px));padding:14px 42px 14px 15px;border:1px solid var(--line);border-radius:14px;background:var(--panel);box-shadow:var(--shadow);opacity:0;transform:translateY(10px);pointer-events:none;transition:opacity .16s ease,transform .16s ease}
-    .page-coach.show{opacity:1;transform:translateY(0);pointer-events:auto}
+    .page-coach{position:fixed;right:22px;bottom:22px;z-index:95;width:min(350px,calc(100vw - 92px));padding:14px 42px 14px 15px;border:1px solid var(--line);border-radius:14px;background:var(--panel);box-shadow:var(--shadow);visibility:hidden;opacity:0;transform:translateY(10px);pointer-events:none;transition:visibility 0s linear .16s,opacity .16s ease,transform .16s ease}
+    .page-coach.show{visibility:visible;opacity:1;transform:translateY(0);pointer-events:auto;transition-delay:0s}
     .page-coach b{display:block;font-size:13px;margin-bottom:4px}
     .page-coach span{display:block;color:var(--muted);font-size:12px;line-height:1.55}
     .page-coach-close{position:absolute;right:8px;top:8px;width:28px;height:28px;border-radius:8px;color:var(--muted);display:grid;place-items:center}
@@ -1589,7 +1589,10 @@ const pageCoachCopy={
   stickies:{title:'便签',text:'新建便签后点击置顶，可以把参考文字或图片留在桌面上。'},
 };
 let pageCoachActionHandler=null;
+let pageCoachTimer=null;
 function hidePageCoach(){
+  clearTimeout(pageCoachTimer);
+  pageCoachTimer=null;
   $('#pageCoach')?.classList.remove('show');
   pageCoachActionHandler=null;
 }
@@ -1606,7 +1609,10 @@ function showCoach({title,text,actionLabel='',onAction=null}){
 }
 function showPageCoach(view,force=false){
   const copy=pageCoachCopy[view];
-  if(!copy) return;
+  if(!copy){
+    hidePageCoach();
+    return;
+  }
   const key=onboardingKeys.page(view);
   if(!force&&localStorage.getItem(key)==='seen') return;
   localStorage.setItem(key,'seen');
@@ -1614,6 +1620,7 @@ function showPageCoach(view,force=false){
 }
 function registerClipboardLearningEvent(previousTopId,nextTopId){
   if(!nextTopId||nextTopId===previousTopId||localStorage.getItem(onboardingKeys.quickContext)==='seen') return;
+  if(state.view!=='clipboard') return;
   state.clipboardLearningCount+=1;
   if(state.clipboardLearningCount<3) return;
   localStorage.setItem(onboardingKeys.quickContext,'seen');
@@ -1727,6 +1734,7 @@ function createBrowserFallbackAPI(){
     async moveLocalMedia(){ return {ok:false,reason:'预览环境不支持移动文件'}; },
     async deleteLocalMedia(){ return {ok:false,reason:'预览环境不支持删除文件'}; },
     async deleteMediaDownloadHistoryItem(){ return {ok:false,reason:'预览环境不支持删除下载记录'}; },
+    async cancelMediaDownloadTask(){ return {ok:true}; },
     async getLocalMediaPlaybackUrl(filePath){ return String(filePath||''); },
     async openMediaPortal(url){ return this.openExternal(url); },
     async downloadParsedMediaVideo(){ return {ok:false,reason:'预览环境不支持媒体下载'}; },
@@ -1855,6 +1863,7 @@ function createUnifiedAPI(nativeApi, fallback){
     moveLocalMedia: (filePath,location,collection)=> nativeApi.moveLocalMedia ? nativeApi.moveLocalMedia(filePath,location,collection) : fallback.moveLocalMedia(filePath,location,collection),
     deleteLocalMedia: (filePath,location)=> nativeApi.deleteLocalMedia ? nativeApi.deleteLocalMedia(filePath,location) : fallback.deleteLocalMedia(filePath,location),
     deleteMediaDownloadHistoryItem: (taskId)=> nativeApi.deleteMediaDownloadHistoryItem ? nativeApi.deleteMediaDownloadHistoryItem(taskId) : fallback.deleteMediaDownloadHistoryItem(taskId),
+    cancelMediaDownloadTask: (taskId)=> nativeApi.cancelMediaDownloadTask ? nativeApi.cancelMediaDownloadTask(taskId) : fallback.cancelMediaDownloadTask(taskId),
     openMediaPortal: (url,downloadTarget,sourceText,autoSubmit,collection,qualityPreference,automationMode)=> nativeApi.openMediaPortal ? nativeApi.openMediaPortal(url,downloadTarget,sourceText,autoSubmit,collection,qualityPreference,automationMode) : fallback.openMediaPortal(url,downloadTarget,sourceText,autoSubmit,collection,qualityPreference,automationMode),
     downloadParsedMediaVideo: (downloadTarget,collection)=> nativeApi.downloadParsedMediaVideo ? nativeApi.downloadParsedMediaVideo(downloadTarget,collection) : Promise.resolve({ok:false,reason:'当前环境不支持媒体下载'}),
     resumeMediaPortalAfterVerification: ()=> nativeApi.resumeMediaPortalAfterVerification ? nativeApi.resumeMediaPortalAfterVerification() : fallback.resumeMediaPortalAfterVerification(),
@@ -2060,6 +2069,7 @@ async function init(){
       portalIndex,
       portalUrl,
     };
+    if(!payload?.embeddedPreview) api.setMediaBrowserBounds({},false,'browser');
     renderMediaPortalWorkspace();
     renderMediaBrowserState();
     if(payload?.ok){
@@ -2358,8 +2368,8 @@ function bindEvents(){
   });
   $('#mediaVideoFallback')?.addEventListener('click',()=>parseMediaVideo(Number(state.media.videoParse.portalIndex||0)+1,{force:true}));
   $('#mediaVideoRetry')?.addEventListener('click',()=>parseMediaVideo(Number(state.media.videoParse.portalIndex||0),{force:true}));
-  $('#mediaDownloadVideo')?.addEventListener('click',()=>downloadParsedVideo(false));
-  $('#mediaDownloadFavoriteVideo')?.addEventListener('click',()=>downloadParsedVideo(true));
+  bindReliableMediaButton($('#mediaDownloadVideo'),()=>downloadParsedVideo(false));
+  bindReliableMediaButton($('#mediaDownloadFavoriteVideo'),()=>downloadParsedVideo(true));
   $('#mediaMusicInput')?.addEventListener('keydown',event=>{
     if(event.key==='Enter'){
       event.preventDefault();
@@ -3593,9 +3603,14 @@ function renderMediaDownloadBubble(){
   if(!list) return;
   list.innerHTML=tasks.length?tasks.map(task=>{
     const taskPercent=task.totalBytes>0?Math.round((Number(task.receivedBytes||0)/Number(task.totalBytes))*100):Number(task.percent||0);
-    const detail=task.status==='downloading'&&task.totalBytes?`${formatFileSize(task.receivedBytes)} / ${formatFileSize(task.totalBytes)}`:mediaDownloadStatusLabel(task.status);
-    const removable=task.status==='completed'&&task.path;
-    return `<div class="media-download-task" data-download-task-id="${escapeHtml(task.id)}"><div class="media-download-task-head"><span class="media-download-task-name" title="${escapeHtml(task.name||'下载任务')}">${escapeHtml(task.name||'下载任务')}</span><span class="media-download-task-status">${escapeHtml(detail)}</span>${removable?`<button class="media-download-task-delete" type="button" data-download-task-delete="${escapeHtml(task.id)}" title="删除已下载文件"><svg viewBox="0 0 24 24"><path d="M4 7h16"></path><path d="M9 7V4h6v3"></path><path d="m7 7 1 13h8l1-13"></path></svg></button>`:''}</div><div class="media-download-track"><span style="width:${Math.max(0,Math.min(100,task.status==='completed'?100:taskPercent))}%"></span></div></div>`;
+    const knownSize=Math.max(Number(task.totalBytes||0),Number(task.receivedBytes||0));
+    const statusLabel=mediaDownloadStatusLabel(task.status);
+    const detail=task.status==='downloading'&&task.totalBytes
+      ?`${formatFileSize(task.receivedBytes)} / ${formatFileSize(task.totalBytes)}`
+      :`${statusLabel}${knownSize?` · ${formatFileSize(knownSize)}`:''}`;
+    const removable=(task.status==='completed'&&task.path)||task.status==='interrupted';
+    const deleteTitle=task.status==='completed'?'删除已下载文件':'删除等待重试任务';
+    return `<div class="media-download-task" data-download-task-id="${escapeHtml(task.id)}"><div class="media-download-task-head"><span class="media-download-task-name" title="${escapeHtml(task.name||'下载任务')}">${escapeHtml(task.name||'下载任务')}</span><span class="media-download-task-status">${escapeHtml(detail)}</span>${removable?`<button class="media-download-task-delete" type="button" data-download-task-delete="${escapeHtml(task.id)}" title="${deleteTitle}"><svg viewBox="0 0 24 24"><path d="M4 7h16"></path><path d="M9 7V4h6v3"></path><path d="m7 7 1 13h8l1-13"></path></svg></button>`:''}</div><div class="media-download-track"><span style="width:${Math.max(0,Math.min(100,task.status==='completed'?100:taskPercent))}%"></span></div></div>`;
   }).join(''):'<div class="media-download-empty">暂无下载任务</div>';
 }
 
@@ -3633,7 +3648,18 @@ function mediaDownloadTaskById(taskId){
 
 async function deleteMediaDownloadTask(taskId){
   const task=mediaDownloadTaskById(taskId);
-  if(!task||task.status!=='completed') return;
+  if(!task) return;
+  if(task.status==='interrupted'){
+    const result=await api.cancelMediaDownloadTask(task.id);
+    if(!result?.ok){ toast(result?.reason||'任务删除失败'); return; }
+    clearTimeout(mediaDownloadRemovalTimers.get(task.id));
+    mediaDownloadRemovalTimers.delete(task.id);
+    state.media.downloadTasks=state.media.downloadTasks.filter(item=>item.id!==task.id);
+    renderMediaDownloadBubble();
+    toast('等待重试任务已删除');
+    return;
+  }
+  if(task.status!=='completed') return;
   const confirmed=await showConfirmModal({title:'删除已下载文件',message:`确定删除「${task.name||'这个文件'}」吗？文件会移入系统回收站。`,confirmText:'删除',danger:true});
   if(!confirmed) return;
   const result=await api.deleteMediaDownloadHistoryItem(task.id);
@@ -3897,6 +3923,21 @@ async function parseMediaVideo(routeSelection=null,{force=false}={}){
   toast(`${portalIndex?'正在通过 '+route.label+' 解析视频':'正在解析视频'}${route.requiresVpn?'（需要 VPN）':''}`);
 }
 
+function bindReliableMediaButton(button,action){
+  if(!button||typeof action!=='function') return;
+  let lastPointerAt=0;
+  button.addEventListener('pointerdown',event=>{
+    if(event.button!==0||button.disabled) return;
+    lastPointerAt=performance.now();
+    event.preventDefault();
+    action();
+  });
+  button.addEventListener('click',event=>{
+    if(event.detail>0&&performance.now()-lastPointerAt<600) return;
+    action();
+  });
+}
+
 async function downloadParsedVideo(favorite=false,options={}){
   const parsed=state.media.videoParse;
   if(state.media.videoDownloadBusy) return;
@@ -3904,20 +3945,20 @@ async function downloadParsedVideo(favorite=false,options={}){
     toast('请先等待视频解析完成');
     return;
   }
-  let collection=Object.prototype.hasOwnProperty.call(options,'collection')?String(options.collection||''):'';
-  if(favorite&&!Object.prototype.hasOwnProperty.call(options,'collection')){
-    api.setMediaBrowserBounds({},false,'browser');
-    try{
-      collection=await showMediaCollectionPicker('video');
-    }finally{
-      syncMediaBrowserBounds();
-    }
-  }
-  if(collection===null) return;
   state.media.videoDownloadBusy=true;
   renderMediaPortalWorkspace();
+  let collection=Object.prototype.hasOwnProperty.call(options,'collection')?String(options.collection||''):'';
   let result=null;
   try{
+    if(favorite&&!Object.prototype.hasOwnProperty.call(options,'collection')){
+      api.setMediaBrowserBounds({},false,'browser');
+      try{
+        collection=await showMediaCollectionPicker('video');
+      }finally{
+        syncMediaBrowserBounds();
+      }
+    }
+    if(collection===null) return;
     result=await api.downloadParsedMediaVideo(favorite?'favorite':'download',collection);
   }catch(error){
     toast('下载通道启动失败，请重新打开玄念后重试');
@@ -4393,22 +4434,34 @@ function setActiveMediaCollection(location,collection){
 
 async function showMediaCollectionPicker(kind=state.media.kind){
   if(!state.media.loaded) await refreshMediaLibrary({quiet:true});
-  const collections=mediaCollectionsFor('favorites',kind);
-  return new Promise(resolve=>{
-    showModal(`
-      <div class="modal-header"><h3>选择收藏夹</h3><button class="modal-close" id="closeModal">×</button></div>
-      <label class="modal-message" for="mediaCollectionPicker">收藏到</label>
-      <select id="mediaCollectionPicker">
-        <option value="">未分类</option>
-        ${collections.map(name=>`<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('')}
-      </select>
-      <div class="modal-actions"><button class="ghost-btn" id="cancelModal">取消</button><button class="black-btn" id="confirmModal">确定收藏</button></div>`);
-    const finish=value=>{ closeModal(); resolve(value); };
-    $('#closeModal').onclick=()=>finish(null);
-    $('#cancelModal').onclick=()=>finish(null);
-    $('#confirmModal').onclick=()=>finish(String($('#mediaCollectionPicker')?.value||''));
-    setTimeout(()=>$('#mediaCollectionPicker')?.focus(),30);
-  });
+  while(true){
+    const collections=mediaCollectionsFor('favorites',kind);
+    const choice=await new Promise(resolve=>{
+      showModal(`
+        <div class="modal-header"><h3>选择收藏夹</h3><button class="modal-close" id="closeModal">×</button></div>
+        <label class="modal-message" for="mediaCollectionPicker">收藏到</label>
+        <select id="mediaCollectionPicker">
+          <option value="">未分类</option>
+          ${collections.map(name=>`<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`).join('')}
+        </select>
+        <button class="modal-option media-picker-create" id="createMediaCollectionFromPicker" type="button"><span>＋ 新建分类</span><span>›</span></button>
+        <div class="modal-actions"><button class="ghost-btn" id="cancelModal">取消</button><button class="black-btn" id="confirmModal">确定收藏</button></div>`);
+      const finish=value=>{ closeModal(); resolve(value); };
+      $('#closeModal').onclick=()=>finish(null);
+      $('#cancelModal').onclick=()=>finish(null);
+      $('#createMediaCollectionFromPicker').onclick=()=>finish('__create_media_collection__');
+      $('#confirmModal').onclick=()=>finish(String($('#mediaCollectionPicker')?.value||''));
+      setTimeout(()=>$('#mediaCollectionPicker')?.focus(),30);
+    });
+    if(choice!=='__create_media_collection__') return choice;
+    const name=await showTextInputModal({title:'新建收藏夹',label:`${kind==='video'?'视频':'音乐'}收藏夹名称`,confirmText:'新建'});
+    if(!name) continue;
+    const result=await api.createMediaCollection('favorites',kind,name);
+    toast(result?.ok?'收藏夹已新建':(result?.reason||'新建失败'));
+    if(!result?.ok) continue;
+    await refreshMediaLibrary({quiet:true});
+    return String(result.name||name);
+  }
 }
 
 function filteredMediaItems(tab){
@@ -4878,6 +4931,7 @@ async function switchView(view,{skipCoach=false}={}){
     return;
   }
   const previousView=state.view;
+  hidePageCoach();
   if(previousView==='search' && view!=='search'){
     stopFileSearchPolling();
     clearTimeout(state.fileSearch.debounceTimer);
@@ -4912,7 +4966,12 @@ async function switchView(view,{skipCoach=false}={}){
   }
   if(view==='stickies') renderStickyProjects(), renderStickyNotes();
   if(view==='settings') renderSettings();
-  if(!skipCoach) setTimeout(()=>showPageCoach(view),120);
+  if(!skipCoach){
+    pageCoachTimer=setTimeout(()=>{
+      pageCoachTimer=null;
+      if(state.view===view) showPageCoach(view);
+    },120);
+  }
 }
 
 function renderCurrentView(){

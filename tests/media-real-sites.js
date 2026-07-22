@@ -86,11 +86,15 @@ async function runPortalAttemptWithTimeout(webContents, action, timeoutMs = 9000
 async function probeRemoteMedia(webContents, value) {
   const url = String(value || '');
   if (!/^https?:\/\//i.test(url)) return { ok: false, reason: 'missing-direct-url' };
+  const parsedUrl = new URL(url);
+  const referer = /(?:^|\.)xhscdn\.com$/i.test(parsedUrl.hostname)
+    ? 'https://www.xiaohongshu.com/'
+    : (/\/upgcxcode\//i.test(parsedUrl.pathname) ? 'https://www.bilibili.com/' : webContents.getURL());
   try {
     const response = await webContents.session.fetch(url, {
       headers: {
         Range: 'bytes=0-65535',
-        Referer: webContents.getURL(),
+        Referer: referer,
       },
     });
     const reader = response.body?.getReader();
@@ -108,13 +112,12 @@ async function probeRemoteMedia(webContents, value) {
     };
   } catch (error) {
     return new Promise((resolve) => {
-      const parsed = new URL(url);
-      const client = parsed.protocol === 'https:' ? https : http;
+      const client = parsedUrl.protocol === 'https:' ? https : http;
       const request = client.get(url, {
         headers: {
           Accept: 'video/mp4,video/*;q=0.9,application/octet-stream;q=0.8,*/*;q=0.5',
           ...(process.env.REAL_MEDIA_DUMP_FULL === '1' ? {} : { Range: 'bytes=0-65535' }),
-          Referer: /\/upgcxcode\//i.test(parsed.pathname) ? 'https://www.bilibili.com/' : webContents.getURL(),
+          Referer: referer,
           'User-Agent': webContents.getUserAgent(),
         },
       }, (response) => {

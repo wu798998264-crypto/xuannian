@@ -381,6 +381,9 @@ contextBridge.exposeInMainWorld('nativeAPI', {
   async deleteMediaDownloadHistoryItem(taskId) {
     return ipcRenderer.invoke('media:deleteDownloadHistoryItem', taskId || '');
   },
+  async cancelMediaDownloadTask(taskId) {
+    return ipcRenderer.invoke('media:cancelDownloadTask', taskId || '');
+  },
   async getLocalMediaPlaybackUrl(filePath) {
     return ipcRenderer.invoke('media:localPlaybackUrl', filePath || '');
   },
