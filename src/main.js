@@ -1,5 +1,6 @@
 ﻿const { app, BrowserWindow, ipcMain, dialog, globalShortcut, clipboard, desktopCapturer, screen, Menu, nativeImage, shell } = require('electron');
 const { Notification, WebContentsView, nativeTheme } = require('electron');
+const { attachEditableContextMenu } = require('./editable-context-menu');
 const fs = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
@@ -309,6 +310,7 @@ function loadAppHtml(win, fileName, options = {}) {
 
 function attachPageDiagnostics(win, label) {
   if (!win || win.isDestroyed()) return;
+  attachEditableContextMenu(win, Menu);
   win.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
     runtimeLog(`${label} did-fail-load ${errorCode} ${errorDescription} ${validatedURL}`);
   });
