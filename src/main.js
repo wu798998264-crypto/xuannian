@@ -58,6 +58,10 @@ const {
   createMediaDownloadControl,
   isMediaDownloadCancelled,
 } = require('./media-download-control');
+const {
+  extractGequbaoLyrics,
+  isGequbaoMusicUrl,
+} = require('./music-lyrics');
 
 let mainWindow;
 let quickWindow;
@@ -5039,17 +5043,6 @@ async function downloadParsedMediaVideo(downloadTarget = 'download', collection 
   }
 }
 
-function isGequbaoMusicUrl(value) {
-  try {
-    const url = new URL(String(value || ''));
-    return url.protocol === 'https:'
-      && url.hostname.toLowerCase().replace(/^www\./, '') === 'gequbao.com'
-      && /^\/music\/\d+(?:[/?#]|$)/i.test(url.pathname);
-  } catch {
-    return false;
-  }
-}
-
 function downloadMediaMusicResult(url, downloadTarget = 'download', collection = '', preferredName = '') {
   const value = String(url || '').trim();
   if (!isGequbaoMusicUrl(value)) return false;
@@ -5072,6 +5065,78 @@ function previewMediaMusicResult(url) {
   const value = String(url || '').trim();
   if (!isGequbaoMusicUrl(value)) return false;
   return openMediaPortal(value, 'download', '', false, '', '', 'music-preview');
+}
+
+function requestGequbaoMusicPage(url, redirects = 0) {
+  const value = String(url || '').trim();
+  if (!isGequbaoMusicUrl(value)) return Promise.reject(new Error('歌曲链接无效'));
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (error, body = '') => {
+      if (settled) return;
+      settled = true;
+      if (error) reject(error); else resolve(body);
+    };
+    const request = https.get(value, {
+      headers: {
+        Accept: 'text/html,application/xhtml+xml',
+        'Accept-Language': 'zh-CN,zh;q=0.9',
+        Referer: 'https://www.gequbao.com/',
+        'User-Agent': `XuanNian/${app.getVersion()}`,
+      },
+    }, (response) => {
+      const location = response.headers.location;
+      if (location && response.statusCode >= 300 && response.statusCode < 400 && redirects < 5) {
+        response.resume();
+        try {
+          const redirected = new URL(location, value).toString();
+          requestGequbaoMusicPage(redirected, redirects + 1).then(resolve, reject);
+          settled = true;
+        } catch {
+          finish(new Error('歌词页面跳转地址无效'));
+        }
+        return;
+      }
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        response.resume();
+        finish(new Error(`歌词页面返回 ${response.statusCode}`));
+        return;
+      }
+      let body = '';
+      response.setEncoding('utf8');
+      response.on('data', (chunk) => {
+        body += chunk;
+        if (body.length > 2 * 1024 * 1024) {
+          response.destroy(new Error('歌词页面内容过大'));
+        }
+      });
+      response.on('end', () => finish(null, body));
+      response.on('error', (error) => finish(error));
+    });
+    request.setTimeout(15000, () => request.destroy(new Error('歌词下载超时')));
+    request.on('error', (error) => finish(error));
+  });
+}
+
+async function downloadMediaMusicLyrics(url, preferredName = '') {
+  const value = String(url || '').trim();
+  if (!isGequbaoMusicUrl(value)) return { ok: false, reason: '歌曲链接无效' };
+  try {
+    const html = await requestGequbaoMusicPage(value);
+    const lyrics = extractGequbaoLyrics(html);
+    if (!lyrics) return { ok: false, reason: '该版本暂无可下载歌词' };
+    const { downloadPath } = mediaDirectories();
+    const directory = mediaCollectionDirectory(downloadPath, 'audio');
+    await fs.promises.mkdir(directory, { recursive: true });
+    const baseName = String(preferredName || '未命名歌曲').trim();
+    const filename = sanitizeDownloadFilename(`${baseName || '未命名歌曲'}.lrc`);
+    const destination = uniqueMediaDownloadPath(directory, filename);
+    await fs.promises.writeFile(destination, lyrics, 'utf8');
+    return { ok: true, path: destination, name: path.basename(destination) };
+  } catch (error) {
+    runtimeLog(`music lyrics download failed: ${error?.message || error}`);
+    return { ok: false, reason: '歌词下载失败，请检查网络后重试' };
+  }
 }
 
 async function openHighQualityMusic(query = '', downloadTarget = 'download', collection = '') {
@@ -8209,6 +8274,7 @@ ipcMain.handle('media:downloadMusicResult', (_event, url, downloadTarget = 'down
   downloadMediaMusicResult(url, downloadTarget, collection, preferredName)
 ));
 ipcMain.handle('media:previewMusicResult', (_event, url) => previewMediaMusicResult(url));
+ipcMain.handle('media:downloadMusicLyrics', (_event, url, preferredName = '') => downloadMediaMusicLyrics(url, preferredName));
 ipcMain.handle('media:openHighQualityMusic', (_event, query = '', downloadTarget = 'download', collection = '') => openHighQualityMusic(query, downloadTarget, collection));
 ipcMain.on('media:browserBounds', (event, bounds = {}, visible = false, mode = 'browser') => {
   if (!mainWindow || event.sender !== mainWindow.webContents) return;
@@ -8768,6 +8834,12 @@ ipcMain.handle('ui:showItemContextMenu', (event, kind, options = {}) => {
     items.push({ type: 'separator' });
     items.push(action('rename', '修改收藏夹名称'));
     items.push(action('delete', '删除收藏夹'));
+  } else if (kind === 'music-search-result') {
+    items.push(action('play', '播放'));
+    items.push({ type: 'separator' });
+    items.push(action('download', '下载'));
+    items.push(action('favorite', '下载并收藏'));
+    items.push(action('lyrics', '下载歌词', { enabled: !options.lyricsPending }));
   } else if (kind === 'note-category') {
     items.push(action('rename', '修改'));
     items.push(action('delete', '删除', { enabled: options.canDelete !== false }));

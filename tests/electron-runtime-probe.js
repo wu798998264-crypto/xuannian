@@ -1183,6 +1183,7 @@ async function run() {
       const downloadedVideos=[];
       const downloadedVideoQualities=[];
       const downloadedSongs=[];
+      const downloadedLyrics=[];
       const previewedSongs=[];
       const highQualityRequests=[];
       const openedDownloadHistory=[];
@@ -1197,6 +1198,7 @@ async function run() {
       let bilibiliSessionChecks=0;
       const localPlaybackRequests=[];
       let verificationResumeCalls=0;
+      let musicContextMenuAction='lyrics';
       const nativeMediaBridgeAvailableBeforeStub=typeof api.downloadParsedMediaVideo==='function'&&typeof api.downloadMediaMusicResult==='function'&&typeof api.openHighQualityMusic==='function';
       const favoriteCollections=[];
       const movedFavorites=[];
@@ -1210,6 +1212,7 @@ async function run() {
       api.downloadParsedMediaVideo=async(target,collection,qualityIndex)=>{ downloadedVideos.push({target,collection}); downloadedVideoQualities.push(qualityIndex); return {ok:true}; };
       api.resumeMediaPortalAfterVerification=async()=>{ verificationResumeCalls+=1; return {ok:true}; };
       api.downloadMediaMusicResult=async(url,target,collection,preferredName)=>{ downloadedSongs.push({url,target,collection,preferredName}); return true; };
+      api.downloadMediaMusicLyrics=async(url,preferredName)=>{ downloadedLyrics.push({url,preferredName}); return {ok:true,name:preferredName+'.lrc',path:'C:/Downloads/'+preferredName+'.lrc'}; };
       api.previewMediaMusicResult=async url=>{ previewedSongs.push(url); return {ok:true,requestId:77}; };
       api.openHighQualityMusic=async query=>{ highQualityRequests.push(query); return {ok:true,target:'quark',message:'已打开夸克'}; };
       api.openPath=async filePath=>{ openedDownloadHistory.push(filePath); return true; };
@@ -1224,7 +1227,15 @@ async function run() {
       api.copyText=async value=>{ copiedText.push(value); return true; };
       api.copyFileToClipboard=async value=>{ copiedFiles.push(value); return true; };
       api.startFileDrag=value=>{ draggedFiles.push(value); return true; };
-      api.showItemContextMenu=async(kind,options)=>{ contextMenus.push({kind,options}); return ''; };
+      api.showItemContextMenu=async(kind,options)=>{
+        contextMenus.push({kind,options});
+        if(kind==='music-search-result'&&musicContextMenuAction){
+          const action=musicContextMenuAction;
+          musicContextMenuAction='';
+          return action;
+        }
+        return '';
+      };
       api.favoriteLocalMedia=async(filePath,collection)=>{ favoriteCollections.push({filePath,collection}); return {ok:true}; };
       api.moveLocalMedia=async(filePath,location,collection)=>{ movedFavorites.push({filePath,location,collection}); return {ok:true}; };
       api.deleteLocalMedia=async(filePath,location)=>{ deletedFavorites.push({filePath,location}); return {ok:true}; };
@@ -1340,12 +1351,15 @@ async function run() {
       renderMediaPortalWorkspace();
       const musicUi={
         rows:document.querySelectorAll('#mediaMusicResults .media-music-result').length,
-        actions:[...document.querySelectorAll('#mediaMusicResults [data-music-action]')].map(button=>button.textContent.trim()),
+        actions:[...document.querySelectorAll('#mediaMusicResults [data-music-action]')].map(button=>button.dataset.musicAction+':'+(button.textContent.trim()||button.getAttribute('aria-label')||'')),
         formatChoices:[...document.querySelectorAll('#mediaMusicResults [data-music-format-choice]')].map(button=>button.textContent.trim()),
         previewButtons:document.querySelectorAll('#mediaMusicResults [data-music-preview]').length,
+        favoriteIconButtons:document.querySelectorAll('#mediaMusicResults .media-music-favorite-button svg').length,
         activeAudioControls:!!document.querySelector('#mediaMusicResults audio[data-music-preview-audio][controls]'),
         topFormatControls:!!document.querySelector('#mediaMusicFormats'),
       };
+      document.querySelector('#mediaMusicResults .media-music-result')?.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true}));
+      await new Promise(resolve=>setTimeout(resolve,20));
       await downloadMediaMusicVersion(0,false);
       const backgroundPortal={browserHidden:document.querySelector('#mediaBrowserShell').hidden,directVisible:!document.querySelector('#mediaDirectShell').hidden};
       state.media.browser={...state.media.browser,ready:true};
@@ -1623,7 +1637,7 @@ async function run() {
       portalInputs.length=autoLoginInputStart;
       return {
         openedPortals,portalTargets,portalInputs,externalUrls,copiedText,copiedFiles,draggedFiles,contextMenus,favoriteCollections,movedFavorites,deletedFavorites,
-        downloadedVideos,downloadedVideoQualities,downloadedSongs,previewedSongs,highQualityRequests,openedDownloadHistory,downloadHistoryContextMenus,deletedDownloadHistory,cancelledDownloadTasks,pausedDownloadTasks,createdMediaCollections,localPlaybackRequests,nativeMediaBridgeAvailableBeforeStub,videoUi,videoProgressUi,favoritePreviewModal,videoButtonHitTargets,pickerCreateVisible,createdCollectionChoice,musicUi,backgroundPortal,browserTogglePersistence,downloadedMusicControls,manualPortalInitiallyVisible,
+        downloadedVideos,downloadedVideoQualities,downloadedSongs,downloadedLyrics,previewedSongs,highQualityRequests,openedDownloadHistory,downloadHistoryContextMenus,deletedDownloadHistory,cancelledDownloadTasks,pausedDownloadTasks,createdMediaCollections,localPlaybackRequests,nativeMediaBridgeAvailableBeforeStub,videoUi,videoProgressUi,favoritePreviewModal,videoButtonHitTargets,pickerCreateVisible,createdCollectionChoice,musicUi,backgroundPortal,browserTogglePersistence,downloadedMusicControls,manualPortalInitiallyVisible,
         providerRouting:{douyinProvider,tiktokProvider,dailyFallback,failureClassification},
         verificationFlow,musicDownloadStates,pausedTask,interruptedTask,mediaInputClear,bilibiliAutoReturn,
         activeView:document.querySelector('.view.active')?.id||'',
@@ -1664,10 +1678,11 @@ async function run() {
   assert.strictEqual(mediaLibraryMetrics.createdCollectionChoice, '新建视频分类');
   assert.deepStrictEqual(mediaLibraryMetrics.createdMediaCollections, [{location:'favorites',kind:'video',name:'新建视频分类'}]);
   assert.deepStrictEqual(mediaLibraryMetrics.downloadedSongs, [{url:'https://www.gequbao.com/music/101',target:'download',collection:'',preferredName:'测试歌曲 - 测试歌手'}]);
+  assert.deepStrictEqual(mediaLibraryMetrics.downloadedLyrics, [{url:'https://www.gequbao.com/music/101',preferredName:'测试歌曲 - 测试歌手'}]);
   assert.strictEqual(mediaLibraryMetrics.nativeMediaBridgeAvailableBeforeStub, false, 'renderer must not expose the retired high-quality music bridge');
   assert.deepStrictEqual(mediaLibraryMetrics.videoUi, {previewSrc:'https://cdn.example.com/runtime.mp4',actions:['下载视频','下载并收藏'],topActions:false,fallbackHidden:true,qualityChoiceHidden:false,qualityOptions:['1080P · 80 MB','720P · 40 MB'],selectedQualityIndex:1,exhaustedFallbackHidden:true});
   assert.deepStrictEqual(mediaLibraryMetrics.videoProgressUi, {controls:true,controlsAttribute:true,customProgressPresent:false,sourceDurationEndsWith:true,longDurationFormat:'02:00:00'});
-  assert.deepStrictEqual(mediaLibraryMetrics.musicUi, {rows:2,actions:['下载','下载并收藏','下载','下载并收藏'],formatChoices:[],previewButtons:2,activeAudioControls:true,topFormatControls:false});
+  assert.deepStrictEqual(mediaLibraryMetrics.musicUi, {rows:2,actions:['lyrics:下载歌词','download:下载','favorite:下载并收藏','lyrics:下载歌词','download:下载','favorite:下载并收藏'],formatChoices:[],previewButtons:2,favoriteIconButtons:2,activeAudioControls:true,topFormatControls:false});
   assert.deepStrictEqual(mediaLibraryMetrics.mediaInputClear, {
     videoClearVisibleBefore:true,
     musicClearVisibleBefore:true,
@@ -1712,8 +1727,10 @@ async function run() {
   assert.deepStrictEqual(mediaLibraryMetrics.copiedFiles, ['C:/Downloads/demo.mp4']);
   assert.deepStrictEqual(mediaLibraryMetrics.draggedFiles, ['C:/Downloads/demo.mp4','C:/Favorites/favorite.mp4']);
   assert.deepStrictEqual(mediaLibraryMetrics.mediaRowsDraggable, [true,true]);
-  assert.deepStrictEqual(mediaLibraryMetrics.contextMenus.map(item=>item.kind), ['media']);
-  assert.deepStrictEqual(mediaLibraryMetrics.contextMenus[0].options.collections, []);
+  assert.deepStrictEqual(mediaLibraryMetrics.contextMenus.map(item=>item.kind), ['music-search-result','media']);
+  assert.strictEqual(mediaLibraryMetrics.contextMenus[0].options.title, '测试歌曲');
+  assert.strictEqual(mediaLibraryMetrics.contextMenus[0].options.artist, '测试歌手');
+  assert.deepStrictEqual(mediaLibraryMetrics.contextMenus[1].options.collections, []);
   assert.deepStrictEqual(mediaLibraryMetrics.favoriteCollections, [{filePath:'C:/Downloads/demo.mp4',collection:'项目收藏'}]);
   assert.deepStrictEqual(mediaLibraryMetrics.movedFavorites, [{filePath:'C:/Favorites/favorite.mp4',location:'favorites',collection:'项目收藏'}]);
   assert.deepStrictEqual(mediaLibraryMetrics.deletedFavorites, [{filePath:'C:/Favorites/favorite.mp4',location:'favorites'}]);

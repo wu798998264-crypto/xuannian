@@ -1,11 +1,11 @@
 {
   "name": "xuannian",
-  "version": "8.4.2",
+  "version": "8.4.3",
   "description": "玄念本地剪切板、收藏、置顶便签与全盘查找工具",
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
-    "test:performance": "node tests/performance-smoke.js && node tests/persistence-stress.js && node tests/file-search.js && node tests/media-library.js && node tests/media-app-launcher.js && node tests/media-portal-automation.js",
+    "test:performance": "node tests/performance-smoke.js && node tests/persistence-stress.js && node tests/file-search.js && node tests/media-library.js && node tests/media-app-launcher.js && node tests/media-portal-automation.js && node tests/music-lyrics.js",
     "test:runtime": "electron tests/electron-runtime-probe.js && electron tests/media-portal-automation-probe.js",
     "test:context-menu": "node tests/editable-context-menu.js && electron tests/editable-context-menu-electron.js",
     "test:fullscreen": "electron tests/fullscreen-permission-probe.js",

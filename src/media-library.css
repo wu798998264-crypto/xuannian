@@ -93,6 +93,11 @@ body.dark .media-tab.active{background:#3d3e42;box-shadow:none}
 .media-music-result-main span{color:var(--muted)}
 .media-music-result-actions{display:flex;align-items:center;gap:7px}
 .media-music-result-actions .black-btn,.media-music-result-actions .ghost-btn{height:34px;padding:0 12px;font-size:11px;white-space:nowrap}
+.media-music-lyrics-button{height:34px;min-width:52px;padding:0 3px;border:0;background:transparent;color:var(--muted);font-size:11px;white-space:nowrap}
+.media-music-lyrics-button:hover:not(:disabled),.media-music-lyrics-button:focus-visible{color:var(--text);text-decoration:underline}
+.media-music-lyrics-button:disabled{cursor:wait;opacity:.65}
+.media-music-result-actions .media-music-favorite-button{width:34px;min-width:34px;padding:0;display:grid;place-items:center}
+.media-music-favorite-button svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;pointer-events:none}
 .media-music-preview-button{width:34px;height:34px;display:grid;place-items:center;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--muted)}
 .media-music-preview-button:hover,.media-music-preview-button.active{background:var(--panel-soft);color:var(--text);border-color:#aab1ba}
 .media-music-preview-button svg{width:16px;height:16px;fill:currentColor;stroke:none}

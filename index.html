@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>玄念8.4.2</title>
+  <title>玄念8.4.3</title>
   <link rel="icon" href="src/xuannian-logo-256.png" />
   <link rel="stylesheet" href="src/media-library.css" />
   <style>
@@ -1791,6 +1791,7 @@ function createBrowserFallbackAPI(){
     async resumeMediaPortalAfterVerification(){ return {ok:false}; },
     async downloadMediaMusicResult(){ return false; },
     async previewMediaMusicResult(){ return false; },
+    async downloadMediaMusicLyrics(){ return {ok:false,reason:'浏览器预览版不支持歌词下载'}; },
     setMediaBrowserBounds(){ return false; },
     async getMediaBrowserState(){ return {ready:false,loading:false,url:'',title:'',canGoBack:false,canGoForward:false}; },
     async mediaBrowserAction(){ return false; },
@@ -1834,7 +1835,7 @@ function createBrowserFallbackAPI(){
     async deleteInspiration(id){ const data=read(); data.inspirations=data.inspirations.filter(x=>x.id!==id); write(data); return data.inspirations; },
     async getSettings(){ return read().settings; },
     async saveSettings(settings){ const data=read(); data.settings={...data.settings,...settings}; write(data); return data.settings; },
-    async getUpdateState(){ return {status:'current',revision:0,currentVersion:'8.4.2',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false}; },
+    async getUpdateState(){ return {status:'current',revision:0,currentVersion:'8.4.3',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false}; },
     async checkForUpdates(){ return this.getUpdateState(); },
     async downloadUpdate(){ return this.getUpdateState(); },
     async installUpdate(){ return false; },
@@ -1924,6 +1925,7 @@ function createUnifiedAPI(nativeApi, fallback){
     resumeMediaPortalAfterVerification: ()=> nativeApi.resumeMediaPortalAfterVerification ? nativeApi.resumeMediaPortalAfterVerification() : fallback.resumeMediaPortalAfterVerification(),
     downloadMediaMusicResult: (url,downloadTarget,collection,preferredName)=> nativeApi.downloadMediaMusicResult ? nativeApi.downloadMediaMusicResult(url,downloadTarget,collection,preferredName) : Promise.resolve(false),
     previewMediaMusicResult: (url)=> nativeApi.previewMediaMusicResult ? nativeApi.previewMediaMusicResult(url) : Promise.resolve(false),
+    downloadMediaMusicLyrics: (url,preferredName)=> nativeApi.downloadMediaMusicLyrics ? nativeApi.downloadMediaMusicLyrics(url,preferredName) : fallback.downloadMediaMusicLyrics(),
     setMediaBrowserBounds: (bounds,visible,mode)=> nativeApi.setMediaBrowserBounds ? nativeApi.setMediaBrowserBounds(bounds,visible,mode) : fallback.setMediaBrowserBounds(bounds,visible,mode),
     getMediaBrowserState: ()=> nativeApi.getMediaBrowserState ? nativeApi.getMediaBrowserState() : fallback.getMediaBrowserState(),
     mediaBrowserAction: (action)=> nativeApi.mediaBrowserAction ? nativeApi.mediaBrowserAction(action) : fallback.mediaBrowserAction(action),
@@ -2454,9 +2456,23 @@ function bindEvents(){
     }
     const action=event.target.closest('[data-music-action]');
     if(action){
-      downloadMediaMusicVersion(Number(action.dataset.musicIndex),action.dataset.musicAction==='favorite');
+      handleMediaMusicResultAction(Number(action.dataset.musicIndex),action.dataset.musicAction);
       return;
     }
+  });
+  $('#mediaMusicResults')?.addEventListener('contextmenu',async event=>{
+    const row=event.target.closest('.media-music-result[data-music-index]');
+    if(!row) return;
+    event.preventDefault();
+    const index=Number(row.dataset.musicIndex);
+    const result=state.media.musicSearch.results[index];
+    if(!result) return;
+    const action=await api.showItemContextMenu('music-search-result',{
+      title:String(result.title||result.label||''),
+      artist:String(result.artist||''),
+      lyricsPending:mediaMusicLyricsPending.has(String(result.url||'')),
+    });
+    if(action) await handleMediaMusicResultAction(index,action);
   });
   $('#mediaMusicResults')?.addEventListener('dblclick',event=>{
     if(event.target.closest('button,audio,input,select')) return;
@@ -4355,6 +4371,40 @@ async function previewMediaMusicVersion(index){
   }
 }
 
+const mediaMusicLyricsPending=new Set();
+
+async function downloadMediaMusicLyricsForResult(index){
+  const result=state.media.musicSearch.results[index];
+  if(!result) return {ok:false,reason:'未找到音乐版本'};
+  const key=String(result.url||'');
+  if(mediaMusicLyricsPending.has(key)) return {ok:false,reason:'歌词正在下载'};
+  const displayName=[result.title,result.artist].filter(Boolean).join(' - ')||result.label||'未命名歌曲';
+  mediaMusicLyricsPending.add(key);
+  renderMediaPortalWorkspace();
+  try{
+    const saved=await api.downloadMediaMusicLyrics(result.url,displayName);
+    if(!saved||saved.ok===false){
+      toast(saved?.reason||'歌词下载失败，请稍后重试');
+      return saved||{ok:false};
+    }
+    toast(`歌词已下载：${saved.name||displayName+'.lrc'}`);
+    return saved;
+  }catch{
+    toast('歌词下载失败，请检查网络后重试');
+    return {ok:false,reason:'歌词下载失败'};
+  }finally{
+    mediaMusicLyricsPending.delete(key);
+    renderMediaPortalWorkspace();
+  }
+}
+
+function handleMediaMusicResultAction(index,action){
+  if(action==='play') return previewMediaMusicVersion(index);
+  if(action==='lyrics') return downloadMediaMusicLyricsForResult(index);
+  if(action==='download'||action==='favorite') return downloadMediaMusicVersion(index,action==='favorite');
+  return Promise.resolve(false);
+}
+
 async function downloadMediaMusicVersion(index,favorite=false){
   const result=state.media.musicSearch.results[index];
   if(!result) return;
@@ -4505,12 +4555,14 @@ function renderMediaPortalWorkspace(){
     musicResults.hidden=!(search.status==='ready'&&results.length);
     musicResults.innerHTML=results.map((item,index)=>{
       const preview=state.media.musicPreview?.index===index?state.media.musicPreview:null;
+      const lyricsPending=mediaMusicLyricsPending.has(String(item.url||''));
       return `<div class="media-music-result" data-music-index="${index}" title="双击试听">
         <div class="media-music-result-main"><strong>${escapeHtml(item.title||item.label||'未命名歌曲')}</strong><span>${escapeHtml(item.artist||'未知歌手')}</span></div>
         <div class="media-music-result-actions">
           <button class="media-music-preview-button${preview?' active':''}" type="button" data-music-preview="${index}" title="${preview?.status==='ready'?'播放或暂停试听':'试听'}" aria-label="试听"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"></path></svg></button>
+          <button class="media-music-lyrics-button" type="button" data-music-action="lyrics" data-music-index="${index}"${lyricsPending?' disabled':''}>${lyricsPending?'下载中…':'下载歌词'}</button>
           <button class="ghost-btn" type="button" data-music-action="download" data-music-index="${index}">下载</button>
-          <button class="black-btn" type="button" data-music-action="favorite" data-music-index="${index}">下载并收藏</button>
+          <button class="black-btn media-music-favorite-button" type="button" data-music-action="favorite" data-music-index="${index}" title="下载并收藏" aria-label="下载并收藏">${iconSvg('bookmark')}</button>
         </div>
         ${preview?`<div class="media-music-preview${preview.status==='error'?' error':''}">${preview.status==='ready'&&preview.previewUrl?`<audio data-music-preview-audio controls controlslist="nodownload noremoteplayback" preload="metadata" src="${escapeHtml(preview.previewUrl)}"></audio>`:`<span>${preview.status==='loading'?'正在准备试听…':escapeHtml(mediaPortalFailureMessage(preview.error||'preview-unavailable','audio'))}</span>`}</div>`:''}
       </div>`;
@@ -8251,7 +8303,7 @@ function showUpdateDialog(){
   showModal(`
     <div data-update-dialog>
       <div class="modal-header"><h3>软件更新</h3><button class="modal-close" id="closeModal">×</button></div>
-      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '8.4.2')}</b><span>${hasNewerUpdateVersion(update)?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
+      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '8.4.3')}</b><span>${hasNewerUpdateVersion(update)?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
       <div class="modal-message">${escapeHtml(updateStatusText())}</div>
       <p class="update-network-tip">提示：开启 VPN 后再检测更新，结果会更加准确。</p>
       ${busy||downloaded?`<div class="update-progress"><span style="width:${downloaded?100:progress}%"></span></div>`:''}

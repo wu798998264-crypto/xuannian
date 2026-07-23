@@ -420,6 +420,9 @@ contextBridge.exposeInMainWorld('nativeAPI', {
   async previewMediaMusicResult(url) {
     return ipcRenderer.invoke('media:previewMusicResult', url || '');
   },
+  async downloadMediaMusicLyrics(url, preferredName = '') {
+    return ipcRenderer.invoke('media:downloadMusicLyrics', url || '', preferredName || '');
+  },
   async openHighQualityMusic(query = '', downloadTarget = 'download', collection = '') {
     return ipcRenderer.invoke('media:openHighQualityMusic', query || '', downloadTarget || 'download', collection || '');
   },
