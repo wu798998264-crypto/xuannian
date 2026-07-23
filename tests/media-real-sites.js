@@ -1,4 +1,4 @@
-const { app, BrowserWindow } = require('electron');
+const { app, BaseWindow, BrowserWindow, WebContentsView } = require('electron');
 const fs = require('fs');
 const http = require('http');
 const https = require('https');
@@ -241,11 +241,21 @@ async function parseOnce(webContents, provider) {
       phase: 'input',
       value: provider.sourceUrl,
       timeoutMs: 30000,
+      nativeSubmit: true,
     }, scoreMediaDownloadQualityLabel), true);
   } catch {
     inputResult = { ok: true, continueAutomation: true, nextPhase: 'result' };
   }
   if (!inputResult?.continueAutomation) return { parsed: inputResult, download: { ok: false, reason: 'input-stage-failed' } };
+  if (inputResult.nativeSubmitRequired) {
+    const point = inputResult.actionPoint || {};
+    const x = Math.max(1, Math.min(1279, Math.round(Number(point.x || 0))));
+    const y = Math.max(1, Math.min(899, Math.round(Number(point.y || 0))));
+    webContents.focus();
+    webContents.sendInputEvent({ type: 'mouseMove', x, y, movementX: 0, movementY: 0 });
+    webContents.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 });
+    webContents.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 });
+  }
   if (process.env.REAL_MEDIA_DEBUG === 'input') {
     const debug = await webContents.executeJavaScript(`(() => {
       const input = document.querySelector('input[placeholder*="链接"],input[type="text"],textarea');
@@ -357,18 +367,47 @@ async function parseOnce(webContents, provider) {
 
 async function run() {
   await app.whenReady();
-  const window = new BrowserWindow({
-    show: process.env.REAL_MEDIA_SHOW === '1',
-    width: 1280,
-    height: 900,
-    webPreferences: {
-      partition: 'persist:xuannian-media-real-sites',
-      contextIsolation: true,
-      nodeIntegration: false,
-      sandbox: true,
-      backgroundThrottling: false,
-    },
-  });
+  const webPreferences = {
+    partition: 'persist:xuannian-media-real-sites',
+    contextIsolation: true,
+    nodeIntegration: false,
+    sandbox: true,
+    backgroundThrottling: false,
+  };
+  let window;
+  if (process.env.REAL_MEDIA_WORKER_HOST === '1') {
+    const host = new BaseWindow({
+      show: false,
+      x: -12000,
+      y: -12000,
+      width: 1280,
+      height: 900,
+      frame: false,
+      focusable: false,
+      skipTaskbar: true,
+    });
+    const view = new WebContentsView({ webPreferences });
+    host.contentView.addChildView(view);
+    view.setBounds({ x: 0, y: 0, width: 1280, height: 900 });
+    view.setVisible(true);
+    host.showInactive();
+    window = {
+      webContents: view.webContents,
+      destroy() {
+        try { host.contentView.removeChildView(view); } catch {}
+        try { view.webContents.close(); } catch {}
+        try { host.destroy(); } catch {}
+      },
+    };
+  } else {
+    window = new BrowserWindow({
+      show: process.env.REAL_MEDIA_SHOW === '1',
+      ...(process.env.REAL_MEDIA_OFFSCREEN === '1' ? { x: -12000, y: -12000 } : {}),
+      width: 1280,
+      height: 900,
+      webPreferences,
+    });
+  }
   window.webContents.setWindowOpenHandler(({ url }) => {
     if (process.env.REAL_MEDIA_DEBUG === 'download') console.log('real media popup ' + String(url || '').slice(0, 2000));
     if (classifyMediaPortalPopup(url, window.webContents.getURL()) === 'download') {

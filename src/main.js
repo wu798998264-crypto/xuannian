@@ -1,5 +1,5 @@
 ﻿const { app, BrowserWindow, ipcMain, dialog, globalShortcut, clipboard, desktopCapturer, screen, Menu, nativeImage, shell } = require('electron');
-const { Notification, WebContentsView, nativeTheme } = require('electron');
+const { BaseWindow, Notification, WebContentsView, nativeTheme } = require('electron');
 const { attachEditableContextMenu } = require('./editable-context-menu');
 const fs = require('fs');
 const path = require('path');
@@ -158,6 +158,9 @@ let videoThumbnailWindowReady = null;
 let videoThumbnailIdleTimer = null;
 let videoThumbnailActive = 0;
 let mediaPortalView = null;
+let mediaPortalWorkerWindow = null;
+let mediaPortalViewHost = '';
+let mediaPortalRequestedVisible = false;
 let mediaPortalInputTimer = null;
 let mediaPortalVisibilityNudgeTimer = null;
 let mediaPortalVisibilityRestoreTimer = null;
@@ -214,7 +217,7 @@ const MEDIA_PORTAL_MUSIC_WAKE_VISIBLE_MS = 700;
 const MEDIA_PORTAL_VIDEO_WAKE_MAX = 4;
 const MEDIA_PORTAL_VIDEO_WAKE_DELAY_MS = 3000;
 const MEDIA_PORTAL_VIDEO_WAKE_REPEAT_MS = 12000;
-const MEDIA_PORTAL_VIDEO_WAKE_VISIBLE_MS = 180;
+const MEDIA_PORTAL_VIDEO_WAKE_VISIBLE_MS = 520;
 const MEDIA_PREVIEW_CACHE_DIRECTORY = 'media-preview-cache';
 const MEDIA_PREVIEW_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const MEDIA_PREVIEW_MAX_BYTES = 96 * 1024 * 1024;
@@ -3696,7 +3699,7 @@ function configureMediaDownloadSession(electronSession) {
         notifyMediaDownloadProgress(progressPayload('cancelled'));
       }
       if (!activeMediaPortalDownloads && !mediaPortalInputState) {
-        if (mediaPortalView && !mediaPortalView.webContents.isDestroyed()) mediaPortalView.setVisible(false);
+        if (mediaPortalView && !mediaPortalView.webContents.isDestroyed()) hideMediaPortalView(mediaPortalView);
         scheduleMediaPortalIdleDestroy();
       }
     });
@@ -3719,15 +3722,23 @@ function destroyMediaPortalView({ notify = true } = {}) {
   mediaPortalRequestId += 1;
   const view = mediaPortalView;
   mediaPortalView = null;
+  const workerWindow = mediaPortalWorkerWindow;
+  mediaPortalWorkerWindow = null;
+  mediaPortalViewHost = '';
+  mediaPortalRequestedVisible = false;
   mediaPortalHtmlFullscreen = false;
   mediaPortalLastVisibleBounds = null;
   mediaPortalPresentationMode = 'browser';
   if (view) {
     try { mainWindow?.contentView?.removeChildView(view); } catch {}
+    try { workerWindow?.contentView?.removeChildView(view); } catch {}
     try {
       if (!view.webContents.isDestroyed()) view.webContents.close();
     } catch {}
   }
+  try {
+    if (workerWindow && !workerWindow.isDestroyed()) workerWindow.destroy();
+  } catch {}
   if (notify) notifyMediaBrowserState({ destroyed: true });
 }
 
@@ -3756,7 +3767,7 @@ function resetMediaPortalAutomation(kind = '') {
     mediaPortalRequestId += 1;
   }
   if (!activeMediaPortalDownloads && mediaPortalView && !mediaPortalView.webContents.isDestroyed()) {
-    mediaPortalView.setVisible(false);
+    hideMediaPortalView(mediaPortalView);
     scheduleMediaPortalIdleDestroy();
   }
   sendMediaPortalEvent('media:portalProgress', {
@@ -4357,7 +4368,7 @@ function publishMediaPortalVideo(state, parsed) {
   mediaPortalInputState = null;
   mediaPortalParsedVideo = parsed.ok && parsed.downloadReady ? parsed : null;
   if (mediaPortalView && !mediaPortalView.webContents.isDestroyed() && !parsed.embeddedPreview) {
-    mediaPortalView.setVisible(false);
+    hideMediaPortalView(mediaPortalView);
   }
   const {
     capturedDownloadUrl: _capturedDownloadUrl,
@@ -4611,7 +4622,7 @@ async function completeMediaPortalAutomation(state, result = {}) {
     });
   }
   if (!activeMediaPortalDownloads && !mediaPortalInputState) {
-    if (mediaPortalView && !mediaPortalView.webContents.isDestroyed()) mediaPortalView.setVisible(false);
+    if (mediaPortalView && !mediaPortalView.webContents.isDestroyed()) hideMediaPortalView(mediaPortalView);
     scheduleMediaPortalIdleDestroy();
   }
 }
@@ -4635,6 +4646,7 @@ function scheduleMediaPortalInput() {
       mode: state.automationMode,
       phase: state.phase || '',
       value: state.value || '',
+      nativeSubmit: state.automationMode === 'video-parse' && state.phase !== 'result',
       timeoutMs: state.automationMode === 'video-parse' && state.phase === 'result'
         ? (Number(state.videoResultWaitCount || 0) > 0
           ? MEDIA_PORTAL_VIDEO_EXTENDED_RESULT_TIMEOUT_MS
@@ -4645,6 +4657,33 @@ function scheduleMediaPortalInput() {
       const result = await view.webContents.executeJavaScript(script, true);
       if (!isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId)) return;
       if (result?.continueAutomation) {
+        if (result.nativeSubmitRequired) {
+          const point = result.actionPoint || {};
+          const x = Math.max(1, Math.min(MEDIA_PORTAL_WORKER_WIDTH - 1, Math.round(Number(point.x || 0))));
+          const y = Math.max(1, Math.min(MEDIA_PORTAL_WORKER_HEIGHT - 1, Math.round(Number(point.y || 0))));
+          const restoreMainFocus = !!mainWindow?.isFocused?.();
+          try {
+            keepMediaPortalWorkerVisible(view);
+            view.webContents.focus();
+            view.webContents.sendInputEvent({ type: 'mouseMove', x, y, movementX: 0, movementY: 0 });
+            view.webContents.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 });
+            view.webContents.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 });
+            state.nativeSubmitCount = Number(state.nativeSubmitCount || 0) + 1;
+            runtimeLog(`media portal trusted submit request=${state.requestId} count=${state.nativeSubmitCount} point=${x},${y}`);
+          } catch (error) {
+            runtimeLog(`media portal trusted submit failed request=${state.requestId}: ${error?.message || error}`);
+            await completeMediaPortalAutomation(state, { ok: false, reason: 'parse-action-missing' });
+            return;
+          } finally {
+            if (restoreMainFocus && mainWindow && !mainWindow.isDestroyed()) {
+              setTimeout(() => {
+                if (!mainWindow?.isDestroyed?.()) {
+                  try { mainWindow.webContents.focus(); } catch {}
+                }
+              }, 120);
+            }
+          }
+        }
         state.phase = String(result.nextPhase || 'result');
         const actionLabel = String(result.actionLabel || '').replace(/\s+/g, ' ').trim().slice(0, 120);
         runtimeLog(`media portal automation submitted request=${state.requestId} mode=${state.automationMode} phase=${state.phase} action=${actionLabel || '-'}`);
@@ -4982,7 +5021,7 @@ async function downloadParsedMediaVideo(downloadTarget = 'download', collection 
       qualityLabel: selectedQualityLabel,
     });
     if (!started.ok) {
-      view.setVisible(false);
+      hideMediaPortalView(view);
       scheduleMediaPortalIdleDestroy();
     }
     return started.ok ? started : { ...started, ok: false };
@@ -5109,6 +5148,66 @@ async function openHighQualityMusic(query = '', downloadTarget = 'download', col
   }
 }
 
+function ensureMediaPortalWorkerWindow() {
+  if (mediaPortalWorkerWindow && !mediaPortalWorkerWindow.isDestroyed()) return mediaPortalWorkerWindow;
+  const displays = screen.getAllDisplays();
+  const left = displays.length ? Math.min(...displays.map((display) => Number(display.bounds?.x || 0))) : 0;
+  const top = displays.length ? Math.min(...displays.map((display) => Number(display.bounds?.y || 0))) : 0;
+  const workerWindow = new BaseWindow({
+    show: false,
+    x: left - MEDIA_PORTAL_WORKER_WIDTH - 128,
+    y: top - MEDIA_PORTAL_WORKER_HEIGHT - 128,
+    width: MEDIA_PORTAL_WORKER_WIDTH,
+    height: MEDIA_PORTAL_WORKER_HEIGHT,
+    frame: false,
+    focusable: false,
+    skipTaskbar: true,
+    backgroundColor: '#ffffff',
+  });
+  mediaPortalWorkerWindow = workerWindow;
+  workerWindow.on('closed', () => {
+    if (mediaPortalWorkerWindow === workerWindow) mediaPortalWorkerWindow = null;
+    if (mediaPortalViewHost === 'worker') mediaPortalViewHost = '';
+  });
+  return workerWindow;
+}
+
+function attachMediaPortalViewToWorker(view = mediaPortalView) {
+  if (!view || view.webContents.isDestroyed()) return false;
+  const workerWindow = ensureMediaPortalWorkerWindow();
+  if (!workerWindow) return false;
+  if (mediaPortalViewHost !== 'worker') {
+    try { mainWindow?.contentView?.removeChildView(view); } catch {}
+    try { workerWindow.contentView.addChildView(view); } catch {}
+    mediaPortalViewHost = 'worker';
+  }
+  view.setBounds({ x: 0, y: 0, width: MEDIA_PORTAL_WORKER_WIDTH, height: MEDIA_PORTAL_WORKER_HEIGHT });
+  view.setVisible(true);
+  if (!workerWindow.isVisible()) workerWindow.showInactive();
+  return true;
+}
+
+function attachMediaPortalViewToMain(view = mediaPortalView) {
+  if (!view || view.webContents.isDestroyed() || !mainWindow || mainWindow.isDestroyed()) return false;
+  if (mediaPortalViewHost !== 'main') {
+    try { mediaPortalWorkerWindow?.contentView?.removeChildView(view); } catch {}
+    try { mainWindow.contentView.addChildView(view); } catch {}
+    mediaPortalViewHost = 'main';
+  }
+  if (mediaPortalWorkerWindow && !mediaPortalWorkerWindow.isDestroyed() && mediaPortalWorkerWindow.isVisible()) {
+    mediaPortalWorkerWindow.hide();
+  }
+  return true;
+}
+
+function hideMediaPortalView(view = mediaPortalView) {
+  if (!view || view.webContents.isDestroyed()) return;
+  view.setVisible(false);
+  if (mediaPortalViewHost === 'worker' && mediaPortalWorkerWindow && !mediaPortalWorkerWindow.isDestroyed()) {
+    mediaPortalWorkerWindow.hide();
+  }
+}
+
 function ensureMediaPortalView() {
   cancelMediaPortalIdleDestroy();
   if (mediaPortalView && !mediaPortalView.webContents.isDestroyed()) return mediaPortalView;
@@ -5126,7 +5225,9 @@ function ensureMediaPortalView() {
   mediaPortalView = view;
   view.setBounds({ x: 0, y: 0, width: 1280, height: 900 });
   view.setVisible(false);
-  mainWindow.contentView.addChildView(view);
+  const workerWindow = ensureMediaPortalWorkerWindow();
+  workerWindow.contentView.addChildView(view);
+  mediaPortalViewHost = 'worker';
   configureMediaDownloadSession(view.webContents.session);
   view.webContents.setWindowOpenHandler(({ url }) => {
     const disposition = classifyMediaPortalPopup(url, view.webContents.getURL());
@@ -5191,16 +5292,12 @@ function ensureMediaPortalView() {
 
 function keepMediaPortalWorkerVisible(view = mediaPortalView) {
   if (!view || view.webContents.isDestroyed()) return false;
-  const content = mainWindow?.getContentBounds();
-  const width = Math.max(1, Number(content?.width || 1));
-  const height = Math.max(1, Number(content?.height || 1));
-  view.setBounds({
-    x: Math.max(0, width - 2),
-    y: Math.max(0, height - 2),
-    width: MEDIA_PORTAL_WORKER_WIDTH,
-    height: MEDIA_PORTAL_WORKER_HEIGHT,
-  });
-  view.setVisible(true);
+  if (mediaPortalRequestedVisible && mediaPortalLastVisibleBounds && attachMediaPortalViewToMain(view)) {
+    view.setBounds(mediaPortalLastVisibleBounds);
+    view.setVisible(true);
+  } else if (!attachMediaPortalViewToWorker(view)) {
+    return false;
+  }
   view.webContents.setAudioMuted(true);
   return true;
 }
@@ -5216,11 +5313,13 @@ function setMediaPortalBounds(bounds = {}, visible = false, mode = 'browser') {
   const width = Math.max(0, Math.min(maxWidth - x, Math.round(Number(bounds.width || 0))));
   const height = Math.max(0, Math.min(maxHeight - y, Math.round(Number(bounds.height || 0))));
   const shouldShow = !!visible && width >= 120 && height >= 80;
+  mediaPortalRequestedVisible = shouldShow;
   if (width >= 120 && height >= 80) {
     mediaPortalLastVisibleBounds = { x, y, width, height };
     if (!mediaPortalHtmlFullscreen) view.setBounds(mediaPortalLastVisibleBounds);
   }
   if (mediaPortalHtmlFullscreen) {
+    attachMediaPortalViewToMain(view);
     view.setBounds({ x: 0, y: 0, width: Math.max(1, maxWidth), height: Math.max(1, maxHeight) });
     view.setVisible(true);
     view.webContents.setAudioMuted(false);
@@ -5229,8 +5328,12 @@ function setMediaPortalBounds(bounds = {}, visible = false, mode = 'browser') {
   const previewUrl = mediaPortalParsedVideo?.capturedDownloadUrl || mediaPortalParsedVideo?.previewUrl || '';
   setMediaPortalPresentationMode(shouldShow && mode === 'preview' ? 'preview' : 'browser', previewUrl);
   const keepWorkerActive = !shouldShow && (!!mediaPortalInputState || activeMediaPortalDownloads > 0);
-  if (keepWorkerActive) keepMediaPortalWorkerVisible(view);
-  else view.setVisible(shouldShow);
+  if (shouldShow) {
+    attachMediaPortalViewToMain(view);
+    if (mediaPortalLastVisibleBounds) view.setBounds(mediaPortalLastVisibleBounds);
+    view.setVisible(true);
+  } else if (keepWorkerActive) keepMediaPortalWorkerVisible(view);
+  else hideMediaPortalView(view);
   view.webContents.setAudioMuted(!shouldShow);
   if (shouldShow) {
     cancelMediaPortalIdleDestroy();
@@ -5356,6 +5459,7 @@ function openMediaPortal(url, downloadTarget = 'download', sourceText = '', auto
       navigationAbortCount: 0,
       videoRecoveryCount: 0,
       videoResultWaitCount: 0,
+      nativeSubmitCount: 0,
       visibilityNudgeCount: 0,
       automationRunning: false,
       automationRerunRequested: false,

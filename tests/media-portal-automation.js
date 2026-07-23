@@ -105,6 +105,10 @@ function run() {
   assert(parseScript.includes('imageOnlyDownload'));
   assert(parseScript.includes('audioOnlyDownload'));
   assert(parseScript.includes('content-not-video'));
+  const nativeSubmitScript = buildPortalScript({ mode: 'video-parse', phase: 'input', value: 'https://example.com/video', nativeSubmit: true }, scoreMediaDownloadQualityLabel);
+  assert(nativeSubmitScript.includes('const nativeSubmit = true'));
+  assert(nativeSubmitScript.includes('nativeSubmitRequired: true'));
+  assert(nativeSubmitScript.includes('actionPoint'));
   const secondCandidateScript = buildPortalScript({ mode: 'video-download', candidateIndex: 1 }, scoreMediaDownloadQualityLabel);
   assert(secondCandidateScript.includes('const requestedCandidateIndex = 1'));
   assert(secondCandidateScript.includes('candidates[requestedCandidateIndex]'));

@@ -132,7 +132,7 @@ function selectMediaPreviewOption(options, maxBytes = 0) {
   return candidates.at(-1) || null;
 }
 
-function buildPortalScript({ mode, value = '', phase = '', timeoutMs = 30000, candidateIndex = 0 } = {}, qualityScorer = () => -1) {
+function buildPortalScript({ mode, value = '', phase = '', timeoutMs = 30000, candidateIndex = 0, nativeSubmit = false } = {}, qualityScorer = () => -1) {
   const normalizedMode = String(mode || '');
   const normalizedPhase = String(phase || '');
   const deadlineMs = Math.max(1000, Math.min(90000, Number(timeoutMs) || 30000));
@@ -144,6 +144,7 @@ function buildPortalScript({ mode, value = '', phase = '', timeoutMs = 30000, ca
     const qualityScore = ${qualityScorerSource};
     const deadline = Date.now() + ${deadlineMs};
     const requestedCandidateIndex = ${Math.max(0, Math.floor(Number(candidateIndex) || 0))};
+    const nativeSubmit = ${nativeSubmit ? 'true' : 'false'};
     const previewFallbackWaitMs = 2500;
     let previewFirstSeenAt = 0;
     let imageOnlyFirstSeenAt = 0;
@@ -473,6 +474,27 @@ function buildPortalScript({ mode, value = '', phase = '', timeoutMs = 30000, ca
         return;
       }
       action.setAttribute('data-xuannian-parser-action', 'true');
+      if (nativeSubmit) {
+        action.scrollIntoView({ block: 'center', inline: 'center' });
+        pause(() => {
+          const rect = action.getBoundingClientRect();
+          resolve({
+            ok: true,
+            stage: 'input',
+            filled: true,
+            submitted: false,
+            nativeSubmitRequired: true,
+            actionPoint: {
+              x: Math.max(1, Math.round(rect.left + rect.width / 2)),
+              y: Math.max(1, Math.round(rect.top + rect.height / 2)),
+            },
+            actionLabel: text(action).slice(0, 120),
+            continueAutomation: true,
+            nextPhase: 'result',
+          });
+        }, 80);
+        return;
+      }
       action.click();
       resolve({
         ok: true,
