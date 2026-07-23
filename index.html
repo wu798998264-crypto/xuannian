@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>玄念8.3.6</title>
+  <title>玄念8.4.2</title>
   <link rel="icon" href="src/xuannian-logo-256.png" />
   <link rel="stylesheet" href="src/media-library.css" />
   <style>
@@ -1509,7 +1509,7 @@ const state = {
     draggedFavoriteNativeStarted:false,
     dragCleanupTimer:null,
   },
-  update: {status:'idle',currentVersion:'',version:'',percent:0,message:'',releaseNotes:'',portable:false,manualInstall:false,supported:true},
+  update: {status:'idle',revision:0,currentVersion:'',version:'',percent:0,message:'',releaseNotes:'',portable:false,manualInstall:false,supported:true},
   clipboardWatcherTimer: null,
   lastClipboardDigest: '',
   pendingFavoriteRecordId: null,
@@ -1834,7 +1834,7 @@ function createBrowserFallbackAPI(){
     async deleteInspiration(id){ const data=read(); data.inspirations=data.inspirations.filter(x=>x.id!==id); write(data); return data.inspirations; },
     async getSettings(){ return read().settings; },
     async saveSettings(settings){ const data=read(); data.settings={...data.settings,...settings}; write(data); return data.settings; },
-    async getUpdateState(){ return {status:'current',currentVersion:'8.0.6',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false}; },
+    async getUpdateState(){ return {status:'current',revision:0,currentVersion:'8.4.2',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false}; },
     async checkForUpdates(){ return this.getUpdateState(); },
     async downloadUpdate(){ return this.getUpdateState(); },
     async installUpdate(){ return false; },
@@ -2003,7 +2003,7 @@ async function init(){
   state.inspirationCategories=[];
   state.inspirations=[];
   state.settings=settings;
-  state.update=update;
+  applyUpdateState(update);
   state.media.downloadPath=mediaConfig?.downloadPath||'';
   state.media.favoritePath=mediaConfig?.favoritePath||'';
   state.media.downloadTasks=normalizeMediaDownloadHistory(mediaConfig?.downloadHistory);
@@ -2018,7 +2018,7 @@ async function init(){
   bindMediaBrowserSurface();
   renderMediaDownloadBubble();
   window.nativeAPI?.onUpdateState?.((nextState)=>{
-    state.update={...state.update,...nextState};
+    applyUpdateState(nextState);
     renderUpdateNav();
     if($('#modalBox [data-update-dialog]')) showUpdateDialog();
   });
@@ -8187,11 +8187,40 @@ async function saveSettings(){
   toast('设置已保存');
 }
 
+function compareUpdateVersions(left,right){
+  const parse=value=>String(value||'').replace(/^v/i,'').split('-')[0].split('.').map(part=>Number(part)||0);
+  const a=parse(left);
+  const b=parse(right);
+  for(let index=0;index<Math.max(a.length,b.length,3);index+=1){
+    if((a[index]||0)!==(b[index]||0)) return (a[index]||0)>(b[index]||0)?1:-1;
+  }
+  return 0;
+}
+
+function hasNewerUpdateVersion(update=state.update){
+  return !!update?.version&&compareUpdateVersions(update.version,update.currentVersion)>0;
+}
+
+function effectiveUpdateStatus(update=state.update){
+  const status=update?.status||'idle';
+  if(hasNewerUpdateVersion(update)&&!['checking','downloading','downloaded'].includes(status)&&!(status==='error'&&update?.retryAction==='download')) return 'available';
+  return status;
+}
+
+function applyUpdateState(nextState){
+  if(!nextState||typeof nextState!=='object') return false;
+  const currentRevision=Math.max(0,Number(state.update?.revision||0));
+  const nextRevision=Math.max(0,Number(nextState.revision||0));
+  if(currentRevision&&nextRevision&&nextRevision<currentRevision) return false;
+  state.update={...state.update,...nextState};
+  return true;
+}
+
 function renderUpdateNav(){
   const button=$('#updateNavBtn');
   if(!button) return;
-  const status=state.update?.status || 'idle';
-  const hasUpdate=!!state.update?.version && ['available','downloading','downloaded','error'].includes(status);
+  const status=effectiveUpdateStatus();
+  const hasUpdate=hasNewerUpdateVersion() || (!!state.update?.version && ['available','downloading','downloaded','error'].includes(status));
   button.classList.toggle('has-update',hasUpdate);
   const version=state.update?.version ? ` ${state.update.version}` : '';
   const titles={
@@ -8203,14 +8232,15 @@ function renderUpdateNav(){
 }
 
 function updateStatusText(){
-  const status=state.update?.status || 'idle';
-  const map={idle:'点击检查是否有新版本',checking:'正在连接更新服务器…',current:'当前已是最新版本',available:state.update?.message || '发现新版本',downloading:state.update?.message || '正在下载更新…',downloaded:state.update?.message || '更新已下载',error:state.update?.message || '检查更新失败'};
+  const status=effectiveUpdateStatus();
+  const availableMessage=`发现新版本${state.update?.version?` ${state.update.version}`:''}`;
+  const map={idle:'点击检查是否有新版本',checking:'正在连接更新服务器…',current:'当前已是最新版本',available:availableMessage,downloading:state.update?.message || '正在下载更新…',downloaded:state.update?.message || '更新已下载',error:state.update?.message || '检查更新失败'};
   return map[status] || '点击检查更新';
 }
 
 function showUpdateDialog(){
   const update=state.update || {};
-  const status=update.status || 'idle';
+  const status=effectiveUpdateStatus(update);
   const progress=Math.max(0,Math.min(100,Number(update.percent||0)));
   const busy=['checking','downloading'].includes(status);
   const available=status==='available';
@@ -8221,7 +8251,7 @@ function showUpdateDialog(){
   showModal(`
     <div data-update-dialog>
       <div class="modal-header"><h3>软件更新</h3><button class="modal-close" id="closeModal">×</button></div>
-      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '8.0.6')}</b><span>${update.version?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
+      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '8.4.2')}</b><span>${hasNewerUpdateVersion(update)?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
       <div class="modal-message">${escapeHtml(updateStatusText())}</div>
       <p class="update-network-tip">提示：开启 VPN 后再检测更新，结果会更加准确。</p>
       ${busy||downloaded?`<div class="update-progress"><span style="width:${downloaded?100:progress}%"></span></div>`:''}
@@ -8235,7 +8265,7 @@ function showUpdateDialog(){
 }
 
 async function runUpdateAction(){
-  const status=state.update?.status || 'idle';
+  const status=effectiveUpdateStatus();
   if(status==='downloaded'){
     await api.installUpdate();
     if(state.update?.manualInstall) closeModal();
@@ -8246,7 +8276,7 @@ async function runUpdateAction(){
   renderUpdateNav();
   showUpdateDialog();
   const next=shouldDownload ? await api.downloadUpdate() : await api.checkForUpdates();
-  if(next) state.update={...state.update,...next};
+  if(next) applyUpdateState(next);
   renderUpdateNav();
   showUpdateDialog();
 }

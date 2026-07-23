@@ -235,6 +235,7 @@ const UPDATE_REPO = 'xuannian';
 const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 let updateState = {
   status: 'idle',
+  revision: 0,
   currentVersion: app.getVersion(),
   version: '',
   percent: 0,
@@ -386,7 +387,8 @@ function publicUpdateState() {
 
 function setUpdateState(patch = {}) {
   const previousStatus = updateState.status;
-  updateState = { ...updateState, ...patch, currentVersion: app.getVersion() };
+  const revision = Math.max(0, Number(updateState.revision || 0)) + 1;
+  updateState = { ...updateState, ...patch, revision, currentVersion: app.getVersion() };
   const progressBucket = updateState.status === 'downloading' ? Math.floor(Number(updateState.percent || 0) / 10) : '';
   const logKey = `${updateState.status}:${progressBucket}:${updateState.version || ''}:${updateState.status === 'error' ? updateState.message : ''}`;
   if (logKey !== lastUpdateLogKey) {
@@ -431,6 +433,10 @@ function compareVersions(left, right) {
     if ((a[index] || 0) !== (b[index] || 0)) return (a[index] || 0) > (b[index] || 0) ? 1 : -1;
   }
   return 0;
+}
+
+function hasKnownAppUpdate(state = updateState) {
+  return !!state?.version && compareVersions(state.version, app.getVersion()) > 0;
 }
 
 function requestJson(url, redirects = 0) {
@@ -634,7 +640,7 @@ async function checkForAppUpdates() {
 async function downloadAppUpdate() {
   if (updateState.status === 'downloaded') return publicUpdateState();
   const retryingDownload = updateState.status === 'error' && updateState.retryAction === 'download' && !!updateState.version;
-  if (updateState.status !== 'available' && !retryingDownload) return checkForAppUpdates();
+  if (updateState.status !== 'available' && !retryingDownload && !hasKnownAppUpdate()) return checkForAppUpdates();
   try {
     setUpdateState({ status: 'downloading', retryAction: 'download', message: retryingDownload ? '正在重试下载…' : '正在下载更新…', percent: 0 });
     if (updateState.manualInstall) {

@@ -103,6 +103,42 @@ async function run() {
   await window.webContents.reload();
   await waitForRenderer(window, "typeof state!=='undefined' && state.notes.length===10000");
 
+  const updateDialogMetrics = await window.webContents.executeJavaScript(`
+    (async()=>{
+      const original={update:{...state.update},downloadUpdate:api.downloadUpdate,checkForUpdates:api.checkForUpdates};
+      let downloadCalls=0;
+      let checkCalls=0;
+      api.downloadUpdate=async()=>{
+        downloadCalls+=1;
+        return {...state.update,status:'downloading',revision:21,message:'正在下载更新…',percent:5};
+      };
+      api.checkForUpdates=async()=>{
+        checkCalls+=1;
+        return {...state.update,status:'checking',revision:21,message:'正在检查更新…'};
+      };
+      state.update={status:'current',revision:20,currentVersion:'8.4.1',version:'8.4.2',percent:0,message:'发现新版本 8.4.2',releaseNotes:'',portable:false,manualInstall:false,supported:true,retryAction:''};
+      showUpdateDialog();
+      const actionText=document.querySelector('#runUpdateAction')?.textContent.trim()||'';
+      await runUpdateAction();
+      const statusAfterAction=state.update.status;
+      state.update={...state.update,status:'available',revision:30,currentVersion:'8.4.1',version:'8.4.2',message:'发现新版本 8.4.2'};
+      const staleAccepted=applyUpdateState({status:'current',revision:29,version:'',message:'当前已是最新版本'});
+      const stateAfterStale={status:state.update.status,version:state.update.version,revision:state.update.revision};
+      closeModal();
+      state.update=original.update;
+      api.downloadUpdate=original.downloadUpdate;
+      api.checkForUpdates=original.checkForUpdates;
+      return {actionText,downloadCalls,checkCalls,statusAfterAction,staleAccepted,stateAfterStale};
+    })()
+  `, true);
+  console.log(`update dialog metrics ${JSON.stringify(updateDialogMetrics)}`);
+  assert.strictEqual(updateDialogMetrics.actionText, '下载更新', 'a known newer version must render the download action even if a stale status says current');
+  assert.strictEqual(updateDialogMetrics.downloadCalls, 1, 'the newer-version action must call download exactly once');
+  assert.strictEqual(updateDialogMetrics.checkCalls, 0, 'the newer-version action must not run another update check');
+  assert.strictEqual(updateDialogMetrics.statusAfterAction, 'downloading');
+  assert.strictEqual(updateDialogMetrics.staleAccepted, false, 'an older asynchronous update response must be ignored');
+  assert.deepStrictEqual(updateDialogMetrics.stateAfterStale, {status:'available',version:'8.4.2',revision:30});
+
   const thumbnailBridgeMetrics = await window.webContents.executeJavaScript(`
     (async()=>{
       let nativeCalls=0;
