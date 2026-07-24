@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>玄念8.4.5</title>
+  <title>玄念8.4.6</title>
   <link rel="icon" href="src/xuannian-logo-256.png" />
   <link rel="stylesheet" href="src/media-library.css" />
   <style>
@@ -159,9 +159,12 @@
     body.dark .media-download-count{background:#f1f1f1;color:#222}
     .media-download-popover{position:absolute;right:0;top:46px;width:340px;max-width:calc(100vw - 110px);max-height:320px;display:none;flex-direction:column;border:1px solid var(--line);border-radius:8px;background:var(--panel);box-shadow:var(--shadow);overflow:hidden}
     .media-download-bubble.open .media-download-popover{display:flex}
-    .media-download-head{height:42px;flex:none;display:flex;align-items:center;justify-content:space-between;padding:0 9px 0 12px;border-bottom:1px solid var(--line);font-size:12px;font-weight:800}
+    .media-download-head{height:42px;flex:none;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 9px 0 12px;border-bottom:1px solid var(--line);font-size:12px;font-weight:800}
+    .media-download-head-title{display:flex;align-items:center;gap:7px;min-width:0;white-space:nowrap}
     .media-download-head-meta{display:flex;align-items:center;gap:8px;min-width:0}
     .media-download-head span{color:var(--muted);font-size:10px}
+    .media-download-view-all{height:24px;padding:0 5px;border-radius:4px;color:var(--accent);font-size:10px;font-weight:800;white-space:nowrap}
+    .media-download-view-all:hover{background:var(--panel-soft);color:var(--text)}
     .media-download-clear{height:26px;padding:0 9px;border:1px solid var(--line);border-radius:5px;background:var(--panel-soft);color:var(--muted);font-size:10px;font-weight:800}
     .media-download-clear:hover{border-color:color-mix(in srgb,var(--danger) 45%,var(--line));background:color-mix(in srgb,var(--danger) 9%,var(--panel));color:var(--danger)}
     .media-download-clear[hidden]{display:none}
@@ -1122,7 +1125,7 @@
               <span class="media-download-count" id="mediaDownloadCount">0</span>
             </button>
             <div class="media-download-popover" id="mediaDownloadPopover">
-              <div class="media-download-head"><strong>下载记录</strong><div class="media-download-head-meta"><span id="mediaDownloadSummary">暂无任务</span><button class="media-download-clear" id="mediaDownloadClear" type="button" title="一键清除已完成的下载记录" hidden>清空</button></div></div>
+              <div class="media-download-head"><div class="media-download-head-title"><strong>下载记录</strong><button class="media-download-view-all" id="mediaDownloadViewAll" type="button" title="进入媒体库查看全部已下载文件">查看全部已下载</button></div><div class="media-download-head-meta"><span id="mediaDownloadSummary">暂无任务</span><button class="media-download-clear" id="mediaDownloadClear" type="button" title="一键清除已完成的下载记录" hidden>清空</button></div></div>
               <div class="media-download-list" id="mediaDownloadTaskList"></div>
             </div>
           </div>
@@ -1835,7 +1838,7 @@ function createBrowserFallbackAPI(){
     async deleteInspiration(id){ const data=read(); data.inspirations=data.inspirations.filter(x=>x.id!==id); write(data); return data.inspirations; },
     async getSettings(){ return read().settings; },
     async saveSettings(settings){ const data=read(); data.settings={...data.settings,...settings}; write(data); return data.settings; },
-    async getUpdateState(){ return {status:'current',revision:0,currentVersion:'8.4.5',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false}; },
+    async getUpdateState(){ return {status:'current',revision:0,currentVersion:'8.4.6',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false}; },
     async checkForUpdates(){ return this.getUpdateState(); },
     async downloadUpdate(){ return this.getUpdateState(); },
     async installUpdate(){ return false; },
@@ -2507,6 +2510,11 @@ function bindEvents(){
   $('#mediaDownloadTaskList')?.addEventListener('click',handleMediaDownloadTaskClick);
   $('#mediaDownloadTaskList')?.addEventListener('dblclick',handleMediaDownloadTaskDoubleClick);
   $('#mediaDownloadTaskList')?.addEventListener('contextmenu',handleMediaDownloadTaskContextMenu);
+  $('#mediaDownloadViewAll')?.addEventListener('click',event=>{
+    event.preventDefault();
+    event.stopPropagation();
+    openAllMediaDownloads();
+  });
   $('#mediaDownloadClear')?.addEventListener('click',event=>{
     event.preventDefault();
     event.stopPropagation();
@@ -3757,6 +3765,14 @@ function normalizeMediaDownloadHistory(items=[]){
     }))
     .sort((left,right)=>right.updatedAt-left.updatedAt)
     .slice(0,10);
+}
+
+async function openAllMediaDownloads(){
+  state.media.downloadsExpanded=false;
+  state.media.tab='downloads';
+  renderMediaDownloadBubble();
+  if(state.view==='media') setMediaTab('downloads');
+  else await switchView('media',{skipCoach:true});
 }
 
 function renderMediaDownloadBubble(){
@@ -8307,7 +8323,7 @@ function showUpdateDialog(){
   showModal(`
     <div data-update-dialog>
       <div class="modal-header"><h3>软件更新</h3><button class="modal-close" id="closeModal">×</button></div>
-      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '8.4.5')}</b><span>${hasNewerUpdateVersion(update)?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
+      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '8.4.6')}</b><span>${hasNewerUpdateVersion(update)?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
       <div class="modal-message">${escapeHtml(updateStatusText())}</div>
       <p class="update-network-tip">提示：开启 VPN 后再检测更新，结果会更加准确。</p>
       ${busy||downloaded?`<div class="update-progress"><span style="width:${downloaded?100:progress}%"></span></div>`:''}

@@ -175,6 +175,7 @@ async function run() {
 
   const indexSource = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
   assert(mainSource.includes("ipcMain.handle('media:clearDownloadHistory'") && indexSource.includes('clearMediaDownloadHistory()'), 'completed download history must support one-click clearing without touching media files');
+  assert(indexSource.includes('id="mediaDownloadViewAll"') && indexSource.includes('async function openAllMediaDownloads()') && indexSource.includes("state.media.tab='downloads'") && indexSource.includes("switchView('media',{skipCoach:true})"), 'download history must offer a direct route to the complete downloaded-media list');
   const quickSource = fs.readFileSync(path.join(__dirname, '..', 'quick.html'), 'utf8');
   const stickySource = fs.readFileSync(path.join(__dirname, '..', 'sticky.html'), 'utf8');
   const wheelSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'wheel-scroll.js'), 'utf8');

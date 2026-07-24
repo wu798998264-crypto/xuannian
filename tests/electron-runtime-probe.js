@@ -1525,6 +1525,18 @@ async function run() {
         deleted:[...deletedDownloadHistory],
         stillPresent:!!mediaDownloadTaskById('runtime-completed-11'),
       };
+      setMediaTab('favorites');
+      state.media.downloadsExpanded=true;
+      renderMediaDownloadBubble();
+      document.querySelector('#mediaDownloadViewAll').click();
+      await new Promise(resolve=>setTimeout(resolve,20));
+      const viewAllDownloads={
+        label:document.querySelector('#mediaDownloadViewAll').textContent.trim(),
+        view:state.view,
+        tab:state.media.tab,
+        downloadsPanelActive:document.querySelector('[data-media-panel="downloads"]').classList.contains('active'),
+        bubbleClosed:!state.media.downloadsExpanded&&!document.querySelector('#mediaDownloadBubble').classList.contains('open'),
+      };
       const clearButtonVisibleBefore=!document.querySelector('#mediaDownloadClear').hidden;
       const clearHistoryPromise=clearMediaDownloadHistory();
       await new Promise(resolve=>setTimeout(resolve,20));
@@ -1660,7 +1672,7 @@ async function run() {
         hasAllFilter:!!document.querySelector('[data-media-filters] [data-media-type="all"]'),
         copyActions:document.querySelectorAll('#mediaDownloadsList [data-media-action="copy"]').length,
         deleteActions:document.querySelectorAll('#mediaDownloadsList [data-media-action="delete"]').length,
-        downloadBubble,completedHistory,completedHistoryActions,clearedHistory,bubbleVisibility,mediaLayout,
+        downloadBubble,completedHistory,completedHistoryActions,viewAllDownloads,clearedHistory,bubbleVisibility,mediaLayout,
         bubblePanel:document.querySelector('#mediaDownloadBubble').closest('[data-media-panel]')?.dataset.mediaPanel||'',
         provider:document.querySelector('#mediaVideoProvider').textContent.trim(),
       };
@@ -1789,6 +1801,13 @@ async function run() {
     deleted:['runtime-completed-11'],
     stillPresent:false,
   });
+  assert.deepStrictEqual(mediaLibraryMetrics.viewAllDownloads, {
+    label:'查看全部已下载',
+    view:'media',
+    tab:'downloads',
+    downloadsPanelActive:true,
+    bubbleClosed:true,
+  });
   assert.deepStrictEqual(mediaLibraryMetrics.clearedHistory, {
     calls:1,
     completed:0,
@@ -1910,6 +1929,26 @@ async function run() {
     await new Promise((resolve) => setTimeout(resolve, 160));
     const mediaImage = await window.webContents.capturePage();
     fs.writeFileSync(screenshotPath.replace(/(\.png)?$/i, '-media.png'), mediaImage.toPNG());
+    await window.webContents.executeJavaScript(`
+      (()=>{
+        state.media.downloadTasks=Array.from({length:10},(_,index)=>({
+          id:'screenshot-completed-'+index,
+          name:index<3?'测试歌曲歌词.lrc':'completed-'+index+'.mp4',
+          status:'completed',
+          path:'C:/Downloads/completed-'+index+(index<3?'.lrc':'.mp4'),
+          receivedBytes:1280+index*1024,
+          totalBytes:1280+index*1024,
+          percent:100,
+          updatedAt:Date.now()-index,
+        }));
+        state.media.downloadsExpanded=true;
+        renderMediaDownloadBubble();
+      })()
+    `, true);
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    const mediaDownloadHistoryImage = await window.webContents.capturePage();
+    fs.writeFileSync(screenshotPath.replace(/(\.png)?$/i, '-media-download-history.png'), mediaDownloadHistoryImage.toPNG());
+    await window.webContents.executeJavaScript("state.media.downloadsExpanded=false; state.media.downloadTasks=[]; renderMediaDownloadBubble()", true);
     await window.webContents.executeJavaScript(`
       (()=>{
         setMediaKind('audio',{showPortal:true});
