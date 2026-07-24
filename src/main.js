@@ -8762,10 +8762,47 @@ ipcMain.handle('dialog:pickInspirationFiles', (event) => {
   return selectInspirationFiles(BrowserWindow.fromWebContents(event.sender));
 });
 
-ipcMain.handle('file:open', async (_event, filePath) => {
-  if (!filePath || !path.isAbsolute(String(filePath)) || !fs.existsSync(filePath)) return false;
-  const error = await shell.openPath(String(filePath));
+function openLyricsInTextEditor(filePath) {
+  const target = String(filePath || '');
+  const launch = process.platform === 'win32'
+    ? { command: 'notepad.exe', args: [target] }
+    : process.platform === 'darwin'
+      ? { command: 'open', args: ['-a', 'TextEdit', target] }
+      : { command: 'xdg-open', args: [target] };
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = (opened) => {
+      if (settled) return;
+      settled = true;
+      resolve(!!opened);
+    };
+    try {
+      const child = spawn(launch.command, launch.args, {
+        detached: true,
+        stdio: 'ignore',
+        windowsHide: false,
+      });
+      child.once('spawn', () => {
+        child.unref();
+        finish(true);
+      });
+      child.once('error', () => finish(false));
+    } catch {
+      finish(false);
+    }
+  });
+}
+
+async function openLocalFile(filePath) {
+  const target = String(filePath || '');
+  if (!target || !path.isAbsolute(target) || !fs.existsSync(target)) return false;
+  if (isLyricsPath(target) && await openLyricsInTextEditor(target)) return true;
+  const error = await shell.openPath(target);
   return !error;
+}
+
+ipcMain.handle('file:open', async (_event, filePath) => {
+  return openLocalFile(filePath);
 });
 
 ipcMain.handle('shell:openExternal', async (_event, url) => {
@@ -8814,7 +8851,7 @@ ipcMain.handle('file:showContextMenu', (event, filePath) => {
   const menu = Menu.buildFromTemplate([
     {
       label: directory ? '打开文件夹' : '打开文件',
-      click: () => shell.openPath(value),
+      click: () => { void openLocalFile(value); },
     },
     {
       label: '打开所在文件夹',

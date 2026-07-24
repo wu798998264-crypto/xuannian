@@ -178,8 +178,10 @@ body.dark .media-collection.drop-target{background:#30413b;color:#b7e1d0}
 body.dark .media-batch-check.selected{border-color:#79a4ff;background:#527fd6;color:#fff}
 .media-kind{width:38px;height:38px;flex:none;display:grid;place-items:center;border-radius:7px;background:#e9f3ef;color:#3f7460}
 .media-kind.video{background:#eef0f7;color:#596885}
+.media-kind.lyrics{background:#eef2f8;color:#526b91}
 body.dark .media-kind{background:#30413b;color:#a9dac6}
 body.dark .media-kind.video{background:#343945;color:#bdc9e7}
+body.dark .media-kind.lyrics{background:#303947;color:#b7cbed}
 .media-kind svg{width:19px;height:19px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 .media-name-wrap{min-width:0;display:flex;flex-direction:column}
 .media-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text);font-size:13px;font-weight:800}
