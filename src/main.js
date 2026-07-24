@@ -27,6 +27,7 @@ const {
   bilibiliProgressiveApiUrl,
   bilibiliViewApiUrl,
   isAllowedPortalUrl,
+  isLyricsPath,
   listMediaCollections,
   listMediaFiles,
   mediaCollectionDirectory,
@@ -840,7 +841,7 @@ async function searchExternalAudioCandidates(tracker) {
   });
   if (!result?.ready || !Array.isArray(result.results)) return [];
   return result.results
-    .filter((item) => item?.path && mediaKindForPath(item.path) === 'audio' && fs.existsSync(item.path))
+    .filter((item) => item?.path && mediaKindForPath(item.path) === 'audio' && !isLyricsPath(item.path) && fs.existsSync(item.path))
     .map((item) => ({ ...item, matchScore: externalAudioNameScore(item.path, tracker.displayName) }))
     .filter((item) => item.matchScore > 0)
     .sort((left, right) => right.matchScore - left.matchScore || Number(right.modifiedAt || 0) - Number(left.modifiedAt || 0));
@@ -5067,7 +5068,7 @@ function previewMediaMusicResult(url) {
   return openMediaPortal(value, 'download', '', false, '', '', 'music-preview');
 }
 
-function requestGequbaoMusicPage(url, redirects = 0) {
+function requestGequbaoMusicPage(url, onProgress = null, redirects = 0) {
   const value = String(url || '').trim();
   if (!isGequbaoMusicUrl(value)) return Promise.reject(new Error('歌曲链接无效'));
   return new Promise((resolve, reject) => {
@@ -5090,7 +5091,7 @@ function requestGequbaoMusicPage(url, redirects = 0) {
         response.resume();
         try {
           const redirected = new URL(location, value).toString();
-          requestGequbaoMusicPage(redirected, redirects + 1).then(resolve, reject);
+          requestGequbaoMusicPage(redirected, onProgress, redirects + 1).then(resolve, reject);
           settled = true;
         } catch {
           finish(new Error('歌词页面跳转地址无效'));
@@ -5103,10 +5104,15 @@ function requestGequbaoMusicPage(url, redirects = 0) {
         return;
       }
       let body = '';
+      let receivedBytes = 0;
+      const totalBytes = Math.max(0, Number(response.headers['content-length'] || 0));
+      try { onProgress?.({ receivedBytes, totalBytes }); } catch {}
       response.setEncoding('utf8');
       response.on('data', (chunk) => {
         body += chunk;
-        if (body.length > 2 * 1024 * 1024) {
+        receivedBytes += Buffer.byteLength(chunk);
+        try { onProgress?.({ receivedBytes, totalBytes }); } catch {}
+        if (receivedBytes > 2 * 1024 * 1024) {
           response.destroy(new Error('歌词页面内容过大'));
         }
       });
@@ -5121,20 +5127,56 @@ function requestGequbaoMusicPage(url, redirects = 0) {
 async function downloadMediaMusicLyrics(url, preferredName = '') {
   const value = String(url || '').trim();
   if (!isGequbaoMusicUrl(value)) return { ok: false, reason: '歌曲链接无效' };
+  const { downloadPath } = mediaDirectories();
+  const directory = mediaCollectionDirectory(downloadPath, 'audio');
+  const baseName = String(preferredName || '未命名歌曲').trim() || '未命名歌曲';
+  const lyricsName = /歌词$/u.test(baseName) ? baseName : `${baseName}歌词`;
+  const filename = sanitizeDownloadFilename(`${lyricsName}.lrc`);
+  const destination = uniqueMediaDownloadPath(directory, filename);
+  const taskId = `lyrics-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+  let receivedBytes = 0;
+  let totalBytes = 0;
+  const progressTask = (status, overrides = {}) => ({
+    id: taskId,
+    name: filename,
+    path: destination,
+    location: 'downloads',
+    status,
+    receivedBytes,
+    totalBytes,
+    percent: totalBytes > 0 ? Math.max(0, Math.min(100, Math.round((receivedBytes / totalBytes) * 100))) : 0,
+    updatedAt: Date.now(),
+    ...overrides,
+  });
+  notifyMediaDownloadProgress(progressTask('preparing'));
   try {
-    const html = await requestGequbaoMusicPage(value);
-    const lyrics = extractGequbaoLyrics(html);
-    if (!lyrics) return { ok: false, reason: '该版本暂无可下载歌词' };
-    const { downloadPath } = mediaDirectories();
-    const directory = mediaCollectionDirectory(downloadPath, 'audio');
     await fs.promises.mkdir(directory, { recursive: true });
-    const baseName = String(preferredName || '未命名歌曲').trim();
-    const filename = sanitizeDownloadFilename(`${baseName || '未命名歌曲'}.lrc`);
-    const destination = uniqueMediaDownloadPath(directory, filename);
+    const html = await requestGequbaoMusicPage(value, (progress) => {
+      receivedBytes = Math.max(0, Number(progress?.receivedBytes || 0));
+      totalBytes = Math.max(0, Number(progress?.totalBytes || 0));
+      notifyMediaDownloadProgress(progressTask('downloading'));
+    });
+    const lyrics = extractGequbaoLyrics(html);
+    if (!lyrics) {
+      notifyMediaDownloadProgress(progressTask('error'));
+      return { ok: false, reason: '该版本暂无可下载歌词' };
+    }
     await fs.promises.writeFile(destination, lyrics, 'utf8');
+    const fileSize = Buffer.byteLength(lyrics);
+    const completedTask = progressTask('completed', {
+      receivedBytes: fileSize,
+      totalBytes: fileSize,
+      percent: 100,
+    });
+    rememberCompletedMediaDownload(completedTask);
+    notifyMediaDownloadProgress(completedTask);
+    notifyMediaDownloadsChanged({ status: 'completed', path: destination, favorite: false });
+    showMediaDownloadNotification({ status: 'completed', name: filename, filePath: destination, favorite: false });
     return { ok: true, path: destination, name: path.basename(destination) };
   } catch (error) {
     runtimeLog(`music lyrics download failed: ${error?.message || error}`);
+    notifyMediaDownloadProgress(progressTask('error'));
+    showMediaDownloadNotification({ status: 'error', name: filename });
     return { ok: false, reason: '歌词下载失败，请检查网络后重试' };
   }
 }
@@ -8107,7 +8149,7 @@ ipcMain.handle('media:listLocal', async () => {
 });
 ipcMain.handle('media:localPlaybackUrl', async (_event, filePath) => {
   const value = String(filePath || '').trim();
-  if (!value || !path.isAbsolute(value) || mediaKindForPath(value) !== 'audio') return '';
+  if (!value || !path.isAbsolute(value) || mediaKindForPath(value) !== 'audio' || isLyricsPath(value)) return '';
   try {
     const stat = await fs.promises.stat(value);
     return stat.isFile() ? pathToFileURL(value).href : '';
@@ -8809,7 +8851,7 @@ ipcMain.handle('ui:showItemContextMenu', (event, kind, options = {}) => {
     items.push({ type: 'separator' });
     items.push(action('delete', '删除'));
   } else if (kind === 'media') {
-    if (options.location !== 'favorites') {
+    if (options.location !== 'favorites' && options.canFavorite !== false) {
       items.push(action('favorite', options.favorite ? '已收藏' : '收藏', { enabled: !options.favorite }));
     }
     items.push(action('open', '打开文件'));

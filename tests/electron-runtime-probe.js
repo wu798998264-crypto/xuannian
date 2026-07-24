@@ -1247,6 +1247,7 @@ async function run() {
         collections:{downloads:{video:['项目视频'],audio:['常用音乐']},favorites:{video:['项目收藏'],audio:['常用音乐']}},
         items:[
           {path:'C:/Downloads/demo.mp4',directory:'C:/Downloads',name:'demo.mp4',kind:'video',size:2048,modifiedAt:2,favorite:false,location:'downloads',collection:''},
+          {path:'C:/Downloads/音乐/测试歌曲歌词.lrc',directory:'C:/Downloads/音乐',name:'测试歌曲歌词.lrc',kind:'audio',lyrics:true,size:512,modifiedAt:4,favorite:false,location:'downloads',collection:''},
           {path:'C:/Downloads/music.flac',directory:'C:/Downloads',name:'music.flac',kind:'audio',size:1024,modifiedAt:1,favorite:false,location:'downloads',collection:''},
           ...syntheticDownloads,
           {path:'C:/Favorites/favorite.mp4',directory:'C:/Favorites',name:'favorite.mp4',kind:'video',size:8192,modifiedAt:3,favorite:true,location:'favorites',collection:''},
@@ -1374,11 +1375,16 @@ async function run() {
       renderMediaBrowserState();
       setMediaTab('downloads');
       await new Promise(resolve=>setTimeout(resolve,20));
+      const lyricsRow=[...document.querySelectorAll('#mediaDownloadsList [data-media-row]')].find(row=>row.querySelector('.media-name')?.textContent.trim()==='测试歌曲歌词.lrc');
       const downloadedMusicControls={
         rowPlayButtons:document.querySelectorAll('#mediaDownloadsList [data-media-action="play"]').length,
         localPlayerVisible:!document.querySelector('#mediaLocalPlayer').hidden,
         musicProviderLabel:document.querySelector('#mediaMusicProvider')?.textContent.trim()||'',
         musicManualPortalAvailable:!document.querySelector('#mediaMusicManualPortal').hidden,
+        firstDownloaded:filteredMediaItems('downloads')[0]?.name||'',
+        lyricsVisible:!!lyricsRow,
+        lyricsType:lyricsRow?.querySelector('.media-type-label')?.textContent.trim()||'',
+        lyricsFavoriteButton:!!lyricsRow?.querySelector('[data-media-action="favorite"]'),
       };
       document.querySelector('#mediaKindTabs [data-media-kind="video"]').click();
       const videoDownloadModeSelected=state.media.kind==='video'&&state.media.tab==='downloads';
@@ -1489,9 +1495,9 @@ async function run() {
       for(let index=0;index<12;index+=1){
         updateMediaDownloadTask({
           id:'runtime-completed-'+index,
-          name:'completed-'+index+'.mp4',
+          name:index===11?'测试歌曲歌词.lrc':'completed-'+index+'.mp4',
           status:'completed',
-          path:'C:/Downloads/completed-'+index+'.mp4',
+          path:index===11?'C:/Downloads/音乐/测试歌曲歌词.lrc':'C:/Downloads/completed-'+index+'.mp4',
           receivedBytes:100,
           totalBytes:100,
           percent:100,
@@ -1712,7 +1718,7 @@ async function run() {
   assert.strictEqual(mediaLibraryMetrics.verificationFlow.browserVisible, true);
   assert.deepStrictEqual(mediaLibraryMetrics.browserTogglePersistence, {available:true,browserVisible:true});
   assert.deepStrictEqual(mediaLibraryMetrics.localPlaybackRequests, []);
-  assert.deepStrictEqual(mediaLibraryMetrics.downloadedMusicControls, {rowPlayButtons:0,localPlayerVisible:false,musicProviderLabel:'歌曲宝',musicManualPortalAvailable:true});
+  assert.deepStrictEqual(mediaLibraryMetrics.downloadedMusicControls, {rowPlayButtons:0,localPlayerVisible:false,musicProviderLabel:'歌曲宝',musicManualPortalAvailable:true,firstDownloaded:'测试歌曲歌词.lrc',lyricsVisible:true,lyricsType:'歌词',lyricsFavoriteButton:false});
   assert.strictEqual(mediaLibraryMetrics.providerRouting.douyinProvider.id, 'douyin');
   assert.strictEqual(mediaLibraryMetrics.providerRouting.douyinProvider.portalUrl, 'https://www.seekin.ai/zh/downloader/');
   assert.strictEqual(mediaLibraryMetrics.providerRouting.douyinProvider.autoDownloadQuality, 'highest');
@@ -1775,10 +1781,11 @@ async function run() {
   assert.strictEqual(mediaLibraryMetrics.completedHistory.deleteButtons, 10, 'every completed download record with a file must expose a delete button');
   assert.strictEqual(mediaLibraryMetrics.completedHistory.names.includes('completed-0.mp4'), false);
   assert.strictEqual(mediaLibraryMetrics.completedHistory.names.includes('completed-1.mp4'), false);
+  assert.strictEqual(mediaLibraryMetrics.completedHistory.names[0], '测试歌曲歌词.lrc');
   assert(mediaLibraryMetrics.completedHistory.summary.includes('1 项进行中'));
   assert.deepStrictEqual(mediaLibraryMetrics.completedHistoryActions, {
-    opened:['C:/Downloads/completed-11.mp4'],
-    contextMenus:['C:/Downloads/completed-11.mp4'],
+    opened:['C:/Downloads/音乐/测试歌曲歌词.lrc'],
+    contextMenus:['C:/Downloads/音乐/测试歌曲歌词.lrc'],
     deleted:['runtime-completed-11'],
     stillPresent:false,
   });
@@ -1921,6 +1928,9 @@ async function run() {
     const mediaMusicImage = await window.webContents.capturePage();
     fs.writeFileSync(screenshotPath.replace(/(\.png)?$/i, '-media-music.png'), mediaMusicImage.toPNG());
     await window.webContents.executeJavaScript("setMediaTab('downloads')", true);
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    const mediaLyricsImage = await window.webContents.capturePage();
+    fs.writeFileSync(screenshotPath.replace(/(\.png)?$/i, '-media-lyrics.png'), mediaLyricsImage.toPNG());
     await window.webContents.executeJavaScript(`
       (()=>{
         state.media.loading=true;

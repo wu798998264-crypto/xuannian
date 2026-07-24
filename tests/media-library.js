@@ -14,6 +14,7 @@ const {
   bilibiliVideoIdentity,
   bilibiliViewApiUrl,
   isAllowedPortalUrl,
+  isLyricsPath,
   listManagedMediaFiles,
   listMediaCollections,
   listMediaFiles,
@@ -142,6 +143,8 @@ async function run() {
   assert.strictEqual(detectVideoProvider('https://example.com/video'), null);
   assert.strictEqual(mediaKindForPath('clip.MP4'), 'video');
   assert.strictEqual(mediaKindForPath('song.flac'), 'audio');
+  assert.strictEqual(mediaKindForPath('song.lrc'), 'audio');
+  assert.strictEqual(isLyricsPath('song.LRC'), true);
   assert.strictEqual(mediaKindForPath('setup.exe'), '');
   assert.strictEqual(isAllowedPortalUrl('https://www.hellotik.app/zh/kuaishou'), false);
   assert.strictEqual(isAllowedPortalUrl('https://www.hellotik.app/zh/douyin'), false);
@@ -173,9 +176,21 @@ async function run() {
   fs.writeFileSync(path.join(downloads, 'clip.mp4'), Buffer.alloc(64));
   fs.writeFileSync(path.join(downloads, 'song.mp3'), Buffer.alloc(32));
   fs.writeFileSync(path.join(downloads, 'ignore.txt'), Buffer.alloc(16));
+  const lyricsDirectory = path.join(downloads, '音乐');
+  fs.mkdirSync(lyricsDirectory, { recursive: true });
+  const lyricsPath = path.join(lyricsDirectory, 'song歌词.lrc');
+  fs.writeFileSync(lyricsPath, '[00:00.00]test');
+  const nowSeconds = Date.now() / 1000;
+  fs.utimesSync(path.join(downloads, 'song.mp3'), nowSeconds - 20, nowSeconds - 20);
+  fs.utimesSync(lyricsPath, nowSeconds, nowSeconds);
   try {
     let items = await listMediaFiles(downloads, favorites);
-    assert.deepStrictEqual(items.map((item) => item.kind).sort(), ['audio', 'video']);
+    assert.deepStrictEqual(items.map((item) => item.kind).sort(), ['audio', 'audio', 'video']);
+    assert.deepStrictEqual(items.filter((item) => item.kind === 'audio').map((item) => item.name), ['song歌词.lrc', 'song.mp3']);
+    assert.strictEqual(items.find((item) => item.name === 'song歌词.lrc')?.lyrics, true);
+    const rejectedLyricsFavorite = await copyMediaToFavorites(lyricsPath, favorites);
+    assert.strictEqual(rejectedLyricsFavorite.ok, false);
+    assert.strictEqual(rejectedLyricsFavorite.reason, '歌词文件不能收藏');
     const copied = await copyMediaToFavorites(path.join(downloads, 'clip.mp4'), favorites);
     assert.strictEqual(copied.ok, true);
     assert.strictEqual(fs.existsSync(copied.path), true);
@@ -193,7 +208,7 @@ async function run() {
     collections = await listMediaCollections(downloads);
     assert.deepStrictEqual(collections.audio, ['常用配乐']);
     let managed = await listManagedMediaFiles(downloads);
-    assert.deepStrictEqual(managed.map((item) => item.name), ['song.mp3']);
+    assert.deepStrictEqual(managed.map((item) => item.name).sort(), ['song.mp3', 'song歌词.lrc']);
     assert.strictEqual(managed.some((item) => item.name === 'clip.mp4'), false, 'cache cleanup must exclude media placed directly in the selected root');
     const collectionPath = path.join(downloads, '音乐', '常用配乐');
     const nestedPath = path.join(collectionPath, '现场录音');
@@ -212,11 +227,12 @@ async function run() {
     collections = await listMediaCollections(downloads);
     assert.deepStrictEqual(collections.audio, ['现场录音']);
     managed = await listManagedMediaFiles(downloads);
-    assert.deepStrictEqual(managed.map((item) => item.name).sort(), ['live.mp3', 'song.mp3']);
+    assert.deepStrictEqual(managed.map((item) => item.name).sort(), ['live.mp3', 'song.mp3', 'song歌词.lrc']);
     fs.unlinkSync(path.join(downloads, '音乐', 'song.mp3'));
     fs.unlinkSync(path.join(downloads, '音乐', '现场录音', 'live.mp3'));
     items = await listMediaFiles(downloads, favorites);
     assert.strictEqual(items.some((item) => item.name === 'song.mp3'), false);
+    assert.strictEqual(items.some((item) => item.name === 'song歌词.lrc' && item.location === 'downloads'), true);
     assert.strictEqual(items.some((item) => item.favorite), true);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });

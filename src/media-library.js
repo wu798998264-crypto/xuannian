@@ -5,8 +5,9 @@ const VIDEO_EXTENSIONS = new Set([
   'mp4', 'mov', 'm4v', 'mkv', 'webm', 'avi', 'wmv', 'flv', 'mpeg', 'mpg', 'ts', 'm2ts',
 ]);
 const AUDIO_EXTENSIONS = new Set([
-  'mp3', 'wav', 'm4a', 'aac', 'flac', 'ogg', 'oga', 'opus', 'wma', 'aiff', 'ape',
+  'mp3', 'wav', 'm4a', 'aac', 'flac', 'ogg', 'oga', 'opus', 'wma', 'aiff', 'ape', 'lrc',
 ]);
+const LYRICS_EXTENSIONS = new Set(['lrc']);
 const MEDIA_KIND_DIRECTORIES = Object.freeze({ video: '视频', audio: '音乐' });
 const SEEKIN_UNIVERSAL_PORTAL = 'https://www.seekin.ai/zh/downloader/';
 const SEEKIN_ONLY_PORTALS = Object.freeze([
@@ -91,6 +92,10 @@ function mediaKindForPath(filePath) {
   if (VIDEO_EXTENSIONS.has(extension)) return 'video';
   if (AUDIO_EXTENSIONS.has(extension)) return 'audio';
   return '';
+}
+
+function isLyricsPath(filePath) {
+  return LYRICS_EXTENSIONS.has(path.extname(String(filePath || '')).slice(1).toLowerCase());
 }
 
 function extractHttpUrl(value) {
@@ -373,7 +378,7 @@ async function scanMediaFilesInDirectory(directory, favorite, location, collecti
     return [];
   }
   const candidates = entries
-    .filter((entry) => entry.isFile() && mediaKindForPath(entry.name))
+    .filter((entry) => entry.isFile() && mediaKindForPath(entry.name) && !(favorite && isLyricsPath(entry.name)))
     .slice(0, remaining);
   const items = await mapWithConcurrency(candidates, 24, async (entry) => {
     const filePath = path.join(directory, entry.name);
@@ -385,6 +390,7 @@ async function scanMediaFilesInDirectory(directory, favorite, location, collecti
         directory,
         name: entry.name,
         kind: mediaKindForPath(entry.name),
+        lyrics: isLyricsPath(entry.name),
         size: stat.size,
         modifiedAt: stat.mtimeMs,
         favorite: !!favorite,
@@ -498,6 +504,7 @@ async function copyMediaToFavorites(sourcePath, favoriteDirectory, collection = 
   if (!source || !path.isAbsolute(source) || !mediaKindForPath(source)) {
     return { ok: false, reason: '文件格式不受支持' };
   }
+  if (isLyricsPath(source)) return { ok: false, reason: '歌词文件不能收藏' };
   if (!destinationRoot || !path.isAbsolute(destinationRoot)) {
     return { ok: false, reason: '收藏目录无效' };
   }
@@ -639,6 +646,7 @@ module.exports = {
   extractHttpUrl,
   isAllowedPortalUrl,
   isPathInside,
+  isLyricsPath,
   listManagedMediaFiles,
   listMediaCollections,
   listMediaFiles,

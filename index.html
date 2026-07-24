@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>玄念8.4.3</title>
+  <title>玄念8.4.4</title>
   <link rel="icon" href="src/xuannian-logo-256.png" />
   <link rel="stylesheet" href="src/media-library.css" />
   <style>
@@ -1835,7 +1835,7 @@ function createBrowserFallbackAPI(){
     async deleteInspiration(id){ const data=read(); data.inspirations=data.inspirations.filter(x=>x.id!==id); write(data); return data.inspirations; },
     async getSettings(){ return read().settings; },
     async saveSettings(settings){ const data=read(); data.settings={...data.settings,...settings}; write(data); return data.settings; },
-    async getUpdateState(){ return {status:'current',revision:0,currentVersion:'8.4.3',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false}; },
+    async getUpdateState(){ return {status:'current',revision:0,currentVersion:'8.4.4',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false}; },
     async checkForUpdates(){ return this.getUpdateState(); },
     async downloadUpdate(){ return this.getUpdateState(); },
     async installUpdate(){ return false; },
@@ -4387,7 +4387,7 @@ async function downloadMediaMusicLyricsForResult(index){
       toast(saved?.reason||'歌词下载失败，请稍后重试');
       return saved||{ok:false};
     }
-    toast(`歌词已下载：${saved.name||displayName+'.lrc'}`);
+    toast(`歌词已下载：${saved.name||displayName+'歌词.lrc'}`);
     return saved;
   }catch{
     toast('歌词下载失败，请检查网络后重试');
@@ -5084,17 +5084,18 @@ function scheduleMediaListRender(tab){
 }
 
 function mediaRowHtml(item,index,tab){
+  const lyrics=!!item.lyrics||/\.lrc$/i.test(String(item.name||item.path||''));
   const favoriteActive=tab==='favorites'||!!item.favorite;
   const favoriteTitle=tab==='favorites'?'取消收藏':(item.favorite?'已收藏':'收藏');
   const batch=mediaBatchState(tab,item.kind);
   const batchSelected=batch.selectedPaths.has(item.path);
   return `<div class="media-row ${batch.active?'batch-selectable':''} ${batchSelected?'batch-selected':''}" data-media-row="${index}" data-media-list="${tab}" data-media-path="${escapeHtml(item.path||'')}" draggable="${batch.active?'false':'true'}" title="${batch.active?(batchSelected?'点击取消选择':'点击选择'):escapeHtml(item.path||'')}">
-    <div class="media-primary">${batch.active?`<span class="media-batch-check ${batchSelected?'selected':''}" role="checkbox" aria-checked="${batchSelected}" title="${batchSelected?'取消选择':'选择'}"><svg viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"></path></svg></span>`:''}<span class="media-kind ${item.kind}">${mediaKindIcon(item.kind)}</span><span class="media-name-wrap"><span class="media-name">${escapeHtml(item.name||'')}</span><span class="media-type-label">${item.kind==='video'?'视频':'音乐'}</span></span></div>
+    <div class="media-primary">${batch.active?`<span class="media-batch-check ${batchSelected?'selected':''}" role="checkbox" aria-checked="${batchSelected}" title="${batchSelected?'取消选择':'选择'}"><svg viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"></path></svg></span>`:''}<span class="media-kind ${item.kind}">${mediaKindIcon(item.kind)}</span><span class="media-name-wrap"><span class="media-name">${escapeHtml(item.name||'')}</span><span class="media-type-label">${item.kind==='video'?'视频':(lyrics?'歌词':'音乐')}</span></span></div>
     <div class="media-path">${escapeHtml(item.directory||'')}</div>
     <div class="media-size">${escapeHtml(formatFileSize(item.size))}</div>
     <div class="media-date">${escapeHtml(formatFileModified(item.modifiedAt))}</div>
     <div class="media-row-actions">
-      <button class="media-row-action ${favoriteActive?'active':''}" data-media-action="favorite" data-media-index="${index}" data-media-list="${tab}" title="${favoriteTitle}">${iconSvg('bookmark')}</button>
+      ${lyrics?'':`<button class="media-row-action ${favoriteActive?'active':''}" data-media-action="favorite" data-media-index="${index}" data-media-list="${tab}" title="${favoriteTitle}">${iconSvg('bookmark')}</button>`}
       <button class="media-row-action" data-media-action="open" data-media-index="${index}" data-media-list="${tab}" title="打开">${fileActionIcon('open')}</button>
       <button class="media-row-action" data-media-action="reveal" data-media-index="${index}" data-media-list="${tab}" title="打开所在文件夹">${fileActionIcon('reveal')}</button>
       <button class="media-row-action danger" data-media-action="delete" data-media-index="${index}" data-media-list="${tab}" title="删除">${iconSvg('delete')}</button>
@@ -5195,6 +5196,7 @@ async function performMediaAction(action,tab,index){
     return;
   }
   if(action==='favorite'){
+    if(item.lyrics||/\.lrc$/i.test(String(item.name||item.path||''))){ toast('歌词文件不能收藏'); return; }
     if(tab==='favorites'){
       const confirmed=await showConfirmModal({title:'取消收藏',message:`确定取消收藏「${item.name||'这个文件'}」吗？文件会移入系统回收站。`,confirmText:'取消收藏',danger:true});
       if(!confirmed) return;
@@ -5286,6 +5288,7 @@ async function handleMediaListContextMenu(event,tab){
   const action=await api.showItemContextMenu('media',{
     location:tab,
     favorite:!!item.favorite,
+    canFavorite:!(item.lyrics||/\.lrc$/i.test(String(item.name||item.path||''))),
     collection:item.collection||'',
     collections:tab==='favorites'?mediaCollectionsFor('favorites',item.kind):[],
   });
@@ -8303,7 +8306,7 @@ function showUpdateDialog(){
   showModal(`
     <div data-update-dialog>
       <div class="modal-header"><h3>软件更新</h3><button class="modal-close" id="closeModal">×</button></div>
-      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '8.4.3')}</b><span>${hasNewerUpdateVersion(update)?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
+      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '8.4.4')}</b><span>${hasNewerUpdateVersion(update)?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
       <div class="modal-message">${escapeHtml(updateStatusText())}</div>
       <p class="update-network-tip">提示：开启 VPN 后再检测更新，结果会更加准确。</p>
       ${busy||downloaded?`<div class="update-progress"><span style="width:${downloaded?100:progress}%"></span></div>`:''}
