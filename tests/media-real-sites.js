@@ -383,16 +383,23 @@ async function run() {
       width: 1280,
       height: 900,
       frame: false,
-      focusable: false,
+      focusable: true,
       skipTaskbar: true,
     });
     const view = new WebContentsView({ webPreferences });
     host.contentView.addChildView(view);
     view.setBounds({ x: 0, y: 0, width: 1280, height: 900 });
     view.setVisible(true);
-    host.showInactive();
+    host.show();
+    host.focus();
+    view.webContents.focus();
     window = {
       webContents: view.webContents,
+      activate() {
+        if (!host.isVisible()) host.show();
+        host.focus();
+        view.webContents.focus();
+      },
       destroy() {
         try { host.contentView.removeChildView(view); } catch {}
         try { view.webContents.close(); } catch {}
@@ -407,6 +414,11 @@ async function run() {
       height: 900,
       webPreferences,
     });
+    window.activate = () => {
+      window.show();
+      window.focus();
+      window.webContents.focus();
+    };
   }
   window.webContents.setWindowOpenHandler(({ url }) => {
     if (process.env.REAL_MEDIA_DEBUG === 'download') console.log('real media popup ' + String(url || '').slice(0, 2000));
@@ -442,6 +454,7 @@ async function run() {
         if (!routes.length) throw new Error(`portal-filter-not-found:${portalFilter}`);
         for (const route of routes) {
           usedPortal = route.label || route.url;
+          window.activate?.();
           result = await runPortalAttemptWithTimeout(window.webContents, () => parseOnce(window.webContents, { ...provider, portalUrl: route.url }));
           routeResults.push({
             label: usedPortal,
@@ -486,6 +499,7 @@ async function run() {
     ? { skipped: true, search: { ok: true, reason: 'filtered' }, download: { ok: true, reason: 'filtered' } }
     : { search: { ok: false, reason: 'not-run' }, download: { ok: false, reason: 'not-run' } };
   if (!skipMusic) try {
+    window.activate?.();
     await loadUrlWithTimeout(window.webContents, musicSearchUrl('唯一 邓紫棋'));
     const search = await window.webContents.executeJavaScript(buildPortalScript({
       mode: 'music-search',
@@ -495,6 +509,7 @@ async function run() {
     music = { search, download: { ok: false, reason: 'no-result' } };
     if (search?.ok && search.results?.length) {
       const selected = search.results[0];
+      window.activate?.();
       await loadUrlWithTimeout(window.webContents, selected.url);
       const preview = await window.webContents.executeJavaScript(buildPortalScript({
         mode: 'music-preview',

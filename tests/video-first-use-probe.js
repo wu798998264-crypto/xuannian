@@ -1,0 +1,91 @@
+const assert = require('assert');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { app, BrowserWindow } = require('electron');
+
+const tempAppData = fs.mkdtempSync(path.join(os.tmpdir(), 'xuannian-first-video-'));
+let probeSucceeded = false;
+app.setName('XuanNianFirstVideoProbe');
+app.setPath('appData', tempAppData);
+process.env.XUANNIAN_DEBUG_LOG = '1';
+
+require('../src/main');
+
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function findMainWindow(timeoutMs = 30000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const candidate = BrowserWindow.getAllWindows()
+      .filter((window) => !window.isDestroyed())
+      .sort((left, right) => {
+        const leftBounds = left.getBounds();
+        const rightBounds = right.getBounds();
+        return rightBounds.width * rightBounds.height - leftBounds.width * leftBounds.height;
+      })[0];
+    if (candidate && candidate.getBounds().width >= 700) return candidate;
+    await wait(200);
+  }
+  throw new Error('main-window-not-created');
+}
+
+async function run() {
+  await app.whenReady();
+  const window = await findMainWindow();
+  if (window.webContents.isLoading()) {
+    await new Promise((resolve) => window.webContents.once('did-finish-load', resolve));
+  }
+  await window.webContents.executeJavaScript(`localStorage.setItem('xuannian.onboarding.first-run.v1','seen')`, true);
+  const startedAt = Date.now();
+  await window.webContents.executeJavaScript(`(async () => {
+    await switchView('media', { skipCoach: true });
+    setMediaKind('video', { showPortal: true });
+    const input = document.querySelector('#mediaVideoInput');
+    input.value = 'https://v.douyin.com/RSoqNxKyWQE/';
+    await parseMediaVideo();
+    return true;
+  })()`, true);
+
+  let snapshot = null;
+  const deadline = Date.now() + 150000;
+  while (Date.now() < deadline) {
+    snapshot = await window.webContents.executeJavaScript(`(() => ({
+      status: state.media.videoParse.status,
+      title: state.media.videoParse.title || '',
+      downloadReady: !!state.media.videoParse.downloadReady,
+      previewReady: !!(state.media.videoParse.previewUrl || state.media.videoParse.embeddedPreview),
+      qualityCount: state.media.videoParse.qualityOptions.length,
+      error: state.media.videoParse.error || '',
+      progress: document.querySelector('#mediaAutomationProgressText')?.textContent || '',
+    }))()`, true);
+    if (snapshot.status === 'ready' || snapshot.status === 'error') break;
+    await wait(500);
+  }
+
+  const elapsedMs = Date.now() - startedAt;
+  const logFile = path.join(tempAppData, '玄念', 'xuannian-runtime.log');
+  const runtimeLog = fs.existsSync(logFile) ? fs.readFileSync(logFile, 'utf8') : '';
+  const activationCount = (runtimeLog.match(/media portal background activation/g) || []).length;
+  const wakeCount = (runtimeLog.match(/video result visibility wake/g) || []).length;
+  const recoveryCount = (runtimeLog.match(/media portal video recovery/g) || []).length;
+  console.log(`first video parse probe ${JSON.stringify({ ...snapshot, elapsedMs, activationCount, wakeCount, recoveryCount })}`);
+  assert.strictEqual(snapshot?.status, 'ready', `first video parse failed: ${JSON.stringify(snapshot)}`);
+  assert.strictEqual(snapshot.downloadReady, true, 'first video parse did not expose a download');
+  assert.strictEqual(snapshot.previewReady, true, 'first video parse did not prepare a preview');
+  assert(activationCount >= 3, `expected navigation, submit and result activation, got ${activationCount}`);
+  probeSucceeded = true;
+  app.quit();
+}
+
+app.once('quit', () => {
+  if (!probeSucceeded) return;
+  try {
+    fs.rmSync(tempAppData, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+  } catch {}
+});
+
+run().catch((error) => {
+  console.error(error);
+  app.exit(1);
+});

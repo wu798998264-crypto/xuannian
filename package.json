@@ -1,6 +1,6 @@
 {
   "name": "xuannian",
-  "version": "8.4.6",
+  "version": "8.4.7",
   "description": "玄念本地剪切板、收藏、置顶便签与全盘查找工具",
   "main": "src/main.js",
   "scripts": {
@@ -11,6 +11,7 @@
     "test:fullscreen": "electron tests/fullscreen-permission-probe.js",
     "test:media:real": "electron tests/media-real-sites.js",
     "test:music:first": "electron tests/music-first-use-probe.js",
+    "test:video:first": "electron tests/video-first-use-probe.js",
     "test:endurance": "electron tests/media-endurance.js",
     "test:endurance:smoke": "electron tests/media-endurance.js --smoke",
     "dist": "node scripts/build.js portable",
