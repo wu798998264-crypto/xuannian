@@ -170,6 +170,7 @@ let mediaPortalInputTimer = null;
 let mediaPortalVisibilityNudgeTimer = null;
 let mediaPortalVisibilityRestoreTimer = null;
 let mediaPortalFocusRestoreTimer = null;
+let mediaPortalRenderHeartbeatTimer = null;
 let mediaPortalIdleTimer = null;
 let mediaPortalCacheCheckAt = 0;
 let mediaPortalCacheCheckPromise = null;
@@ -225,6 +226,7 @@ const MEDIA_PORTAL_VIDEO_WAKE_DELAY_MS = 3000;
 const MEDIA_PORTAL_VIDEO_WAKE_REPEAT_MS = 12000;
 const MEDIA_PORTAL_VIDEO_WAKE_VISIBLE_MS = 520;
 const MEDIA_PORTAL_FOCUS_HOLD_MS = 900;
+const MEDIA_PORTAL_RENDER_HEARTBEAT_MS = 800;
 const MEDIA_PREVIEW_CACHE_DIRECTORY = 'media-preview-cache';
 const MEDIA_PREVIEW_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const MEDIA_PREVIEW_MAX_BYTES = 96 * 1024 * 1024;
@@ -3728,6 +3730,7 @@ function destroyMediaPortalView({ notify = true } = {}) {
   cancelMediaPortalIdleDestroy();
   clearMediaPortalInputTimer();
   clearMediaPortalProgressTimer();
+  clearMediaPortalRenderHeartbeat();
   clearMediaPortalPendingDownload();
   clearMediaPortalPreviewCapture();
   clearMediaPortalVerificationMonitor();
@@ -3773,6 +3776,7 @@ function resetMediaPortalAutomation(kind = '') {
     clearMediaPortalInputTimer();
     clearMediaPortalVisibilityNudgeTimer();
     clearMediaPortalProgressTimer();
+    clearMediaPortalRenderHeartbeat();
     clearMediaPortalVerificationMonitor();
     if (targetKind === 'video') clearMediaPortalPreviewCapture();
     if (cancellable) mediaPortalInputState = null;
@@ -3870,13 +3874,59 @@ function clearMediaPortalVisibilityNudgeTimer() {
   }
 }
 
+function clearMediaPortalRenderHeartbeat() {
+  clearTimeout(mediaPortalRenderHeartbeatTimer);
+  mediaPortalRenderHeartbeatTimer = null;
+}
+
+function startMediaPortalRenderHeartbeat(state, view = mediaPortalView) {
+  clearMediaPortalRenderHeartbeat();
+  if (!view || view.webContents.isDestroyed()
+    || !isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId)) return;
+  const beat = async () => {
+    mediaPortalRenderHeartbeatTimer = null;
+    if (!view || view.webContents.isDestroyed()
+      || !isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId)) return;
+    try {
+      keepMediaPortalWorkerVisible(view);
+      try { view.webContents.setBackgroundThrottling(false); } catch {}
+      try {
+        await view.webContents.executeJavaScript(`(() => {
+          window.dispatchEvent(new Event('focus'));
+          window.dispatchEvent(new Event('resize'));
+          document.dispatchEvent(new Event('visibilitychange'));
+          document.querySelector('input,button,main,body')?.getBoundingClientRect();
+          requestAnimationFrame(() => requestAnimationFrame(() => {}));
+          return { visibility: document.visibilityState, readyState: document.readyState };
+        })()`, true);
+      } catch {}
+      try {
+        await Promise.race([
+          view.webContents.capturePage({ x: 0, y: 0, width: 96, height: 64 }),
+          new Promise((resolve) => setTimeout(resolve, 650)),
+        ]);
+      } catch {}
+      state.renderHeartbeatCount = Number(state.renderHeartbeatCount || 0) + 1;
+      if (state.renderHeartbeatCount === 1 || state.renderHeartbeatCount % 15 === 0) {
+        runtimeLog(`media portal render heartbeat request=${state.requestId} count=${state.renderHeartbeatCount} host=${mediaPortalViewHost}`);
+      }
+    } finally {
+      if (isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId)) {
+        mediaPortalRenderHeartbeatTimer = setTimeout(beat, MEDIA_PORTAL_RENDER_HEARTBEAT_MS);
+      }
+    }
+  };
+  runtimeLog(`media portal render heartbeat started request=${state.requestId}`);
+  mediaPortalRenderHeartbeatTimer = setTimeout(beat, 120);
+}
+
 function activateMediaPortalAutomationView(view, state, reason = 'automation') {
   if (!view || view.webContents.isDestroyed()
     || !isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId)) return false;
   if (mediaPortalRequestedVisible && mediaPortalLastVisibleBounds && attachMediaPortalViewToMain(view)) {
     view.setBounds(mediaPortalLastVisibleBounds);
-  } else if (!attachMediaPortalViewToWorker(view)) {
-    return false;
+  } else if (!attachMediaPortalViewToBackgroundMain(view)) {
+    if (!attachMediaPortalViewToWorker(view)) return false;
   }
   view.setVisible(true);
   view.webContents.setAudioMuted(true);
@@ -4130,6 +4180,7 @@ function emitMediaPortalProgress(state, extra = {}) {
 function startMediaPortalProgress(state) {
   clearMediaPortalProgressTimer();
   state.progressStartedAt = Date.now();
+  startMediaPortalRenderHeartbeat(state);
   emitMediaPortalProgress(state);
   mediaPortalProgressTimer = setInterval(() => {
     if (state.requestId !== mediaPortalRequestId) {
@@ -4142,6 +4193,7 @@ function startMediaPortalProgress(state) {
 
 function finishMediaPortalProgress(state, ok, reason = '', message = '') {
   clearMediaPortalProgressTimer();
+  clearMediaPortalRenderHeartbeat();
   const fallbackMessage = ok
     ? (state?.automationMode === 'video-parse'
       ? '视频解析完成'
@@ -5325,6 +5377,33 @@ function ensureMediaPortalWorkerWindow() {
   return workerWindow;
 }
 
+function attachMediaPortalViewToBackgroundMain(view = mediaPortalView) {
+  if (!view || view.webContents.isDestroyed() || !mainWindow || mainWindow.isDestroyed()
+    || !mainWindow.isVisible() || mainWindow.isMinimized()) return false;
+  const content = mainWindow.getContentBounds();
+  const width = Math.max(0, Number(content?.width || 0));
+  const height = Math.max(0, Number(content?.height || 0));
+  if (width < 1 || height < 1) return false;
+  if (mediaPortalViewHost !== 'main-background') {
+    if (mediaPortalViewHost !== 'main') {
+      try { mediaPortalWorkerWindow?.contentView?.removeChildView(view); } catch {}
+    }
+    try { mainWindow.contentView.addChildView(view, 0); } catch {}
+    mediaPortalViewHost = 'main-background';
+  }
+  view.setBounds({
+    x: 0,
+    y: 0,
+    width: MEDIA_PORTAL_WORKER_WIDTH,
+    height: MEDIA_PORTAL_WORKER_HEIGHT,
+  });
+  view.setVisible(true);
+  if (mediaPortalWorkerWindow && !mediaPortalWorkerWindow.isDestroyed() && mediaPortalWorkerWindow.isVisible()) {
+    mediaPortalWorkerWindow.hide();
+  }
+  return true;
+}
+
 function attachMediaPortalViewToWorker(view = mediaPortalView) {
   if (!view || view.webContents.isDestroyed()) return false;
   const workerWindow = ensureMediaPortalWorkerWindow();
@@ -5343,7 +5422,9 @@ function attachMediaPortalViewToWorker(view = mediaPortalView) {
 function attachMediaPortalViewToMain(view = mediaPortalView) {
   if (!view || view.webContents.isDestroyed() || !mainWindow || mainWindow.isDestroyed()) return false;
   if (mediaPortalViewHost !== 'main') {
-    try { mediaPortalWorkerWindow?.contentView?.removeChildView(view); } catch {}
+    if (mediaPortalViewHost !== 'main-background') {
+      try { mediaPortalWorkerWindow?.contentView?.removeChildView(view); } catch {}
+    }
     try { mainWindow.contentView.addChildView(view); } catch {}
     mediaPortalViewHost = 'main';
   }
@@ -5448,8 +5529,8 @@ function keepMediaPortalWorkerVisible(view = mediaPortalView) {
   if (mediaPortalRequestedVisible && mediaPortalLastVisibleBounds && attachMediaPortalViewToMain(view)) {
     view.setBounds(mediaPortalLastVisibleBounds);
     view.setVisible(true);
-  } else if (!attachMediaPortalViewToWorker(view)) {
-    return false;
+  } else if (!attachMediaPortalViewToBackgroundMain(view)) {
+    if (!attachMediaPortalViewToWorker(view)) return false;
   }
   view.webContents.setAudioMuted(true);
   return true;
@@ -5616,6 +5697,7 @@ function openMediaPortal(url, downloadTarget = 'download', sourceText = '', auto
       visibilityNudgeCount: 0,
       backgroundActivationCount: 0,
       backgroundActivationPhase: '',
+      renderHeartbeatCount: 0,
       automationRunning: false,
       automationRerunRequested: false,
     }

@@ -2,7 +2,7 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, webContents } = require('electron');
 
 const tempAppData = fs.mkdtempSync(path.join(os.tmpdir(), 'xuannian-first-video-'));
 let probeSucceeded = false;
@@ -69,8 +69,29 @@ async function run() {
   const activationCount = (runtimeLog.match(/media portal background activation/g) || []).length;
   const wakeCount = (runtimeLog.match(/video result visibility wake/g) || []).length;
   const recoveryCount = (runtimeLog.match(/media portal video recovery/g) || []).length;
-  console.log(`first video parse probe ${JSON.stringify({ ...snapshot, elapsedMs, activationCount, wakeCount, recoveryCount })}`);
+  const heartbeatCount = (runtimeLog.match(/media portal render heartbeat request=/g) || []).length;
+  console.log(`first video parse probe ${JSON.stringify({ ...snapshot, elapsedMs, activationCount, wakeCount, recoveryCount, heartbeatCount })}`);
+  if (snapshot?.status !== 'ready') {
+    const portal = webContents.getAllWebContents().find((contents) => /seekin\.ai/i.test(contents.getURL()));
+    if (portal && !portal.isDestroyed()) {
+      const page = await portal.executeJavaScript(`(() => ({
+        url: location.href,
+        title: document.title,
+        visibility: document.visibilityState,
+        body: String(document.body?.innerText || '').slice(0, 6000),
+        controls: [...document.querySelectorAll('button,a,input,[role="button"]')].map(element => ({
+          text: String(element.innerText || element.value || element.getAttribute('aria-label') || '').trim().slice(0, 180),
+          type: element.type || '',
+        })).filter(item => item.text).slice(0, 100),
+      }))()`, true);
+      const screenshotPath = path.join(tempAppData, 'first-video-provider.png');
+      const image = await portal.capturePage();
+      fs.writeFileSync(screenshotPath, image.toPNG());
+      console.log(`first video provider debug ${JSON.stringify({ ...page, screenshotPath })}`);
+    }
+  }
   assert.strictEqual(snapshot?.status, 'ready', `first video parse failed: ${JSON.stringify(snapshot)}`);
+  assert(heartbeatCount > 0, 'first video parse did not receive a compositor heartbeat');
   assert.strictEqual(snapshot.downloadReady, true, 'first video parse did not expose a download');
   assert.strictEqual(snapshot.previewReady, true, 'first video parse did not prepare a preview');
   assert(activationCount >= 3, `expected navigation, submit and result activation, got ${activationCount}`);

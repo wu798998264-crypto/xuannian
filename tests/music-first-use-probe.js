@@ -67,7 +67,8 @@ async function run() {
   const logFile = path.join(tempAppData, '玄念', 'xuannian-runtime.log');
   const runtimeLog = fs.existsSync(logFile) ? fs.readFileSync(logFile, 'utf8') : '';
   const wakeCount = (runtimeLog.match(/music search visibility wake/g) || []).length;
-  console.log(`first music search probe ${JSON.stringify({ ...snapshot, elapsedMs, wakeCount })}`);
+  const heartbeatCount = (runtimeLog.match(/media portal render heartbeat request=/g) || []).length;
+  console.log(`first music search probe ${JSON.stringify({ ...snapshot, elapsedMs, wakeCount, heartbeatCount })}`);
   if (snapshot?.status !== 'ready') {
     const portal = webContents.getAllWebContents().find((contents) => /gequbao\.com/i.test(contents.getURL()));
     if (portal && !portal.isDestroyed()) {
@@ -88,6 +89,7 @@ async function run() {
   }
   assert.strictEqual(snapshot?.status, 'ready', `first music search failed: ${JSON.stringify(snapshot)}`);
   assert(snapshot.count > 0, 'first music search returned no versions');
+  assert(heartbeatCount > 0, 'first music search did not receive a compositor heartbeat');
   assert(wakeCount <= 3, `visibility wake count exceeded limit: ${wakeCount}`);
   probeSucceeded = true;
   app.quit();
