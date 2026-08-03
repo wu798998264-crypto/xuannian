@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>玄念8.4.7</title>
+  <title>玄念8.4.8</title>
   <link rel="icon" href="src/xuannian-logo-256.png" />
   <link rel="stylesheet" href="src/media-library.css" />
   <style>
@@ -686,6 +686,19 @@
     .modal-backdrop{position:fixed;inset:0;background:rgba(0,0,0,.28);display:none;align-items:center;justify-content:center;z-index:100;-webkit-app-region:no-drag}
     .modal-backdrop.show{display:flex}
     .modal{width:min(640px,calc(100vw - 28px));max-height:calc(100vh - 32px);overflow-y:auto;border-radius:22px;background:var(--panel);border:1px solid var(--line);box-shadow:var(--shadow);padding:22px;position:relative;-webkit-app-region:no-drag}
+    .modal-backdrop.note-editor-backdrop{inset:1px 1px 1px 63px;align-items:stretch;justify-content:stretch;background:var(--work)}
+    .modal-backdrop.note-editor-backdrop .modal{width:100%;height:100%;max-height:none;overflow-x:hidden;overflow-y:auto;border:0;border-radius:0;background:var(--work);box-shadow:none;padding:24px 18px 14px}
+    .note-editor-pane{width:100%;height:100%;min-height:0;display:flex;flex-direction:column}
+    .note-editor-pane .modal-header{flex:none;min-height:38px}
+    .note-editor-pane .modal-header .modal-close{right:140px}
+    .note-editor-pane .simple-editor-fields{display:flex;flex:1;min-height:0;flex-direction:column;gap:10px}
+    .note-editor-pane #noteTitle{flex:none}
+    .note-editor-pane #noteContent{flex:1;min-height:160px;resize:none}
+    .note-editor-pane .inline-attachment-area{flex:none;max-height:230px;overflow:auto}
+    .note-editor-pane .edit-attachments{grid-template-columns:repeat(auto-fill,minmax(180px,1fr));min-height:0;max-height:220px;overflow:auto;padding-right:2px}
+    .note-editor-pane .edit-attachment img,.note-editor-pane .edit-attachment video,.note-editor-pane .edit-attachment .video-thumb{height:120px}
+    .note-editor-pane .edit-attachment .file-thumb,.note-editor-pane .edit-attachment .folder-thumb{height:100px}
+    .note-editor-pane .editor-upload-row,.note-editor-pane .modal-actions{flex:none}
     .modal-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
     .modal h3{margin:0;font-size:20px}
     .modal:has(.centered-modal){width:min(460px,calc(100vw - 28px))}
@@ -1838,7 +1851,7 @@ function createBrowserFallbackAPI(){
     async deleteInspiration(id){ const data=read(); data.inspirations=data.inspirations.filter(x=>x.id!==id); write(data); return data.inspirations; },
     async getSettings(){ return read().settings; },
     async saveSettings(settings){ const data=read(); data.settings={...data.settings,...settings}; write(data); return data.settings; },
-    async getUpdateState(){ return {status:'current',revision:0,currentVersion:'8.4.7',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false}; },
+    async getUpdateState(){ return {status:'current',revision:0,currentVersion:'8.4.8',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false}; },
     async checkForUpdates(){ return this.getUpdateState(); },
     async downloadUpdate(){ return this.getUpdateState(); },
     async installUpdate(){ return false; },
@@ -8323,7 +8336,7 @@ function showUpdateDialog(){
   showModal(`
     <div data-update-dialog>
       <div class="modal-header"><h3>软件更新</h3><button class="modal-close" id="closeModal">×</button></div>
-      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '8.4.7')}</b><span>${hasNewerUpdateVersion(update)?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
+      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '8.4.8')}</b><span>${hasNewerUpdateVersion(update)?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
       <div class="modal-message">${escapeHtml(updateStatusText())}</div>
       <p class="update-network-tip">提示：开启 VPN 后再检测更新，结果会更加准确。</p>
       ${busy||downloaded?`<div class="update-progress"><span style="width:${downloaded?100:progress}%"></span></div>`:''}
@@ -8353,22 +8366,36 @@ async function runUpdateAction(){
   showUpdateDialog();
 }
 
-function showModal(html){
+function resetModalPresentation(){
+  const backdrop=$('#modalBackdrop');
+  const box=$('#modalBox');
+  backdrop?.classList.remove('note-editor-backdrop');
+  box?.classList.remove('note-editor-modal');
+}
+function showModal(html,presentation='default'){
   state.modalCloseGuard=null;
   api.setMediaBrowserBounds({},false);
   const box=$('#modalBox');
   releaseVideoThumbnailResources(box);
   releaseNativeFileIconTargets(box);
+  resetModalPresentation();
   box.innerHTML=html;
-  $('#modalBackdrop').classList.add('show');
+  const backdrop=$('#modalBackdrop');
+  if(presentation==='note-editor'){
+    backdrop.classList.add('note-editor-backdrop');
+    box.classList.add('note-editor-modal');
+  }
+  backdrop.classList.add('show');
 }
 function closeModal(){
   state.modalCloseGuard=null;
-  $('#modalBackdrop').classList.remove('show');
+  const backdrop=$('#modalBackdrop');
+  backdrop.classList.remove('show');
   const box=$('#modalBox');
   releaseVideoThumbnailResources(box);
   releaseNativeFileIconTargets(box);
   box.innerHTML='';
+  resetModalPresentation();
   syncMediaBrowserBounds();
 }
 function bindModalBackdropClose(){
@@ -8762,7 +8789,7 @@ function showNoteEditorModal(noteId=null, preset=null){
     attachments:editorAttachmentSignature(state.pendingNoteAttachments),
   };
   showModal(`
-    <div class="center-title-modal narrow-editor">
+    <div class="center-title-modal note-editor-pane">
       <div class="modal-header"><h3>${editing?'编辑收藏':'新建收藏'}</h3><button class="modal-close" id="closeModal">×</button></div>
       <div class="simple-editor-fields">
         <input id="noteTitle" value="${escapeHtml(initial.title || '')}" placeholder="标题" />
@@ -8773,7 +8800,7 @@ function showNoteEditorModal(noteId=null, preset=null){
       <div class="editor-upload-row"><button class="editor-upload-btn" id="attachNoteBtn" title="上传图片或文件">${iconSvg('paperclip')}</button></div>
       <div class="modal-actions"><button class="ghost-btn" id="cancelModal">取消</button><button class="black-btn" id="confirmNote">保存</button></div>
     </div>
-  `);
+  `,'note-editor');
   setEditorCloseGuard(()=>{ state.pendingNoteAttachments=[]; }, ()=>{
     return String($('#noteTitle')?.value || '')!==noteBaseline.title
       || String($('#noteContent')?.value || '')!==noteBaseline.content

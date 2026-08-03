@@ -1170,6 +1170,41 @@ async function run() {
   assert.strictEqual(noteSidebarResizeMetrics.stored, noteSidebarResizeMetrics.target);
   assert.strictEqual(noteSidebarResizeMetrics.role, 'separator');
   assert.strictEqual(noteSidebarResizeMetrics.cursor, 'col-resize');
+  const noteEditorLayoutMetrics = await window.webContents.executeJavaScript(`
+    (async()=>{
+      await switchView('notes',{skipCoach:true});
+      showNoteEditorModal();
+      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+      const backdrop=document.querySelector('#modalBackdrop');
+      const modal=document.querySelector('#modalBox');
+      const pane=document.querySelector('.note-editor-pane');
+      const textarea=document.querySelector('#noteContent');
+      const viewRect=document.querySelector('#notesView').getBoundingClientRect();
+      const backdropRect=backdrop.getBoundingClientRect();
+      const modalRect=modal.getBoundingClientRect();
+      const textareaRect=textarea.getBoundingClientRect();
+      const metrics={
+        presentation:backdrop.classList.contains('note-editor-backdrop'),
+        pane:!!pane,
+        leftDelta:Math.abs(backdropRect.left-viewRect.left),
+        widthDelta:Math.abs(backdropRect.width-viewRect.width),
+        heightDelta:Math.abs(backdropRect.height-viewRect.height),
+        modalWidthDelta:Math.abs(modalRect.width-backdropRect.width),
+        modalHeightDelta:Math.abs(modalRect.height-backdropRect.height),
+        textareaHeight:textareaRect.height,
+      };
+      closeModal();
+      metrics.reset=!backdrop.classList.contains('note-editor-backdrop')&&!modal.classList.contains('note-editor-modal');
+      return metrics;
+    })()
+  `, true);
+  console.log(`note editor layout metrics ${JSON.stringify(noteEditorLayoutMetrics)}`);
+  assert.strictEqual(noteEditorLayoutMetrics.presentation, true);
+  assert.strictEqual(noteEditorLayoutMetrics.pane, true);
+  assert(noteEditorLayoutMetrics.leftDelta<=1 && noteEditorLayoutMetrics.widthDelta<=1 && noteEditorLayoutMetrics.heightDelta<=1, 'favorite editor backdrop must match the full notes workspace');
+  assert(noteEditorLayoutMetrics.modalWidthDelta<=1 && noteEditorLayoutMetrics.modalHeightDelta<=1, 'favorite editor surface must fill its backdrop');
+  assert(noteEditorLayoutMetrics.textareaHeight>=160, 'favorite content editor must retain a practical editing height');
+  assert.strictEqual(noteEditorLayoutMetrics.reset, true, 'closing the favorite editor must restore the default modal presentation');
   const mediaLibraryMetrics = await window.webContents.executeJavaScript(`
     (async()=>{
       const openedPortals=[];
