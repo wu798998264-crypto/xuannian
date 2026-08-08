@@ -66,11 +66,9 @@ async function run() {
   const elapsedMs = Date.now() - startedAt;
   const logFile = path.join(tempAppData, '玄念', 'xuannian-runtime.log');
   const runtimeLog = fs.existsSync(logFile) ? fs.readFileSync(logFile, 'utf8') : '';
-  const activationCount = (runtimeLog.match(/media portal background activation/g) || []).length;
   const wakeCount = (runtimeLog.match(/video result visibility wake/g) || []).length;
   const recoveryCount = (runtimeLog.match(/media portal video recovery/g) || []).length;
-  const heartbeatCount = (runtimeLog.match(/media portal render heartbeat request=/g) || []).length;
-  console.log(`first video parse probe ${JSON.stringify({ ...snapshot, elapsedMs, activationCount, wakeCount, recoveryCount, heartbeatCount })}`);
+  console.log(`first video parse probe ${JSON.stringify({ ...snapshot, elapsedMs, wakeCount, recoveryCount })}`);
   if (snapshot?.status !== 'ready') {
     const portal = webContents.getAllWebContents().find((contents) => /seekin\.ai/i.test(contents.getURL()));
     if (portal && !portal.isDestroyed()) {
@@ -91,10 +89,8 @@ async function run() {
     }
   }
   assert.strictEqual(snapshot?.status, 'ready', `first video parse failed: ${JSON.stringify(snapshot)}`);
-  assert(heartbeatCount > 0, 'first video parse did not receive a compositor heartbeat');
   assert.strictEqual(snapshot.downloadReady, true, 'first video parse did not expose a download');
   assert.strictEqual(snapshot.previewReady, true, 'first video parse did not prepare a preview');
-  assert(activationCount >= 3, `expected navigation, submit and result activation, got ${activationCount}`);
   probeSucceeded = true;
   app.quit();
 }

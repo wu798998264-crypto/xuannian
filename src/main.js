@@ -169,8 +169,6 @@ let mediaPortalRequestedVisible = false;
 let mediaPortalInputTimer = null;
 let mediaPortalVisibilityNudgeTimer = null;
 let mediaPortalVisibilityRestoreTimer = null;
-let mediaPortalFocusRestoreTimer = null;
-let mediaPortalRenderHeartbeatTimer = null;
 let mediaPortalIdleTimer = null;
 let mediaPortalCacheCheckAt = 0;
 let mediaPortalCacheCheckPromise = null;
@@ -225,8 +223,6 @@ const MEDIA_PORTAL_VIDEO_WAKE_MAX = 4;
 const MEDIA_PORTAL_VIDEO_WAKE_DELAY_MS = 3000;
 const MEDIA_PORTAL_VIDEO_WAKE_REPEAT_MS = 12000;
 const MEDIA_PORTAL_VIDEO_WAKE_VISIBLE_MS = 520;
-const MEDIA_PORTAL_FOCUS_HOLD_MS = 900;
-const MEDIA_PORTAL_RENDER_HEARTBEAT_MS = 800;
 const MEDIA_PREVIEW_CACHE_DIRECTORY = 'media-preview-cache';
 const MEDIA_PREVIEW_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const MEDIA_PREVIEW_MAX_BYTES = 96 * 1024 * 1024;
@@ -3730,7 +3726,6 @@ function destroyMediaPortalView({ notify = true } = {}) {
   cancelMediaPortalIdleDestroy();
   clearMediaPortalInputTimer();
   clearMediaPortalProgressTimer();
-  clearMediaPortalRenderHeartbeat();
   clearMediaPortalPendingDownload();
   clearMediaPortalPreviewCapture();
   clearMediaPortalVerificationMonitor();
@@ -3776,7 +3771,6 @@ function resetMediaPortalAutomation(kind = '') {
     clearMediaPortalInputTimer();
     clearMediaPortalVisibilityNudgeTimer();
     clearMediaPortalProgressTimer();
-    clearMediaPortalRenderHeartbeat();
     clearMediaPortalVerificationMonitor();
     if (targetKind === 'video') clearMediaPortalPreviewCapture();
     if (cancellable) mediaPortalInputState = null;
@@ -3865,88 +3859,6 @@ function clearMediaPortalVisibilityNudgeTimer() {
   mediaPortalVisibilityNudgeTimer = null;
   clearTimeout(mediaPortalVisibilityRestoreTimer);
   mediaPortalVisibilityRestoreTimer = null;
-  const restoreMainFocus = !!mediaPortalFocusRestoreTimer;
-  clearTimeout(mediaPortalFocusRestoreTimer);
-  mediaPortalFocusRestoreTimer = null;
-  if (restoreMainFocus && mainWindow && !mainWindow.isDestroyed()) {
-    try { mainWindow.focus(); } catch {}
-    try { mainWindow.webContents.focus(); } catch {}
-  }
-}
-
-function clearMediaPortalRenderHeartbeat() {
-  clearTimeout(mediaPortalRenderHeartbeatTimer);
-  mediaPortalRenderHeartbeatTimer = null;
-}
-
-function startMediaPortalRenderHeartbeat(state, view = mediaPortalView) {
-  clearMediaPortalRenderHeartbeat();
-  if (!view || view.webContents.isDestroyed()
-    || !isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId)) return;
-  const beat = async () => {
-    mediaPortalRenderHeartbeatTimer = null;
-    if (!view || view.webContents.isDestroyed()
-      || !isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId)) return;
-    try {
-      keepMediaPortalWorkerVisible(view);
-      try { view.webContents.setBackgroundThrottling(false); } catch {}
-      try {
-        await view.webContents.executeJavaScript(`(() => {
-          window.dispatchEvent(new Event('focus'));
-          window.dispatchEvent(new Event('resize'));
-          document.dispatchEvent(new Event('visibilitychange'));
-          document.querySelector('input,button,main,body')?.getBoundingClientRect();
-          requestAnimationFrame(() => requestAnimationFrame(() => {}));
-          return { visibility: document.visibilityState, readyState: document.readyState };
-        })()`, true);
-      } catch {}
-      try {
-        await Promise.race([
-          view.webContents.capturePage({ x: 0, y: 0, width: 96, height: 64 }),
-          new Promise((resolve) => setTimeout(resolve, 650)),
-        ]);
-      } catch {}
-      state.renderHeartbeatCount = Number(state.renderHeartbeatCount || 0) + 1;
-      if (state.renderHeartbeatCount === 1 || state.renderHeartbeatCount % 15 === 0) {
-        runtimeLog(`media portal render heartbeat request=${state.requestId} count=${state.renderHeartbeatCount} host=${mediaPortalViewHost}`);
-      }
-    } finally {
-      if (isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId)) {
-        mediaPortalRenderHeartbeatTimer = setTimeout(beat, MEDIA_PORTAL_RENDER_HEARTBEAT_MS);
-      }
-    }
-  };
-  runtimeLog(`media portal render heartbeat started request=${state.requestId}`);
-  mediaPortalRenderHeartbeatTimer = setTimeout(beat, 120);
-}
-
-function activateMediaPortalAutomationView(view, state, reason = 'automation') {
-  if (!view || view.webContents.isDestroyed()
-    || !isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId)) return false;
-  if (mediaPortalRequestedVisible && mediaPortalLastVisibleBounds && attachMediaPortalViewToMain(view)) {
-    view.setBounds(mediaPortalLastVisibleBounds);
-  } else if (!attachMediaPortalViewToBackgroundMain(view)) {
-    if (!attachMediaPortalViewToWorker(view)) return false;
-  }
-  view.setVisible(true);
-  view.webContents.setAudioMuted(true);
-  const restoreMainFocus = !!mainWindow?.isFocused?.() || !!mediaPortalFocusRestoreTimer;
-  const workerWindow = mediaPortalViewHost === 'worker' ? mediaPortalWorkerWindow : null;
-  if (workerWindow && !workerWindow.isDestroyed()) {
-    workerWindow.show();
-    try { workerWindow.focus(); } catch {}
-  }
-  try { view.webContents.focus(); } catch {}
-  state.backgroundActivationCount = Number(state.backgroundActivationCount || 0) + 1;
-  runtimeLog(`media portal background activation request=${state.requestId} count=${state.backgroundActivationCount} reason=${reason}`);
-  clearTimeout(mediaPortalFocusRestoreTimer);
-  mediaPortalFocusRestoreTimer = restoreMainFocus ? setTimeout(() => {
-    mediaPortalFocusRestoreTimer = null;
-    if (!mainWindow || mainWindow.isDestroyed()) return;
-    try { mainWindow.focus(); } catch {}
-    try { mainWindow.webContents.focus(); } catch {}
-  }, MEDIA_PORTAL_FOCUS_HOLD_MS) : null;
-  return true;
 }
 
 function scheduleMediaPortalVisibilityNudge(state, view, {
@@ -3977,7 +3889,27 @@ function scheduleMediaPortalVisibilityNudge(state, view, {
     mediaPortalVisibilityNudgeTimer = null;
     if (mediaPortalInputState !== state || state.requestId !== mediaPortalRequestId || !view || view.webContents.isDestroyed()) return;
     state.visibilityNudgeCount = wakeCount + 1;
-    activateMediaPortalAutomationView(view, state, `${musicSearch ? 'music' : 'video'}-wake-${state.visibilityNudgeCount}`);
+    const content = mainWindow?.getContentBounds();
+    const width = Math.max(320, Number(content?.width || MEDIA_PORTAL_WORKER_WIDTH));
+    const height = Math.max(240, Number(content?.height || MEDIA_PORTAL_WORKER_HEIGHT));
+    const x = width >= 640 ? 64 : 0;
+    const y = height >= 480 ? 132 : 0;
+    const wakeWidth = Math.max(120, width - x);
+    const wakeHeight = Math.max(80, height - y);
+    const restoreMainFocus = !!mainWindow?.isFocused?.();
+    if (musicSearch) {
+      view.setBounds({
+        x,
+        y,
+        width: wakeWidth,
+        height: wakeHeight,
+      });
+    } else {
+      keepMediaPortalWorkerVisible(view);
+    }
+    view.setVisible(true);
+    view.webContents.setAudioMuted(true);
+    try { view.webContents.focus(); } catch {}
     const wakeKind = musicSearch ? 'music search' : 'video result';
     runtimeLog(`${wakeKind} visibility wake ${state.visibilityNudgeCount}/${wakeMax}`);
     emitMediaPortalProgress(state, {
@@ -4007,46 +3939,21 @@ function scheduleMediaPortalVisibilityNudge(state, view, {
       await view.webContents.capturePage({
         x: 0,
         y: 0,
-        width: 640,
-        height: 360,
+        width: Math.min(640, wakeWidth),
+        height: Math.min(360, wakeHeight),
       });
     } catch {}
     mediaPortalVisibilityRestoreTimer = setTimeout(() => {
       mediaPortalVisibilityRestoreTimer = null;
       if (mediaPortalInputState !== state || state.requestId !== mediaPortalRequestId || view.webContents.isDestroyed()) return;
       keepMediaPortalWorkerVisible(view);
+      if (restoreMainFocus && mainWindow && !mainWindow.isDestroyed()) {
+        try { mainWindow.webContents.focus(); } catch {}
+      }
       if (rerunAfterWake) scheduleMediaPortalInput();
       else scheduleMediaPortalVisibilityNudge(state, view);
     }, visibleMs);
   }, delayMs);
-}
-
-function pollMediaPortalVerificationClear(state, view, timeoutMs = 6500) {
-  const token = Number(state.verificationPollToken || 0) + 1;
-  const deadline = Date.now() + Math.max(1000, Number(timeoutMs || 0));
-  state.verificationPollToken = token;
-  const poll = async () => {
-    if (state.verificationPollToken !== token
-      || !isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId)
-      || !view || view.webContents.isDestroyed()) return;
-    let verificationVisible = true;
-    try {
-      verificationVisible = await view.webContents.executeJavaScript(`(() => {
-        const value = String(document.body?.innerText || '').slice(0, 6000);
-        return /安全验证|验证您是真人|请验证您是真人|verify you are human|security verification|captcha|cloudflare/i.test(value);
-      })()`, true);
-    } catch {}
-    if (!verificationVisible) {
-      clearTimeout(mediaPortalVisibilityRestoreTimer);
-      mediaPortalVisibilityRestoreTimer = null;
-      keepMediaPortalWorkerVisible(view);
-      runtimeLog(`music verification cleared early request=${state.requestId}`);
-      scheduleMediaPortalInput();
-      return;
-    }
-    if (Date.now() < deadline) setTimeout(poll, 450);
-  };
-  setTimeout(poll, 500);
 }
 
 function clearMediaPortalVerificationMonitor({ clearResume = true } = {}) {
@@ -4180,7 +4087,6 @@ function emitMediaPortalProgress(state, extra = {}) {
 function startMediaPortalProgress(state) {
   clearMediaPortalProgressTimer();
   state.progressStartedAt = Date.now();
-  startMediaPortalRenderHeartbeat(state);
   emitMediaPortalProgress(state);
   mediaPortalProgressTimer = setInterval(() => {
     if (state.requestId !== mediaPortalRequestId) {
@@ -4193,7 +4099,6 @@ function startMediaPortalProgress(state) {
 
 function finishMediaPortalProgress(state, ok, reason = '', message = '') {
   clearMediaPortalProgressTimer();
-  clearMediaPortalRenderHeartbeat();
   const fallbackMessage = ok
     ? (state?.automationMode === 'video-parse'
       ? '视频解析完成'
@@ -4567,10 +4472,9 @@ async function completeMediaPortalAutomation(state, result = {}) {
     });
     scheduleMediaPortalVisibilityNudge(state, view, {
       delayMsOverride: 0,
-      visibleMsOverride: 2500,
+      visibleMsOverride: 6500,
       rerunAfterWake: true,
     });
-    pollMediaPortalVerificationClear(state, view, 2500);
     return;
   }
   if (humanVerification) rememberMediaPortalVerificationResume(state);
@@ -4748,12 +4652,6 @@ function scheduleMediaPortalInput() {
     state.automationRunning = true;
     state.automationRerunRequested = false;
     keepMediaPortalWorkerVisible(view);
-    const activationPhase = `${state.automationMode}:${state.phase || 'default'}:${Number(state.visibilityRetryCount || 0)}`;
-    if (state.backgroundActivationPhase !== activationPhase) {
-      state.backgroundActivationPhase = activationPhase;
-      activateMediaPortalAutomationView(view, state, activationPhase);
-      await new Promise((resolve) => setTimeout(resolve, 140));
-    }
     scheduleMediaPortalVisibilityNudge(state, view);
     const script = buildPortalScript({
       mode: state.automationMode,
@@ -4774,8 +4672,10 @@ function scheduleMediaPortalInput() {
           const point = result.actionPoint || {};
           const x = Math.max(1, Math.min(MEDIA_PORTAL_WORKER_WIDTH - 1, Math.round(Number(point.x || 0))));
           const y = Math.max(1, Math.min(MEDIA_PORTAL_WORKER_HEIGHT - 1, Math.round(Number(point.y || 0))));
+          const restoreMainFocus = !!mainWindow?.isFocused?.();
           try {
-            activateMediaPortalAutomationView(view, state, 'trusted-submit');
+            keepMediaPortalWorkerVisible(view);
+            view.webContents.focus();
             view.webContents.sendInputEvent({ type: 'mouseMove', x, y, movementX: 0, movementY: 0 });
             view.webContents.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 });
             view.webContents.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 });
@@ -4785,6 +4685,14 @@ function scheduleMediaPortalInput() {
             runtimeLog(`media portal trusted submit failed request=${state.requestId}: ${error?.message || error}`);
             await completeMediaPortalAutomation(state, { ok: false, reason: 'parse-action-missing' });
             return;
+          } finally {
+            if (restoreMainFocus && mainWindow && !mainWindow.isDestroyed()) {
+              setTimeout(() => {
+                if (!mainWindow?.isDestroyed?.()) {
+                  try { mainWindow.webContents.focus(); } catch {}
+                }
+              }, 120);
+            }
           }
         }
         state.phase = String(result.nextPhase || 'result');
@@ -5365,7 +5273,7 @@ function ensureMediaPortalWorkerWindow() {
     width: MEDIA_PORTAL_WORKER_WIDTH,
     height: MEDIA_PORTAL_WORKER_HEIGHT,
     frame: false,
-    focusable: true,
+    focusable: false,
     skipTaskbar: true,
     backgroundColor: '#ffffff',
   });
@@ -5375,33 +5283,6 @@ function ensureMediaPortalWorkerWindow() {
     if (mediaPortalViewHost === 'worker') mediaPortalViewHost = '';
   });
   return workerWindow;
-}
-
-function attachMediaPortalViewToBackgroundMain(view = mediaPortalView) {
-  if (!view || view.webContents.isDestroyed() || !mainWindow || mainWindow.isDestroyed()
-    || !mainWindow.isVisible() || mainWindow.isMinimized()) return false;
-  const content = mainWindow.getContentBounds();
-  const width = Math.max(0, Number(content?.width || 0));
-  const height = Math.max(0, Number(content?.height || 0));
-  if (width < 1 || height < 1) return false;
-  if (mediaPortalViewHost !== 'main-background') {
-    if (mediaPortalViewHost !== 'main') {
-      try { mediaPortalWorkerWindow?.contentView?.removeChildView(view); } catch {}
-    }
-    try { mainWindow.contentView.addChildView(view, 0); } catch {}
-    mediaPortalViewHost = 'main-background';
-  }
-  view.setBounds({
-    x: 0,
-    y: 0,
-    width: MEDIA_PORTAL_WORKER_WIDTH,
-    height: MEDIA_PORTAL_WORKER_HEIGHT,
-  });
-  view.setVisible(true);
-  if (mediaPortalWorkerWindow && !mediaPortalWorkerWindow.isDestroyed() && mediaPortalWorkerWindow.isVisible()) {
-    mediaPortalWorkerWindow.hide();
-  }
-  return true;
 }
 
 function attachMediaPortalViewToWorker(view = mediaPortalView) {
@@ -5422,9 +5303,7 @@ function attachMediaPortalViewToWorker(view = mediaPortalView) {
 function attachMediaPortalViewToMain(view = mediaPortalView) {
   if (!view || view.webContents.isDestroyed() || !mainWindow || mainWindow.isDestroyed()) return false;
   if (mediaPortalViewHost !== 'main') {
-    if (mediaPortalViewHost !== 'main-background') {
-      try { mediaPortalWorkerWindow?.contentView?.removeChildView(view); } catch {}
-    }
+    try { mediaPortalWorkerWindow?.contentView?.removeChildView(view); } catch {}
     try { mainWindow.contentView.addChildView(view); } catch {}
     mediaPortalViewHost = 'main';
   }
@@ -5529,8 +5408,8 @@ function keepMediaPortalWorkerVisible(view = mediaPortalView) {
   if (mediaPortalRequestedVisible && mediaPortalLastVisibleBounds && attachMediaPortalViewToMain(view)) {
     view.setBounds(mediaPortalLastVisibleBounds);
     view.setVisible(true);
-  } else if (!attachMediaPortalViewToBackgroundMain(view)) {
-    if (!attachMediaPortalViewToWorker(view)) return false;
+  } else if (!attachMediaPortalViewToWorker(view)) {
+    return false;
   }
   view.webContents.setAudioMuted(true);
   return true;
@@ -5695,9 +5574,6 @@ function openMediaPortal(url, downloadTarget = 'download', sourceText = '', auto
       videoResultWaitCount: 0,
       nativeSubmitCount: 0,
       visibilityNudgeCount: 0,
-      backgroundActivationCount: 0,
-      backgroundActivationPhase: '',
-      renderHeartbeatCount: 0,
       automationRunning: false,
       automationRerunRequested: false,
     }
@@ -5708,7 +5584,6 @@ function openMediaPortal(url, downloadTarget = 'download', sourceText = '', auto
   if (mediaPortalInputState) {
     keepMediaPortalWorkerVisible(view);
     startMediaPortalProgress(mediaPortalInputState);
-    activateMediaPortalAutomationView(view, mediaPortalInputState, 'navigation');
   }
   if (cachedPreview && mediaPortalInputState && normalizedAutomationMode === 'video-parse') {
     const state = mediaPortalInputState;
