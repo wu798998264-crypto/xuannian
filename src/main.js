@@ -237,6 +237,7 @@ const RESIZE_EDGES = new Set(['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw']);
 const STABLE_USER_DATA_DIR_NAME = '玄念';
 const UPDATE_OWNER = 'wu798998264-crypto';
 const UPDATE_REPO = 'xuannian';
+const UPDATE_REPOSITORY_URL = `https://github.com/${UPDATE_OWNER}/${UPDATE_REPO}`;
 const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000;
 let updateState = {
   status: 'idle',
@@ -252,6 +253,7 @@ let updateState = {
   supported: ['win32', 'darwin'].includes(process.platform),
   downloadedFile: '',
   retryAction: '',
+  repositoryUrl: UPDATE_REPOSITORY_URL,
 };
 
 function configureStableUserDataPath() {
@@ -3889,28 +3891,11 @@ function scheduleMediaPortalVisibilityNudge(state, view, {
     mediaPortalVisibilityNudgeTimer = null;
     if (mediaPortalInputState !== state || state.requestId !== mediaPortalRequestId || !view || view.webContents.isDestroyed()) return;
     state.visibilityNudgeCount = wakeCount + 1;
-    const content = mainWindow?.getContentBounds();
-    const width = Math.max(320, Number(content?.width || MEDIA_PORTAL_WORKER_WIDTH));
-    const height = Math.max(240, Number(content?.height || MEDIA_PORTAL_WORKER_HEIGHT));
-    const x = width >= 640 ? 64 : 0;
-    const y = height >= 480 ? 132 : 0;
-    const wakeWidth = Math.max(120, width - x);
-    const wakeHeight = Math.max(80, height - y);
-    const restoreMainFocus = !!mainWindow?.isFocused?.();
-    if (musicSearch) {
-      view.setBounds({
-        x,
-        y,
-        width: wakeWidth,
-        height: wakeHeight,
-      });
-    } else {
-      keepMediaPortalWorkerVisible(view);
-    }
-    view.setVisible(true);
-    view.webContents.setAudioMuted(true);
-    try { view.webContents.focus(); } catch {}
     const wakeKind = musicSearch ? 'music search' : 'video result';
+    // Some provider pages only start their parser after receiving a real compositor frame.
+    // Put the isolated view below the app for a short frame burst, then immediately return it
+    // to the offscreen worker. The user never loses the current operation screen.
+    activateMediaPortalInBackground(view, visibleMs, wakeKind);
     runtimeLog(`${wakeKind} visibility wake ${state.visibilityNudgeCount}/${wakeMax}`);
     emitMediaPortalProgress(state, {
       percent: musicSearch
@@ -3936,20 +3921,12 @@ function scheduleMediaPortalVisibilityNudge(state, view, {
       await view.webContents.executeJavaScript(visibilityScript, true);
     } catch {}
     try {
-      await view.webContents.capturePage({
-        x: 0,
-        y: 0,
-        width: Math.min(640, wakeWidth),
-        height: Math.min(360, wakeHeight),
-      });
+      await view.webContents.capturePage();
     } catch {}
     mediaPortalVisibilityRestoreTimer = setTimeout(() => {
       mediaPortalVisibilityRestoreTimer = null;
       if (mediaPortalInputState !== state || state.requestId !== mediaPortalRequestId || view.webContents.isDestroyed()) return;
       keepMediaPortalWorkerVisible(view);
-      if (restoreMainFocus && mainWindow && !mainWindow.isDestroyed()) {
-        try { mainWindow.webContents.focus(); } catch {}
-      }
       if (rerunAfterWake) scheduleMediaPortalInput();
       else scheduleMediaPortalVisibilityNudge(state, view);
     }, visibleMs);
@@ -4461,23 +4438,12 @@ async function completeMediaPortalAutomation(state, result = {}) {
   const mode = state.automationMode;
   const humanVerification = String(result.reason || '') === 'human-verification'
     && String(mode || '').startsWith('music-');
-  if (humanVerification && mode === 'music-search'
-    && Number(state.verificationVisibilityRetryCount || 0) < MEDIA_PORTAL_MUSIC_WAKE_MAX
-    && Number(state.visibilityNudgeCount || 0) < MEDIA_PORTAL_MUSIC_WAKE_MAX) {
-    state.verificationVisibilityRetryCount = Number(state.verificationVisibilityRetryCount || 0) + 1;
-    runtimeLog(`music verification visibility retry ${state.verificationVisibilityRetryCount}/${MEDIA_PORTAL_MUSIC_WAKE_MAX}`);
-    emitMediaPortalProgress(state, {
-      percent: Math.min(78, 68 + state.verificationVisibilityRetryCount * 3),
-      message: `正在自动激活首次验证页面（${state.verificationVisibilityRetryCount}/${MEDIA_PORTAL_MUSIC_WAKE_MAX}）`,
-    });
-    scheduleMediaPortalVisibilityNudge(state, view, {
-      delayMsOverride: 0,
-      visibleMsOverride: 6500,
-      rerunAfterWake: true,
-    });
-    return;
+  if (humanVerification) {
+    // CAPTCHA cannot and must not be automated. Ask once, keep the exact portal session,
+    // and resume the original request automatically after the user completes verification.
+    rememberMediaPortalVerificationResume(state);
+    notifyMediaBrowserState({ verificationPending: true, opening: false });
   }
-  if (humanVerification) rememberMediaPortalVerificationResume(state);
   if (mode === 'video-parse') {
     if (!result.ok && continueMediaPortalVideoResultWait(state, result)) return;
     if (!result.ok && recoverMediaPortalVideoAutomation(state, result)) return;
@@ -4703,6 +4669,12 @@ function scheduleMediaPortalInput() {
             percent: 62,
             message: '后台搜索已提交，正在等待下载站返回结果',
             reason: '',
+          });
+          // The first result frame is where Seekin-like pages commonly defer real parsing.
+          // Wake that frame immediately in the background before starting normal polling.
+          scheduleMediaPortalVisibilityNudge(state, view, {
+            delayMsOverride: 0,
+            visibleMsOverride: MEDIA_PORTAL_VIDEO_WAKE_VISIBLE_MS,
           });
         }
         notifyMediaBrowserState({ opening: true, automationStage: state.phase });
@@ -5304,12 +5276,52 @@ function attachMediaPortalViewToMain(view = mediaPortalView) {
   if (!view || view.webContents.isDestroyed() || !mainWindow || mainWindow.isDestroyed()) return false;
   if (mediaPortalViewHost !== 'main') {
     try { mediaPortalWorkerWindow?.contentView?.removeChildView(view); } catch {}
+    try { mainWindow.contentView.removeChildView(view); } catch {}
     try { mainWindow.contentView.addChildView(view); } catch {}
     mediaPortalViewHost = 'main';
   }
   if (mediaPortalWorkerWindow && !mediaPortalWorkerWindow.isDestroyed() && mediaPortalWorkerWindow.isVisible()) {
     mediaPortalWorkerWindow.hide();
   }
+  return true;
+}
+
+function attachMediaPortalViewToMainBackground(view = mediaPortalView) {
+  if (!view || view.webContents.isDestroyed() || !mainWindow || mainWindow.isDestroyed()) return false;
+  if (mediaPortalViewHost !== 'main-background') {
+    try { mediaPortalWorkerWindow?.contentView?.removeChildView(view); } catch {}
+    try { mainWindow.contentView.removeChildView(view); } catch {}
+    try { mainWindow.contentView.addChildView(view, 0); } catch { return false; }
+    mediaPortalViewHost = 'main-background';
+  }
+  if (mediaPortalWorkerWindow && !mediaPortalWorkerWindow.isDestroyed() && mediaPortalWorkerWindow.isVisible()) {
+    mediaPortalWorkerWindow.hide();
+  }
+  const content = mainWindow.getContentBounds();
+  view.setBounds({
+    x: 0,
+    y: 0,
+    width: Math.max(1, Number(content?.width || MEDIA_PORTAL_WORKER_WIDTH)),
+    height: Math.max(1, Number(content?.height || MEDIA_PORTAL_WORKER_HEIGHT)),
+  });
+  view.setVisible(true);
+  return true;
+}
+
+function activateMediaPortalInBackground(view = mediaPortalView, durationMs = MEDIA_PORTAL_VIDEO_WAKE_VISIBLE_MS, label = 'portal') {
+  if (!view || view.webContents.isDestroyed()) return false;
+  const restoreMainFocus = !!mainWindow?.isFocused?.();
+  if (!attachMediaPortalViewToMainBackground(view)) return false;
+  view.webContents.setAudioMuted(true);
+  try { view.webContents.focus(); } catch {}
+  runtimeLog(`${label} compositor wake`);
+  setTimeout(() => {
+    if (view !== mediaPortalView || view.webContents.isDestroyed() || mediaPortalRequestedVisible) return;
+    keepMediaPortalWorkerVisible(view);
+    if (restoreMainFocus && mainWindow && !mainWindow.isDestroyed()) {
+      try { mainWindow.webContents.focus(); } catch {}
+    }
+  }, Math.max(160, Number(durationMs || 0)));
   return true;
 }
 
