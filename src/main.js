@@ -168,6 +168,7 @@ let mediaPortalViewHost = '';
 let mediaPortalRequestedVisible = false;
 let mediaPortalInputTimer = null;
 let mediaPortalResultSyncTimer = null;
+let mediaPortalMusicResultSyncTimer = null;
 let mediaPortalVisibilityNudgeTimer = null;
 let mediaPortalVisibilityRestoreTimer = null;
 let mediaPortalIdleTimer = null;
@@ -3730,6 +3731,7 @@ function destroyMediaPortalView({ notify = true } = {}) {
   cancelMediaPortalIdleDestroy();
   clearMediaPortalInputTimer();
   clearMediaPortalResultSyncTimer();
+  clearMediaPortalMusicResultSyncTimer();
   clearMediaPortalProgressTimer();
   clearMediaPortalPendingDownload();
   clearMediaPortalPreviewCapture();
@@ -3775,6 +3777,7 @@ function resetMediaPortalAutomation(kind = '') {
   if (cancellable || (targetKind === 'video' && mediaPortalParsedVideo)) {
     clearMediaPortalInputTimer();
     clearMediaPortalResultSyncTimer();
+    clearMediaPortalMusicResultSyncTimer();
     clearMediaPortalVisibilityNudgeTimer();
     clearMediaPortalProgressTimer();
     clearMediaPortalVerificationMonitor();
@@ -3865,6 +3868,11 @@ function clearMediaPortalResultSyncTimer() {
   mediaPortalResultSyncTimer = null;
 }
 
+function clearMediaPortalMusicResultSyncTimer() {
+  clearTimeout(mediaPortalMusicResultSyncTimer);
+  mediaPortalMusicResultSyncTimer = null;
+}
+
 function startMediaPortalVideoResultSync(state, view = mediaPortalView) {
   clearMediaPortalResultSyncTimer();
   if (!view || view.webContents.isDestroyed() || !isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId)) return;
@@ -3895,6 +3903,34 @@ function startMediaPortalVideoResultSync(state, view = mediaPortalView) {
     mediaPortalResultSyncTimer = setTimeout(poll, 700);
   };
   mediaPortalResultSyncTimer = setTimeout(poll, 650);
+}
+
+function startMediaPortalMusicResultSync(state, view = mediaPortalView) {
+  clearMediaPortalMusicResultSyncTimer();
+  if (!view || view.webContents.isDestroyed() || !isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId)) return;
+  const poll = async () => {
+    if (!view || view.webContents.isDestroyed() || !isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId)
+      || state.automationMode !== 'music-search' || state.completing) return;
+    state.musicResultSyncPollCount = Number(state.musicResultSyncPollCount || 0) + 1;
+    try {
+      const result = await view.webContents.executeJavaScript(buildPortalScript({
+        mode: 'music-search',
+        value: state.value || '',
+        timeoutMs: 650,
+      }, scoreMediaDownloadQualityLabel), true);
+      if (result?.ok && Array.isArray(result.results) && result.results.length) {
+        runtimeLog(`music result sync hit request=${state.requestId} poll=${state.musicResultSyncPollCount} count=${result.results.length}`);
+        await completeMediaPortalAutomation(state, result);
+        return;
+      }
+    } catch {}
+    if (Number(state.musicResultSyncPollCount || 0) === 5 || Number(state.musicResultSyncPollCount || 0) === 10) {
+      // Keep the portal beneath the app while requesting another compositor frame.
+      activateMediaPortalInBackground(view, 360, 'music result sync');
+    }
+    mediaPortalMusicResultSyncTimer = setTimeout(poll, 650);
+  };
+  mediaPortalMusicResultSyncTimer = setTimeout(poll, 450);
 }
 
 function clearMediaPortalVisibilityNudgeTimer() {
@@ -4492,6 +4528,7 @@ async function completeMediaPortalAutomation(state, result = {}) {
   if (state.requestId !== mediaPortalRequestId) return;
   if (state.providerRetryPending) return;
   clearMediaPortalResultSyncTimer();
+  clearMediaPortalMusicResultSyncTimer();
   clearMediaPortalVisibilityNudgeTimer();
   const view = mediaPortalView;
   const mode = state.automationMode;
@@ -4586,9 +4623,12 @@ async function completeMediaPortalAutomation(state, result = {}) {
     }
     publishMediaPortalVideo(state, parsed);
   } else if (mode === 'music-search') {
+    if (state.completing) return;
+    state.completing = true;
     const results = sanitizeMusicResults(result.results);
     const searchSucceeded = !!result.ok && results.length > 0;
     if (!searchSucceeded && String(result.reason || '') === 'search-timeout' && Number(state.visibilityRetryCount || 0) < 2) {
+      state.completing = false;
       state.visibilityRetryCount = Number(state.visibilityRetryCount || 0) + 1;
       state.visibilityNudgeCount = 0;
       state.progressStartedAt = Date.now();
@@ -4682,6 +4722,7 @@ function scheduleMediaPortalInput() {
     state.automationRerunRequested = false;
     keepMediaPortalWorkerVisible(view);
     scheduleMediaPortalVisibilityNudge(state, view);
+    if (state.automationMode === 'music-search') startMediaPortalMusicResultSync(state, view);
     const script = buildPortalScript({
       mode: state.automationMode,
       phase: state.phase || '',
@@ -4742,7 +4783,7 @@ function scheduleMediaPortalInput() {
         state.phase = String(result.nextPhase || 'result');
         const actionLabel = String(result.actionLabel || '').replace(/\s+/g, ' ').trim().slice(0, 120);
         runtimeLog(`media portal automation submitted request=${state.requestId} mode=${state.automationMode} phase=${state.phase} action=${actionLabel || '-'}`);
-        if (state.automationMode === 'video-parse' && state.phase === 'result') {
+    if (state.automationMode === 'video-parse' && state.phase === 'result') {
           emitMediaPortalProgress(state, {
             percent: 62,
             message: '后台搜索已提交，正在等待下载站返回结果',
@@ -5784,6 +5825,7 @@ function openMediaPortal(url, downloadTarget = 'download', sourceText = '', auto
     : null;
   clearMediaPortalInputTimer();
   clearMediaPortalResultSyncTimer();
+  clearMediaPortalMusicResultSyncTimer();
   clearMediaPortalVisibilityNudgeTimer();
   clearMediaPortalPendingDownload();
   if (mediaPortalInputState) {
