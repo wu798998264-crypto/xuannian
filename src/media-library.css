@@ -26,8 +26,7 @@ body.dark .media-tab.active{background:#3d3e42;box-shadow:none}
 .media-panel.active{display:flex}
 .media-launch-band{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:center;padding:14px 0 10px;border-top:1px solid var(--line)}
 .media-launch-field{position:relative;min-width:0;width:100%}
-.media-link-prefix{position:absolute;left:14px;top:50%;transform:translateY(-50%);z-index:1;color:var(--muted);font-size:13px;pointer-events:none;white-space:nowrap}
-.media-launch-input{height:42px;width:100%;min-width:0;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text);padding:0 44px 0 102px;font-size:13px;outline:none}
+.media-launch-input{height:42px;width:100%;min-width:0;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--text);padding:0 44px 0 14px;font-size:13px;outline:none}
 .media-launch-input:focus{border-color:#9ba4b0;box-shadow:0 0 0 3px rgba(80,92,108,.09)}
 .media-launch-clear{position:absolute;right:7px;top:50%;transform:translateY(-50%);width:30px;height:30px;display:grid;place-items:center;border-radius:6px;color:var(--muted);cursor:pointer}
 .media-launch-clear[hidden]{display:none}

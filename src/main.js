@@ -3912,18 +3912,11 @@ function mediaPortalMusicResultBridgeScript() {
     const bridgeKey = '__xuannianMusicResultBridgeV2';
     const resultKey = '__xuannianMusicResultsV2';
     const collect = () => {
-      if (!/^\\/s(?:\\/|$)/.test(String(location.pathname || ''))) return [];
-      const visible = (element) => {
-        if (!element) return false;
-        const style = getComputedStyle(element);
-        const rect = element.getBoundingClientRect();
-        return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
-      };
+      if (!/(?:^|\\.)gequbao\\.com$/i.test(String(location.hostname || ''))) return [];
       const text = (element) => String(element?.innerText || element?.textContent || '').replace(/\\s+/g, ' ').trim();
       const unique = new Map();
       const targets = document.querySelectorAll('a[href*="/music/"],[data-href*="/music/"],[data-url*="/music/"]');
       for (const element of targets) {
-        if (!visible(element)) continue;
         const rawUrl = element.href || element.getAttribute('data-href') || element.getAttribute('data-url') || element.getAttribute('href');
         let url = '';
         try { url = new URL(String(rawUrl || ''), location.href).href; } catch { continue; }
@@ -3965,10 +3958,9 @@ function startMediaPortalMusicResultSync(state, view = mediaPortalView) {
     state.musicResultSyncPollCount = Number(state.musicResultSyncPollCount || 0) + 1;
     try {
       const snapshot = await view.webContents.executeJavaScript(mediaPortalMusicResultBridgeScript(), true);
-      const expectedPath = new URL(state.portalUrl || '', 'https://www.gequbao.com').pathname;
-      const snapshotPath = new URL(snapshot?.href || '', 'https://www.gequbao.com').pathname;
+      const expectedDocumentUrl = String(state.musicSearchDocumentUrl || '');
       const results = Array.isArray(snapshot?.results) ? snapshot.results : [];
-      if (snapshotPath === expectedPath && results.length) {
+      if (expectedDocumentUrl && String(snapshot?.href || '') === expectedDocumentUrl && results.length) {
         runtimeLog(`music result sync hit request=${state.requestId} poll=${state.musicResultSyncPollCount} count=${results.length}`);
         await completeMediaPortalAutomation(state, { ok: true, results });
         return;
@@ -5674,7 +5666,15 @@ function ensureMediaPortalView() {
     });
   }
   view.webContents.on('page-title-updated', () => notifyMediaBrowserState());
-  view.webContents.on('did-finish-load', scheduleMediaPortalInput);
+  view.webContents.on('did-finish-load', () => {
+    const state = mediaPortalInputState;
+    if (state?.automationMode === 'music-search' && state.requestId === mediaPortalRequestId) {
+      state.musicSearchDocumentUrl = view.webContents.getURL();
+      runtimeLog(`music search document ready request=${state.requestId} url=${state.musicSearchDocumentUrl}`);
+      startMediaPortalMusicResultSync(state, view);
+    }
+    scheduleMediaPortalInput();
+  });
   view.webContents.on('render-process-gone', () => notifyMediaBrowserState({ crashed: true }));
   view.webContents.on('enter-html-full-screen', () => {
     mediaPortalHtmlFullscreen = true;
@@ -5871,6 +5871,7 @@ function openMediaPortal(url, downloadTarget = 'download', sourceText = '', auto
       visibilityNudgeCount: 0,
       automationRunning: false,
       automationRerunRequested: false,
+      musicSearchDocumentUrl: '',
     }
     : null;
   clearMediaPortalInputTimer();
