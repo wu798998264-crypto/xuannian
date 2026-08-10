@@ -167,6 +167,7 @@ let mediaPortalWorkerWindow = null;
 let mediaPortalViewHost = '';
 let mediaPortalRequestedVisible = false;
 let mediaPortalInputTimer = null;
+let mediaPortalResultSyncTimer = null;
 let mediaPortalVisibilityNudgeTimer = null;
 let mediaPortalVisibilityRestoreTimer = null;
 let mediaPortalIdleTimer = null;
@@ -3728,6 +3729,7 @@ function cancelMediaPortalIdleDestroy() {
 function destroyMediaPortalView({ notify = true } = {}) {
   cancelMediaPortalIdleDestroy();
   clearMediaPortalInputTimer();
+  clearMediaPortalResultSyncTimer();
   clearMediaPortalProgressTimer();
   clearMediaPortalPendingDownload();
   clearMediaPortalPreviewCapture();
@@ -3772,6 +3774,7 @@ function resetMediaPortalAutomation(kind = '') {
     : mode === 'music-search' || mode === 'music-preview';
   if (cancellable || (targetKind === 'video' && mediaPortalParsedVideo)) {
     clearMediaPortalInputTimer();
+    clearMediaPortalResultSyncTimer();
     clearMediaPortalVisibilityNudgeTimer();
     clearMediaPortalProgressTimer();
     clearMediaPortalVerificationMonitor();
@@ -3855,6 +3858,43 @@ function notifyMediaBrowserState(extra = {}) {
 function clearMediaPortalInputTimer() {
   clearTimeout(mediaPortalInputTimer);
   mediaPortalInputTimer = null;
+}
+
+function clearMediaPortalResultSyncTimer() {
+  clearTimeout(mediaPortalResultSyncTimer);
+  mediaPortalResultSyncTimer = null;
+}
+
+function startMediaPortalVideoResultSync(state, view = mediaPortalView) {
+  clearMediaPortalResultSyncTimer();
+  if (!view || view.webContents.isDestroyed() || !isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId)) return;
+  const poll = async () => {
+    if (!view || view.webContents.isDestroyed() || !isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId)
+      || state.automationMode !== 'video-parse' || state.phase !== 'result') return;
+    state.resultSyncPollCount = Number(state.resultSyncPollCount || 0) + 1;
+    try {
+      const result = await view.webContents.executeJavaScript(buildPortalScript({
+        mode: 'video-parse',
+        phase: 'result',
+        value: state.value || '',
+        timeoutMs: 500,
+      }, scoreMediaDownloadQualityLabel), true);
+      if (result?.ok && result?.downloadReady) {
+        runtimeLog(`media portal result sync hit request=${state.requestId} poll=${state.resultSyncPollCount}`);
+        await completeMediaPortalAutomation(state, result);
+        return;
+      }
+    } catch {}
+    // A few providers only flush their completed DOM after one foreground compositor frame.
+    // Use that frame once, then immediately return to the hidden worker without changing UI state.
+    if (Number(state.resultSyncPollCount || 0) >= 5 && !state.resultSyncForegroundWakeDone) {
+      state.resultSyncForegroundWakeDone = true;
+      runtimeLog(`media portal result sync foreground wake request=${state.requestId}`);
+      activateMediaPortalForTrustedSubmit(view, 320);
+    }
+    mediaPortalResultSyncTimer = setTimeout(poll, 700);
+  };
+  mediaPortalResultSyncTimer = setTimeout(poll, 650);
 }
 
 function clearMediaPortalVisibilityNudgeTimer() {
@@ -4353,19 +4393,23 @@ function sanitizeMusicResults(results) {
   return sanitized;
 }
 
-function publishMediaPortalVideo(state, parsed) {
-  mediaPortalInputState = null;
-  mediaPortalParsedVideo = parsed.ok && parsed.downloadReady ? parsed : null;
-  if (mediaPortalView && !mediaPortalView.webContents.isDestroyed() && !parsed.embeddedPreview) {
-    hideMediaPortalView(mediaPortalView);
-  }
+function publicMediaPortalVideoPayload(parsed) {
   const {
     capturedDownloadUrl: _capturedDownloadUrl,
     capturedFilename: _capturedFilename,
     capturedLocalPath: _capturedLocalPath,
     ...publicParsed
   } = parsed;
-  sendMediaPortalEvent('media:videoParsed', publicParsed);
+  return publicParsed;
+}
+
+function publishMediaPortalVideo(state, parsed, { finalize = true } = {}) {
+  if (finalize) mediaPortalInputState = null;
+  mediaPortalParsedVideo = parsed.ok && parsed.downloadReady ? parsed : null;
+  if (mediaPortalView && !mediaPortalView.webContents.isDestroyed() && !parsed.embeddedPreview) {
+    hideMediaPortalView(mediaPortalView);
+  }
+  sendMediaPortalEvent('media:videoParsed', publicMediaPortalVideoPayload(parsed));
   finishMediaPortalProgress(state, parsed.ok && parsed.downloadReady, parsed.reason);
   notifyMediaBrowserState({
     opening: false,
@@ -4373,6 +4417,18 @@ function publishMediaPortalVideo(state, parsed) {
     autoSubmitted: true,
     parsed: parsed.ok,
     autoActionMissing: !parsed.ok || !parsed.downloadReady,
+    qualityLabel: parsed.qualityLabel,
+  });
+}
+
+function updatePublishedMediaPortalVideo(parsed) {
+  if (!parsed?.ok || !parsed.downloadReady) return;
+  mediaPortalParsedVideo = parsed;
+  sendMediaPortalEvent('media:videoParsed', publicMediaPortalVideoPayload(parsed));
+  notifyMediaBrowserState({
+    opening: false,
+    parsed: true,
+    autoActionMissing: false,
     qualityLabel: parsed.qualityLabel,
   });
 }
@@ -4435,6 +4491,7 @@ function recoverMediaPortalVideoAutomation(state, result = {}) {
 async function completeMediaPortalAutomation(state, result = {}) {
   if (state.requestId !== mediaPortalRequestId) return;
   if (state.providerRetryPending) return;
+  clearMediaPortalResultSyncTimer();
   clearMediaPortalVisibilityNudgeTimer();
   const view = mediaPortalView;
   const mode = state.automationMode;
@@ -4449,6 +4506,8 @@ async function completeMediaPortalAutomation(state, result = {}) {
   if (mode === 'video-parse') {
     if (!result.ok && continueMediaPortalVideoResultWait(state, result)) return;
     if (!result.ok && recoverMediaPortalVideoAutomation(state, result)) return;
+    if (state.completing) return;
+    state.completing = true;
     const parsed = {
       requestId: state.requestId,
       ok: !!result.ok,
@@ -4497,10 +4556,9 @@ async function completeMediaPortalAutomation(state, result = {}) {
       }
     }
     if (parsed.ok && parsed.downloadReady) {
-      emitMediaPortalProgress(state, {
-        percent: 96,
-        message: '正在准备视频预览',
-      });
+      // Make the verified result actionable immediately. Preview capture is optional and
+      // may take much longer than parsing on large source videos.
+      publishMediaPortalVideo(state, parsed);
       const captured = await prepareMediaPortalVideoPreview(state, parsed);
       if (state.requestId !== mediaPortalRequestId) return;
       if (captured?.embedded && captured.url) {
@@ -4523,6 +4581,8 @@ async function completeMediaPortalAutomation(state, result = {}) {
           parsed.qualityLabel = String(alternate.label || parsed.qualityLabel || '备用预览');
         }
       }
+      if (parsed.previewUrl || parsed.embeddedPreview) updatePublishedMediaPortalVideo(parsed);
+      return;
     }
     publishMediaPortalVideo(state, parsed);
   } else if (mode === 'music-search') {
@@ -4694,6 +4754,7 @@ function scheduleMediaPortalInput() {
             delayMsOverride: 0,
             visibleMsOverride: MEDIA_PORTAL_VIDEO_WAKE_VISIBLE_MS,
           });
+          startMediaPortalVideoResultSync(state, view);
         }
         notifyMediaBrowserState({ opening: true, automationStage: state.phase });
         state.automationRerunRequested = true;
@@ -5380,7 +5441,7 @@ function inspectSeekinProviderResponse(view, protocolRequestId) {
   const readResponse = async (attempt = 0) => {
     if (!view || view !== mediaPortalView || view.webContents.isDestroyed()) return;
     const state = mediaPortalInputState;
-    if (!state || state.requestId !== mediaPortalRequestId || state.automationMode !== 'video-parse') return;
+    if (!state || state.completing || state.requestId !== mediaPortalRequestId || state.automationMode !== 'video-parse') return;
     try {
       const response = await view.webContents.debugger.sendCommand('Network.getResponseBody', { requestId: protocolRequestId });
       const payload = JSON.parse(String(response?.body || '{}'));
@@ -5412,6 +5473,7 @@ function inspectSeekinProviderResponse(view, protocolRequestId) {
         state.loadRetryCount = 0;
         state.videoResultWaitCount = 0;
         clearMediaPortalInputTimer();
+        clearMediaPortalResultSyncTimer();
         clearMediaPortalVisibilityNudgeTimer();
         emitMediaPortalProgress(state, {
           percent: 72,
@@ -5721,6 +5783,7 @@ function openMediaPortal(url, downloadTarget = 'download', sourceText = '', auto
     }
     : null;
   clearMediaPortalInputTimer();
+  clearMediaPortalResultSyncTimer();
   clearMediaPortalVisibilityNudgeTimer();
   clearMediaPortalPendingDownload();
   if (mediaPortalInputState) {

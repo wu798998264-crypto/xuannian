@@ -63,6 +63,25 @@ async function run() {
     await wait(500);
   }
 
+  // The download controls are published as soon as parsing succeeds. The optional
+  // temporary preview is allowed to finish in the background afterwards.
+  if (snapshot?.status === 'ready' && !snapshot.previewReady) {
+    const previewDeadline = Date.now() + 90000;
+    while (Date.now() < previewDeadline) {
+      await wait(500);
+      snapshot = await window.webContents.executeJavaScript(`(() => ({
+        status: state.media.videoParse.status,
+        title: state.media.videoParse.title || '',
+        downloadReady: !!state.media.videoParse.downloadReady,
+        previewReady: !!(state.media.videoParse.previewUrl || state.media.videoParse.embeddedPreview),
+        qualityCount: state.media.videoParse.qualityOptions.length,
+        error: state.media.videoParse.error || '',
+        progress: document.querySelector('#mediaAutomationProgressText')?.textContent || '',
+      }))()`, true);
+      if (snapshot.previewReady) break;
+    }
+  }
+
   const elapsedMs = Date.now() - startedAt;
   const logFile = path.join(tempAppData, '玄念', 'xuannian-runtime.log');
   const runtimeLog = fs.existsSync(logFile) ? fs.readFileSync(logFile, 'utf8') : '';
