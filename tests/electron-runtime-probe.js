@@ -4,6 +4,14 @@ const os = require('os');
 const path = require('path');
 const { app, BrowserWindow, nativeImage } = require('electron');
 
+// The probe can outlive a terminated shell during local automation. Ignore the
+// closed output pipe instead of surfacing a false application-error dialog.
+for (const stream of [process.stdout, process.stderr]) {
+  stream.on('error', (error) => {
+    if (error?.code !== 'EPIPE') throw error;
+  });
+}
+
 const tempDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'xuannian-runtime-probe-'));
 app.setPath('userData', tempDirectory);
 
