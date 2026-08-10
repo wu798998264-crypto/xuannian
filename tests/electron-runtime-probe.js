@@ -1608,11 +1608,8 @@ async function run() {
       const verificationPromise=offerMediaManualPortal('audio','human-verification','https://www.gequbao.com/');
       await new Promise(resolve=>setTimeout(resolve,20));
       const verificationPrompt={
-        title:document.querySelector('#modalBox .modal-header h3').textContent.trim(),
-        message:document.querySelector('#modalBox .modal-message').textContent.trim(),
-        confirmText:document.querySelector('#confirmModal').textContent.trim(),
+        modalVisible:$('#modalBackdrop').classList.contains('show'),
       };
-      document.querySelector('#confirmModal').click();
       await verificationPromise;
       const verificationFlow={
         ...verificationPrompt,
@@ -1758,9 +1755,7 @@ async function run() {
   assert.deepStrictEqual(mediaLibraryMetrics.previewedSongs, ['https://www.gequbao.com/music/102','https://www.gequbao.com/music/101']);
   assert.deepStrictEqual(mediaLibraryMetrics.backgroundPortal, {browserHidden:true,directVisible:true});
   assert.strictEqual(mediaLibraryMetrics.manualPortalInitiallyVisible, true, 'manual-site controls must remain visible at the right edge before and after automatic routes run');
-  assert.strictEqual(mediaLibraryMetrics.verificationFlow.title, '需要真人验证');
-  assert(mediaLibraryMetrics.verificationFlow.message.includes('完成验证后会自动返回音乐结果页面'));
-  assert.strictEqual(mediaLibraryMetrics.verificationFlow.confirmText, '去验证');
+  assert.strictEqual(mediaLibraryMetrics.verificationFlow.modalVisible, false, 'human verification must open the embedded session without a second confirmation');
   assert.strictEqual(mediaLibraryMetrics.verificationFlow.resumeCalls, 1);
   assert.strictEqual(mediaLibraryMetrics.verificationFlow.browserVisible, true);
   assert.deepStrictEqual(mediaLibraryMetrics.browserTogglePersistence, {available:true,browserVisible:true});
@@ -1769,11 +1764,15 @@ async function run() {
   assert.strictEqual(mediaLibraryMetrics.providerRouting.douyinProvider.id, 'douyin');
   assert.strictEqual(mediaLibraryMetrics.providerRouting.douyinProvider.portalUrl, 'https://www.seekin.ai/zh/downloader/');
   assert.strictEqual(mediaLibraryMetrics.providerRouting.douyinProvider.autoDownloadQuality, 'highest');
-  assert.deepStrictEqual(mediaLibraryMetrics.providerRouting.douyinProvider.portals, [{url:'https://www.seekin.ai/zh/downloader/',label:'Seekin'}]);
-  assert.strictEqual(mediaLibraryMetrics.providerRouting.dailyFallback.index, -1);
-  assert.strictEqual(mediaLibraryMetrics.providerRouting.dailyFallback.route, null);
+  assert.deepStrictEqual(mediaLibraryMetrics.providerRouting.douyinProvider.portals, [
+    {url:'https://www.seekin.ai/zh/downloader/',label:'Seekin'},
+    {url:'https://www.hellotik.app/zh/douyin',label:'HelloTik'},
+    {url:'https://dlpanda.com/zh-CN',label:'DLPanda',requiresVpn:true},
+  ]);
+  assert.strictEqual(mediaLibraryMetrics.providerRouting.dailyFallback.index, 1);
+  assert.deepStrictEqual(mediaLibraryMetrics.providerRouting.dailyFallback.route, {url:'https://www.hellotik.app/zh/douyin',label:'HelloTik'});
   assert.strictEqual(Object.keys(mediaLibraryMetrics.providerRouting.dailyFallback.health.unavailable).length, 1);
-  assert.deepStrictEqual(mediaLibraryMetrics.providerRouting.failureClassification, {contentFailureKeepsSite:true,oneTimeoutKeepsSite:true,twoSourcesTripSite:true});
+  assert.deepStrictEqual(mediaLibraryMetrics.providerRouting.failureClassification, {contentFailureKeepsSite:true,oneTimeoutKeepsSite:true,twoSourcesTripSite:false});
   assert.strictEqual(mediaLibraryMetrics.providerRouting.tiktokProvider.id, 'tiktok');
   assert.strictEqual(mediaLibraryMetrics.providerRouting.tiktokProvider.portalUrl, 'https://www.seekin.ai/zh/downloader/');
   assert.strictEqual(mediaLibraryMetrics.providerRouting.tiktokProvider.label, 'TikTok');

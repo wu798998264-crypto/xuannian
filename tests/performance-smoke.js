@@ -168,8 +168,8 @@ async function run() {
   assert(mediaLibrarySource.includes('movePathAcrossVolumes') && mediaLibrarySource.includes('preserved, folders, otherFiles'), 'deleting a media collection must preserve nested folders and non-media files');
   assert(!mediaLibrarySource.includes('收藏夹中包含子文件夹或非媒体文件'), 'complex collection contents must no longer block collection deletion');
   assert(mediaLibrarySource.includes("portalUrl: SEEKIN_UNIVERSAL_PORTAL") && mediaLibrarySource.includes("autoDownloadQuality: 'highest'"), 'all supported video providers must start with Seekin while retaining highest-quality automation');
-  assert(mediaLibrarySource.includes("id: 'tiktok'") && mediaLibrarySource.includes('portals: SEEKIN_ONLY_PORTALS'), 'every video provider must use the shared Seekin-only route');
-  assert(!mediaLibrarySource.includes("label: 'DLPanda'") && !mediaLibrarySource.includes('finalFallback: true'), 'video providers must not configure automatic backup sites');
+  assert(mediaLibrarySource.includes("id: 'tiktok'") && mediaLibrarySource.includes("label: 'DLPanda'"), 'provider routing must retain its configured fallback routes after the Seekin primary');
+  assert(mainSource.includes("reason: 'provider-server-failed'") && mainSource.includes('seekinProviderRetryCount'), 'the primary provider must retry its explicit server failure before fallback routing begins');
   assert(mediaLibrarySource.includes('function scoreMediaDownloadQualityLabel('), 'highest-quality download selection must use a deterministic quality scorer');
   assert(!mediaLibrarySource.includes('fetch('), 'media library must not call third-party private download APIs');
 

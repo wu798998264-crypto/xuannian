@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>玄念9.0.0</title>
+  <title>玄念9.0.1</title>
   <link rel="icon" href="src/xuannian-logo-256.png" />
   <link rel="stylesheet" href="src/media-library.css" />
   <style>
@@ -1851,7 +1851,7 @@ function createBrowserFallbackAPI(){
     async deleteInspiration(id){ const data=read(); data.inspirations=data.inspirations.filter(x=>x.id!==id); write(data); return data.inspirations; },
     async getSettings(){ return read().settings; },
     async saveSettings(settings){ const data=read(); data.settings={...data.settings,...settings}; write(data); return data.settings; },
-    async getUpdateState(){ return {status:'current',revision:0,currentVersion:'9.0.0',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false,repositoryUrl:'https://github.com/wu798998264-crypto/xuannian'}; },
+    async getUpdateState(){ return {status:'current',revision:0,currentVersion:'9.0.1',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false,repositoryUrl:'https://github.com/wu798998264-crypto/xuannian'}; },
     async checkForUpdates(){ return this.getUpdateState(); },
     async downloadUpdate(){ return this.getUpdateState(); },
     async installUpdate(){ return false; },
@@ -3651,6 +3651,7 @@ function selectFileSearchResult(index,{ensureVisible=false}={}){
 
 const MEDIA_VIDEO_PRIMARY_PORTAL='https://www.seekin.ai/zh/downloader/';
 const MEDIA_PORTAL_CONTENT_FAILURES=new Set(['protected-or-private','content-unavailable','content-not-video','bilibili-drm-protected']);
+const MEDIA_PORTAL_CONFIRMED_PROVIDER_FAILURES=new Set(['provider-server-failed','provider-rejected','quota-or-ad-required','qr-code-required']);
 
 function resolveMediaVideoProviderFallback(value=''){
   const match=String(value||'').trim().match(/https?:\/\/[^\s<>"']+/i);
@@ -3660,12 +3661,12 @@ function resolveMediaVideoProviderFallback(value=''){
   try{ host=new URL(sourceUrl).hostname.toLowerCase().replace(/^www\./,''); }catch{return null;}
   const matches=(domains)=>domains.some(domain=>host===domain||host.endsWith(`.${domain}`));
   const seekin=MEDIA_VIDEO_PRIMARY_PORTAL;
-  const provider=(id,label,extra={})=>({id,label,portalUrl:seekin,sourceUrl,portals:[{url:seekin,label:'Seekin'}],...extra});
-  if(matches(['douyin.com','iesdouyin.com'])) return provider('douyin','抖音',{autoDownloadQuality:'highest'});
-  if(matches(['tiktok.com'])) return provider('tiktok','TikTok',{autoDownloadQuality:'highest'});
-  if(matches(['bilibili.com','b23.tv'])) return provider('bilibili','哔哩哔哩');
-  if(matches(['xiaohongshu.com','xhslink.com'])) return provider('xiaohongshu','小红书');
-  if(matches(['kuaishou.com','gifshow.com','kwai.com'])) return provider('kuaishou','快手');
+  const provider=(id,label,portals,extra={})=>({id,label,portalUrl:seekin,sourceUrl,portals:[{url:seekin,label:'Seekin'},...portals],...extra});
+  if(matches(['douyin.com','iesdouyin.com'])) return provider('douyin','抖音',[{url:'https://www.hellotik.app/zh/douyin',label:'HelloTik'},{url:'https://dlpanda.com/zh-CN',label:'DLPanda',requiresVpn:true}],{autoDownloadQuality:'highest'});
+  if(matches(['tiktok.com'])) return provider('tiktok','TikTok',[{url:'https://dlpanda.com/zh-CN',label:'DLPanda',requiresVpn:true}],{autoDownloadQuality:'highest'});
+  if(matches(['bilibili.com','b23.tv'])) return provider('bilibili','哔哩哔哩',[{url:'https://www.seekin.ai/zh/bilibili-downloader/',label:'Seekin Bilibili'}]);
+  if(matches(['xiaohongshu.com','xhslink.com'])) return provider('xiaohongshu','小红书',[{url:'https://www.xiaohongshua.com/',label:'Xiaohongshua'}]);
+  if(matches(['kuaishou.com','gifshow.com','kwai.com'])) return provider('kuaishou','快手',[{url:'https://www.hellotik.app/zh/kuaishou',label:'HelloTik'}]);
   if(matches(['youtube.com','youtu.be'])) return provider('youtube','YouTube');
   if(matches(['instagram.com'])) return provider('instagram','Instagram');
   if(matches(['twitter.com','x.com'])) return provider('twitter','Twitter / X');
@@ -3674,7 +3675,7 @@ function resolveMediaVideoProviderFallback(value=''){
 }
 
 const MEDIA_PORTAL_HEALTH_KEY='xuannian-media-portal-health-v2';
-const MEDIA_PORTAL_SWITCH_FAILURES=new Set(['human-verification','input-missing','parse-action-missing','parse-timeout','provider-rejected','quota-or-ad-required','qr-code-required','load-error','automation-error','download-action-missing','download-timeout','download-page-unavailable']);
+const MEDIA_PORTAL_SWITCH_FAILURES=new Set(['provider-server-failed','provider-rejected','quota-or-ad-required','qr-code-required']);
 const MEDIA_PORTAL_IMMEDIATE_DAILY_FAILURES=new Set(['human-verification','input-missing','parse-action-missing','quota-or-ad-required','qr-code-required','load-error','automation-error']);
 
 function mediaPortalRoutes(provider){
@@ -3732,7 +3733,7 @@ function recordMediaPortalFailure(route,reason,sourceUrl=''){
   const sourceKey=mediaPortalSourceFingerprint(sourceUrl);
   const sources=[...new Set([...(Array.isArray(previous.sources)?previous.sources:[]),sourceKey].filter(Boolean))].slice(-3);
   health.failures[route.url]={reason:String(reason||'automation-error'),sources,at:Date.now()};
-  const unavailable=MEDIA_PORTAL_IMMEDIATE_DAILY_FAILURES.has(reason)||(reason==='parse-timeout'&&sources.length>=2);
+  const unavailable=MEDIA_PORTAL_IMMEDIATE_DAILY_FAILURES.has(reason)&&reason!=='provider-server-failed';
   if(unavailable) health.unavailable[route.url]={reason:String(reason||'automation-error'),at:Date.now()};
   writeMediaPortalHealth(health);
   return unavailable;
@@ -4087,16 +4088,21 @@ async function offerMediaManualPortal(kind='video',reason='automation-error',url
   state.media.manualPortal={available:true,kind,url:targetUrl,reason,prompting:!!current.prompting};
   renderMediaManualPortal();
   if(current.prompting) return;
+  if(kind==='audio'&&reason==='human-verification'){
+    // Verification must remain user-operated, but it should not require a second in-app confirmation.
+    state.media.manualPortal.prompting=false;
+    await toggleMediaManualPortal(kind,{forceOpen:true});
+    const resumed=await api.resumeMediaPortalAfterVerification();
+    if(!resumed?.ok) toast('验证页面状态已失效，请重新搜索音乐');
+    return;
+  }
   state.media.manualPortal.prompting=true;
   const site=bilibiliLogin?'哔哩哔哩':(kind==='audio'?'歌曲宝':'Seekin');
   const detail=mediaPortalFailureMessage(reason,kind).replace(/。请.*$/,'');
-  const verification=kind==='audio'&&reason==='human-verification';
   const confirmed=await showConfirmModal({
-    title:verification?'需要真人验证':(bilibiliLogin?'需要登录会员':'需要手动处理'),
-    message:verification
-      ?'歌曲宝首次使用可能要求真人验证。点击确认后将在玄念内打开验证页面；完成验证后会自动返回音乐结果页面。'
-      :(bilibiliLogin?`${detail}。点击确认后在玄念内重新登录哔哩哔哩会员；检测到登录成功后会自动收起原站、返回操作页面并重新解析。`:`${detail}。是否在玄念内打开${site}手动完成？`),
-    confirmText:verification?'去验证':(bilibiliLogin?'去登录':'打开原站'),
+    title:bilibiliLogin?'需要登录会员':'需要手动处理',
+    message:bilibiliLogin?`${detail}。点击确认后在玄念内重新登录哔哩哔哩会员；检测到登录成功后会自动收起原站、返回操作页面并重新解析。`:`${detail}。是否在玄念内打开${site}手动完成？`,
+    confirmText:bilibiliLogin?'去登录':'打开原站',
     cancelText:'取消',
   });
   state.media.manualPortal.prompting=false;
@@ -4104,10 +4110,6 @@ async function offerMediaManualPortal(kind='video',reason='automation-error',url
     await toggleMediaManualPortal(kind,{forceOpen:true});
     if(bilibiliLogin&&state.media.browserVisible){
       startBilibiliLoginMonitor(targetUrl,Number(state.media.videoParse.portalIndex||0),{requireSessionChange:!bilibiliLoginRequired});
-    }
-    if(verification){
-      const resumed=await api.resumeMediaPortalAfterVerification();
-      if(!resumed?.ok) toast('验证页面状态已失效，请重新搜索音乐');
     }
   }
 }
@@ -4128,6 +4130,13 @@ function handleMediaVideoParseFailure(reason='automation-error'){
     state.media.pendingVideoDownload=null;
     toast(mediaPortalFailureMessage(reason,'video'));
     void offerMediaManualPortal('video',reason,state.media.browser.url);
+    return;
+  }
+  if(!MEDIA_PORTAL_CONFIRMED_PROVIDER_FAILURES.has(reason)){
+    state.media.pendingVideoDownload=null;
+    state.media.videoParse={...state.media.videoParse,status:'error',error:reason};
+    renderMediaPortalWorkspace();
+    toast('主下载站仍在处理或未给出明确失败结果，已保持在 Seekin，不切换备用站');
     return;
   }
   recordMediaPortalFailure(current,reason,state.media.videoParse.sourceUrl);
@@ -4321,6 +4330,11 @@ async function downloadParsedVideo(favorite=false,options={}){
     const routes=mediaPortalRoutes(provider);
     const currentIndex=Math.max(0,Number(state.media.videoParse.portalIndex||0));
     const current=routes[currentIndex];
+    if(!MEDIA_PORTAL_CONFIRMED_PROVIDER_FAILURES.has(failureCode)){
+      state.media.pendingVideoDownload=null;
+      toast(result?.reason||'主下载站没有确认失败，已停止自动切换备用站');
+      return;
+    }
     if(current) recordMediaPortalFailure(current,failureCode,state.media.videoParse.sourceUrl);
     const nextIndex=currentIndex+1<routes.length?currentIndex+1:-1;
     const next=routes[nextIndex];
@@ -8336,7 +8350,7 @@ function showUpdateDialog(){
   showModal(`
     <div data-update-dialog>
       <div class="modal-header"><h3>软件更新</h3><button class="modal-close" id="closeModal">×</button></div>
-      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '9.0.0')}</b><span>${hasNewerUpdateVersion(update)?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
+      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '9.0.1')}</b><span>${hasNewerUpdateVersion(update)?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
       <div class="modal-message">${escapeHtml(updateStatusText())}</div>
       <p class="update-network-tip">提示：开启 VPN 后再检测更新，结果会更加准确。</p>
       ${busy||downloaded?`<div class="update-progress"><span style="width:${downloaded?100:progress}%"></span></div>`:''}

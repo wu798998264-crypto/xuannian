@@ -10,9 +10,8 @@ const AUDIO_EXTENSIONS = new Set([
 const LYRICS_EXTENSIONS = new Set(['lrc']);
 const MEDIA_KIND_DIRECTORIES = Object.freeze({ video: '视频', audio: '音乐' });
 const SEEKIN_UNIVERSAL_PORTAL = 'https://www.seekin.ai/zh/downloader/';
-const SEEKIN_ONLY_PORTALS = Object.freeze([
-  Object.freeze({ url: SEEKIN_UNIVERSAL_PORTAL, label: 'Seekin' }),
-]);
+const DLPANDA_PORTAL = 'https://dlpanda.com/zh-CN';
+const SEEKIN_PORTAL = Object.freeze({ url: SEEKIN_UNIVERSAL_PORTAL, label: 'Seekin' });
 
 const VIDEO_PROVIDERS = [
   {
@@ -20,7 +19,7 @@ const VIDEO_PROVIDERS = [
     label: '抖音',
     hosts: ['douyin.com', 'iesdouyin.com'],
     portalUrl: SEEKIN_UNIVERSAL_PORTAL,
-    portals: SEEKIN_ONLY_PORTALS,
+    portals: [SEEKIN_PORTAL, { url: 'https://www.hellotik.app/zh/douyin', label: 'HelloTik' }, { url: DLPANDA_PORTAL, label: 'DLPanda', requiresVpn: true }],
     autoDownloadQuality: 'highest',
   },
   {
@@ -28,61 +27,64 @@ const VIDEO_PROVIDERS = [
     label: 'TikTok',
     hosts: ['tiktok.com'],
     portalUrl: SEEKIN_UNIVERSAL_PORTAL,
-    portals: SEEKIN_ONLY_PORTALS,
+    portals: [SEEKIN_PORTAL, { url: DLPANDA_PORTAL, label: 'DLPanda', requiresVpn: true }],
   },
   {
     id: 'bilibili',
     label: '哔哩哔哩',
     hosts: ['bilibili.com', 'b23.tv'],
     portalUrl: SEEKIN_UNIVERSAL_PORTAL,
-    portals: SEEKIN_ONLY_PORTALS,
+    portals: [SEEKIN_PORTAL, { url: 'https://www.seekin.ai/zh/bilibili-downloader/', label: 'Seekin Bilibili' }],
   },
   {
     id: 'xiaohongshu',
     label: '小红书',
     hosts: ['xiaohongshu.com', 'xhslink.com'],
     portalUrl: SEEKIN_UNIVERSAL_PORTAL,
-    portals: SEEKIN_ONLY_PORTALS,
+    portals: [SEEKIN_PORTAL, { url: 'https://www.xiaohongshua.com/', label: 'Xiaohongshua' }],
   },
   {
     id: 'kuaishou',
     label: '快手',
     hosts: ['kuaishou.com', 'gifshow.com', 'kwai.com'],
     portalUrl: SEEKIN_UNIVERSAL_PORTAL,
-    portals: SEEKIN_ONLY_PORTALS,
+    portals: [SEEKIN_PORTAL, { url: 'https://www.hellotik.app/zh/kuaishou', label: 'HelloTik' }],
   },
   {
     id: 'youtube',
     label: 'YouTube',
     hosts: ['youtube.com', 'youtu.be'],
     portalUrl: SEEKIN_UNIVERSAL_PORTAL,
-    portals: SEEKIN_ONLY_PORTALS,
+    portals: [SEEKIN_PORTAL],
   },
   {
     id: 'instagram',
     label: 'Instagram',
     hosts: ['instagram.com'],
     portalUrl: SEEKIN_UNIVERSAL_PORTAL,
-    portals: SEEKIN_ONLY_PORTALS,
+    portals: [SEEKIN_PORTAL],
   },
   {
     id: 'twitter',
     label: 'Twitter / X',
     hosts: ['twitter.com', 'x.com'],
     portalUrl: SEEKIN_UNIVERSAL_PORTAL,
-    portals: SEEKIN_ONLY_PORTALS,
+    portals: [SEEKIN_PORTAL],
   },
   {
     id: 'facebook',
     label: 'Facebook',
     hosts: ['facebook.com', 'fb.watch'],
     portalUrl: SEEKIN_UNIVERSAL_PORTAL,
-    portals: SEEKIN_ONLY_PORTALS,
+    portals: [SEEKIN_PORTAL],
   },
 ];
 
 const PORTAL_HOSTS = new Set([
+  'dlpanda.com',
   'seekin.ai',
+  'xiaohongshua.com',
+  'hellotik.app',
   'gequbao.com',
   'bilibili.com',
 ]);

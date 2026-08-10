@@ -223,6 +223,7 @@ const MEDIA_PORTAL_VIDEO_WAKE_MAX = 4;
 const MEDIA_PORTAL_VIDEO_WAKE_DELAY_MS = 3000;
 const MEDIA_PORTAL_VIDEO_WAKE_REPEAT_MS = 12000;
 const MEDIA_PORTAL_VIDEO_WAKE_VISIBLE_MS = 520;
+const MEDIA_PORTAL_VIDEO_SUBMIT_WAKE_MS = 900;
 const MEDIA_PREVIEW_CACHE_DIRECTORY = 'media-preview-cache';
 const MEDIA_PREVIEW_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const MEDIA_PREVIEW_MAX_BYTES = 96 * 1024 * 1024;
@@ -2935,7 +2936,7 @@ function mediaDownloadReferer(value, fallback = '') {
     const parsed = new URL(String(value || ''));
     const pathname = parsed.pathname;
     if (/(?:^|\.)xhscdn\.com$/i.test(parsed.hostname)) return 'https://www.xiaohongshu.com/';
-    if (/(?:^|\.)(?:douyinvod\.com|bytev\.com|douyinpic\.com)$/i.test(parsed.hostname)) return 'https://www.douyin.com/';
+    if (/(?:^|\.)(?:douyinvod\.com|bytev\.com|douyinpic\.com|snssdk\.com)$/i.test(parsed.hostname)) return 'https://www.douyin.com/';
     if (/\/upgcxcode\//i.test(pathname)) return 'https://www.bilibili.com/';
   } catch {}
   return String(fallback || '').trim();
@@ -4433,6 +4434,7 @@ function recoverMediaPortalVideoAutomation(state, result = {}) {
 
 async function completeMediaPortalAutomation(state, result = {}) {
   if (state.requestId !== mediaPortalRequestId) return;
+  if (state.providerRetryPending) return;
   clearMediaPortalVisibilityNudgeTimer();
   const view = mediaPortalView;
   const mode = state.automationMode;
@@ -4615,6 +4617,7 @@ function scheduleMediaPortalInput() {
   }
   mediaPortalInputTimer = setTimeout(async () => {
     if (!mediaPortalView || mediaPortalView.webContents.isDestroyed() || !isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId)) return;
+    if (state.providerRetryPending) state.providerRetryPending = false;
     state.automationRunning = true;
     state.automationRerunRequested = false;
     keepMediaPortalWorkerVisible(view);
@@ -4635,12 +4638,35 @@ function scheduleMediaPortalInput() {
       if (!isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId)) return;
       if (result?.continueAutomation) {
         if (result.nativeSubmitRequired) {
-          const point = result.actionPoint || {};
-          const x = Math.max(1, Math.min(MEDIA_PORTAL_WORKER_WIDTH - 1, Math.round(Number(point.x || 0))));
-          const y = Math.max(1, Math.min(MEDIA_PORTAL_WORKER_HEIGHT - 1, Math.round(Number(point.y || 0))));
-          const restoreMainFocus = !!mainWindow?.isFocused?.();
           try {
-            keepMediaPortalWorkerVisible(view);
+            // A trusted click dispatched only from the offscreen worker is ignored by some
+            // providers on a cold start. Give the same session one real compositor frame,
+            // invoke the page's own submit handler, then measure the marked parse button
+            // again because responsive layouts can move it before the trusted click.
+            activateMediaPortalForTrustedSubmit(view, MEDIA_PORTAL_VIDEO_SUBMIT_WAKE_MS);
+            await new Promise((resolve) => setTimeout(resolve, 90));
+            const pageSubmitStarted = await view.webContents.executeJavaScript(`(() => {
+              const action = document.querySelector('[data-xuannian-parser-action="true"]');
+              if (!action || action.dataset.xuannianProgrammaticSubmit === 'true') return false;
+              action.dataset.xuannianProgrammaticSubmit = 'true';
+              action.click();
+              return true;
+            })()`, true);
+            if (pageSubmitStarted) {
+              state.pageSubmitCount = Number(state.pageSubmitCount || 0) + 1;
+              await new Promise((resolve) => setTimeout(resolve, 140));
+            }
+            const refreshedPoint = await view.webContents.executeJavaScript(`(() => {
+              const action = document.querySelector('[data-xuannian-parser-action="true"]');
+              if (!action) return null;
+              action.scrollIntoView({ block: 'center', inline: 'center' });
+              const rect = action.getBoundingClientRect();
+              return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
+            })()`, true);
+            const point = refreshedPoint || result.actionPoint || {};
+            const bounds = view.getBounds();
+            const x = Math.max(1, Math.min(Math.max(1, Number(bounds?.width || MEDIA_PORTAL_WORKER_WIDTH) - 1), Math.round(Number(point.x || 0))));
+            const y = Math.max(1, Math.min(Math.max(1, Number(bounds?.height || MEDIA_PORTAL_WORKER_HEIGHT) - 1), Math.round(Number(point.y || 0))));
             view.webContents.focus();
             view.webContents.sendInputEvent({ type: 'mouseMove', x, y, movementX: 0, movementY: 0 });
             view.webContents.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 });
@@ -4651,14 +4677,6 @@ function scheduleMediaPortalInput() {
             runtimeLog(`media portal trusted submit failed request=${state.requestId}: ${error?.message || error}`);
             await completeMediaPortalAutomation(state, { ok: false, reason: 'parse-action-missing' });
             return;
-          } finally {
-            if (restoreMainFocus && mainWindow && !mainWindow.isDestroyed()) {
-              setTimeout(() => {
-                if (!mainWindow?.isDestroyed?.()) {
-                  try { mainWindow.webContents.focus(); } catch {}
-                }
-              }, 120);
-            }
           }
         }
         state.phase = String(result.nextPhase || 'result');
@@ -5325,12 +5343,98 @@ function activateMediaPortalInBackground(view = mediaPortalView, durationMs = ME
   return true;
 }
 
+function activateMediaPortalForTrustedSubmit(view = mediaPortalView, durationMs = MEDIA_PORTAL_VIDEO_SUBMIT_WAKE_MS) {
+  if (!view || view.webContents.isDestroyed() || !mainWindow || mainWindow.isDestroyed()) return false;
+  const restoreMainFocus = !!mainWindow.isFocused();
+  if (!attachMediaPortalViewToMain(view)) return false;
+  const content = mainWindow.getContentBounds();
+  view.setBounds({
+    x: 0,
+    y: 0,
+    width: Math.max(1, Number(content?.width || MEDIA_PORTAL_WORKER_WIDTH)),
+    height: Math.max(1, Number(content?.height || MEDIA_PORTAL_WORKER_HEIGHT)),
+  });
+  view.setVisible(true);
+  view.webContents.setAudioMuted(true);
+  try { view.webContents.focus(); } catch {}
+  runtimeLog('video parser trusted foreground submit wake');
+  setTimeout(() => {
+    if (view !== mediaPortalView || view.webContents.isDestroyed() || mediaPortalRequestedVisible) return;
+    keepMediaPortalWorkerVisible(view);
+    if (restoreMainFocus && mainWindow && !mainWindow.isDestroyed()) {
+      try { mainWindow.webContents.focus(); } catch {}
+    }
+  }, Math.max(300, Number(durationMs || 0)));
+  return true;
+}
+
 function hideMediaPortalView(view = mediaPortalView) {
   if (!view || view.webContents.isDestroyed()) return;
   view.setVisible(false);
   if (mediaPortalViewHost === 'worker' && mediaPortalWorkerWindow && !mediaPortalWorkerWindow.isDestroyed()) {
     mediaPortalWorkerWindow.hide();
   }
+}
+
+function inspectSeekinProviderResponse(view, protocolRequestId) {
+  const readResponse = async (attempt = 0) => {
+    if (!view || view !== mediaPortalView || view.webContents.isDestroyed()) return;
+    const state = mediaPortalInputState;
+    if (!state || state.requestId !== mediaPortalRequestId || state.automationMode !== 'video-parse') return;
+    try {
+      const response = await view.webContents.debugger.sendCommand('Network.getResponseBody', { requestId: protocolRequestId });
+      const payload = JSON.parse(String(response?.body || '{}'));
+      const code = String(payload?.code ?? '');
+      if (!code || code === '0') return;
+      state.seekinProviderResponses ||= new Set();
+      if (state.seekinProviderResponses.has(protocolRequestId)) return;
+      state.seekinProviderResponses.add(protocolRequestId);
+      runtimeLog(`seekin provider response request=${state.requestId} code=${code} message=${String(payload?.msg || '').slice(0, 180)}`);
+      // Seekin can report a transient API error and still render a usable download card a
+      // moment later. Prefer the actual page result over that transient response.
+      try {
+        const pageResult = await view.webContents.executeJavaScript(buildPortalScript({
+          mode: 'video-parse',
+          phase: 'result',
+          value: state.value || '',
+          timeoutMs: 900,
+        }, scoreMediaDownloadQualityLabel), true);
+        if (pageResult?.ok && pageResult?.downloadReady) {
+          runtimeLog(`seekin provider response ignored because a download result is present request=${state.requestId}`);
+          return;
+        }
+      } catch {}
+      if (Number(state.seekinProviderRetryCount || 0) < 1) {
+        state.seekinProviderRetryCount = 1;
+        state.providerRetryPending = true;
+        state.phase = 'input';
+        state.retryCount = 0;
+        state.loadRetryCount = 0;
+        state.videoResultWaitCount = 0;
+        clearMediaPortalInputTimer();
+        clearMediaPortalVisibilityNudgeTimer();
+        emitMediaPortalProgress(state, {
+          percent: 72,
+          message: 'Seekin 已返回下载失败，正在激活主站并自动重试一次',
+          reason: '',
+        });
+        activateMediaPortalForTrustedSubmit(view, 1400);
+        setTimeout(() => {
+          if (!isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId)) return;
+          loadMediaPortalPage(view, state, state.portalUrl, { reload: true, reason: 'seekin-provider-retry' });
+        }, 1150);
+        return;
+      }
+      completeMediaPortalAutomation(state, { ok: false, reason: 'provider-server-failed' }).catch((error) => {
+        runtimeLog(`seekin provider failure completion failed: ${error?.message || error}`);
+      });
+    } catch (error) {
+      if (attempt < 4) {
+        setTimeout(() => readResponse(attempt + 1), 180 + attempt * 120);
+      }
+    }
+  };
+  void readResponse();
 }
 
 function ensureMediaPortalView() {
@@ -5354,6 +5458,29 @@ function ensureMediaPortalView() {
   workerWindow.contentView.addChildView(view);
   mediaPortalViewHost = 'worker';
   configureMediaDownloadSession(view.webContents.session);
+  if (process.env.XUANNIAN_DEBUG_LOG) {
+    view.webContents.session.webRequest.onCompleted((details) => {
+      if (/seekin\.ai/i.test(String(details.url || '')) && ['POST', 'GET'].includes(String(details.method || ''))) {
+        runtimeLog(`seekin request completed ${details.method} ${details.statusCode} ${String(details.url || '').slice(0, 260)}`);
+      }
+    });
+    view.webContents.session.webRequest.onErrorOccurred((details) => {
+      if (/seekin\.ai/i.test(String(details.url || ''))) {
+        runtimeLog(`seekin request failed ${details.error} ${String(details.url || '').slice(0, 260)}`);
+      }
+    });
+  }
+  try {
+    view.webContents.debugger.attach('1.3');
+    view.webContents.debugger.sendCommand('Network.enable').catch(() => {});
+    view.webContents.debugger.on('message', (_event, method, params) => {
+      const responseUrl = String(params?.response?.url || '');
+      if (method !== 'Network.responseReceived' || !/api\.seekin\.ai\/ikool\/media\/download/i.test(responseUrl)) return;
+      inspectSeekinProviderResponse(view, params.requestId);
+    });
+  } catch (error) {
+    runtimeLog(`seekin response observer unavailable ${error?.message || error}`);
+  }
   view.webContents.setWindowOpenHandler(({ url }) => {
     const disposition = classifyMediaPortalPopup(url, view.webContents.getURL());
     const expectedDownload = consumeMediaPortalPopupDownload(view.webContents);
@@ -5584,6 +5711,9 @@ function openMediaPortal(url, downloadTarget = 'download', sourceText = '', auto
       navigationAbortCount: 0,
       videoRecoveryCount: 0,
       videoResultWaitCount: 0,
+      seekinProviderRetryCount: 0,
+      seekinProviderResponses: new Set(),
+      providerRetryPending: false,
       nativeSubmitCount: 0,
       visibilityNudgeCount: 0,
       automationRunning: false,
