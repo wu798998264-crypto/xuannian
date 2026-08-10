@@ -3905,6 +3905,57 @@ function startMediaPortalVideoResultSync(state, view = mediaPortalView) {
   mediaPortalResultSyncTimer = setTimeout(poll, 650);
 }
 
+function mediaPortalMusicResultBridgeScript() {
+  // Keep a small, page-local snapshot. The provider adds search rows dynamically and
+  // repeated long-running extraction scripts can miss the exact render frame.
+  return `(() => {
+    const bridgeKey = '__xuannianMusicResultBridgeV2';
+    const resultKey = '__xuannianMusicResultsV2';
+    const collect = () => {
+      if (!/^\\/s(?:\\/|$)/.test(String(location.pathname || ''))) return [];
+      const visible = (element) => {
+        if (!element) return false;
+        const style = getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+      };
+      const text = (element) => String(element?.innerText || element?.textContent || '').replace(/\\s+/g, ' ').trim();
+      const unique = new Map();
+      const targets = document.querySelectorAll('a[href*="/music/"],[data-href*="/music/"],[data-url*="/music/"]');
+      for (const element of targets) {
+        if (!visible(element)) continue;
+        const rawUrl = element.href || element.getAttribute('data-href') || element.getAttribute('data-url') || element.getAttribute('href');
+        let url = '';
+        try { url = new URL(String(rawUrl || ''), location.href).href; } catch { continue; }
+        if (!/^https?:\\/\\/(?:www\\.)?gequbao\\.com\\/music\\/\\d+(?:[/?#]|$)/i.test(url)) continue;
+        const ownLabel = text(element).replace(/(?:播放\\s*&?\\s*下载|播放|下载)$/i, '').trim();
+        const row = element.closest('tr,li,article,.row,.item,[class*="song"],[class*="music"],[class*="result"]') || element.parentElement;
+        const rowLabel = text(row).replace(/(?:播放\\s*&?\\s*下载|播放|下载)/gi, ' ').replace(/\\s+/g, ' ').trim();
+        const label = (ownLabel.length > 1 ? ownLabel : rowLabel).slice(0, 180);
+        if (!label || /^(?:播放|下载|播放\\s*&?\\s*下载)$/i.test(label)) continue;
+        const previous = unique.get(url);
+        if (!previous || label.length > previous.label.length) unique.set(url, { url, label });
+      }
+      return [...unique.values()].slice(0, 60).map((item, index) => {
+        const parts = item.label.split(/\\s+-\\s+/);
+        return { id: String(index + 1), url: item.url, title: (parts.shift() || item.label).trim(), artist: parts.join(' - ').trim(), label: item.label };
+      });
+    };
+    const publish = () => {
+      window[resultKey] = { href: location.href, updatedAt: Date.now(), results: collect() };
+      return window[resultKey];
+    };
+    if (!window[bridgeKey]) {
+      window[bridgeKey] = true;
+      const observer = new MutationObserver(() => publish());
+      observer.observe(document.documentElement || document, { childList: true, subtree: true, characterData: true });
+      window.addEventListener('pageshow', publish, { passive: true });
+      window.addEventListener('popstate', publish, { passive: true });
+    }
+    return publish();
+  })()`;
+}
+
 function startMediaPortalMusicResultSync(state, view = mediaPortalView) {
   clearMediaPortalMusicResultSyncTimer();
   if (!view || view.webContents.isDestroyed() || !isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId)) return;
@@ -3913,14 +3964,13 @@ function startMediaPortalMusicResultSync(state, view = mediaPortalView) {
       || state.automationMode !== 'music-search' || state.completing) return;
     state.musicResultSyncPollCount = Number(state.musicResultSyncPollCount || 0) + 1;
     try {
-      const result = await view.webContents.executeJavaScript(buildPortalScript({
-        mode: 'music-search',
-        value: state.value || '',
-        timeoutMs: 650,
-      }, scoreMediaDownloadQualityLabel), true);
-      if (result?.ok && Array.isArray(result.results) && result.results.length) {
-        runtimeLog(`music result sync hit request=${state.requestId} poll=${state.musicResultSyncPollCount} count=${result.results.length}`);
-        await completeMediaPortalAutomation(state, result);
+      const snapshot = await view.webContents.executeJavaScript(mediaPortalMusicResultBridgeScript(), true);
+      const expectedPath = new URL(state.portalUrl || '', 'https://www.gequbao.com').pathname;
+      const snapshotPath = new URL(snapshot?.href || '', 'https://www.gequbao.com').pathname;
+      const results = Array.isArray(snapshot?.results) ? snapshot.results : [];
+      if (snapshotPath === expectedPath && results.length) {
+        runtimeLog(`music result sync hit request=${state.requestId} poll=${state.musicResultSyncPollCount} count=${results.length}`);
+        await completeMediaPortalAutomation(state, { ok: true, results });
         return;
       }
     } catch {}
@@ -3928,9 +3978,9 @@ function startMediaPortalMusicResultSync(state, view = mediaPortalView) {
       // Keep the portal beneath the app while requesting another compositor frame.
       activateMediaPortalInBackground(view, 360, 'music result sync');
     }
-    mediaPortalMusicResultSyncTimer = setTimeout(poll, 650);
+    mediaPortalMusicResultSyncTimer = setTimeout(poll, 350);
   };
-  mediaPortalMusicResultSyncTimer = setTimeout(poll, 450);
+  mediaPortalMusicResultSyncTimer = setTimeout(poll, 180);
 }
 
 function clearMediaPortalVisibilityNudgeTimer() {
