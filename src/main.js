@@ -169,7 +169,6 @@ let mediaPortalRequestedVisible = false;
 let mediaPortalInputTimer = null;
 let mediaPortalResultSyncTimer = null;
 let mediaPortalMusicResultSyncTimer = null;
-let mediaPortalMusicRecoveryTimer = null;
 let mediaPortalVisibilityNudgeTimer = null;
 let mediaPortalVisibilityRestoreTimer = null;
 let mediaPortalIdleTimer = null;
@@ -222,8 +221,6 @@ const MEDIA_PORTAL_WORKER_HEIGHT = 900;
 const MEDIA_PORTAL_MUSIC_WAKE_MAX = 3;
 const MEDIA_PORTAL_MUSIC_WAKE_DELAY_MS = 3000;
 const MEDIA_PORTAL_MUSIC_WAKE_VISIBLE_MS = 700;
-const MEDIA_PORTAL_MUSIC_INITIAL_RETRY_MS = 5000;
-const MEDIA_PORTAL_MUSIC_RETRY_MAX = 2;
 const MEDIA_PORTAL_VIDEO_WAKE_MAX = 4;
 const MEDIA_PORTAL_VIDEO_WAKE_DELAY_MS = 3000;
 const MEDIA_PORTAL_VIDEO_WAKE_REPEAT_MS = 12000;
@@ -3735,7 +3732,6 @@ function destroyMediaPortalView({ notify = true } = {}) {
   clearMediaPortalInputTimer();
   clearMediaPortalResultSyncTimer();
   clearMediaPortalMusicResultSyncTimer();
-  clearMediaPortalMusicRecoveryTimer();
   clearMediaPortalProgressTimer();
   clearMediaPortalPendingDownload();
   clearMediaPortalPreviewCapture();
@@ -3782,7 +3778,6 @@ function resetMediaPortalAutomation(kind = '') {
     clearMediaPortalInputTimer();
     clearMediaPortalResultSyncTimer();
     clearMediaPortalMusicResultSyncTimer();
-    clearMediaPortalMusicRecoveryTimer();
     clearMediaPortalVisibilityNudgeTimer();
     clearMediaPortalProgressTimer();
     clearMediaPortalVerificationMonitor();
@@ -3878,35 +3873,6 @@ function clearMediaPortalMusicResultSyncTimer() {
   mediaPortalMusicResultSyncTimer = null;
 }
 
-function clearMediaPortalMusicRecoveryTimer() {
-  clearTimeout(mediaPortalMusicRecoveryTimer);
-  mediaPortalMusicRecoveryTimer = null;
-}
-
-function scheduleMediaPortalMusicSearchRecovery(state, view = mediaPortalView) {
-  if (!view || view.webContents.isDestroyed()
-    || !isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId)
-    || state.automationMode !== 'music-search'
-    || state.completing
-    || mediaPortalMusicRecoveryTimer
-    || Number(state.musicSearchRecoveryCount || 0) >= MEDIA_PORTAL_MUSIC_RETRY_MAX) return;
-  mediaPortalMusicRecoveryTimer = setTimeout(() => {
-    mediaPortalMusicRecoveryTimer = null;
-    if (!view || view.webContents.isDestroyed()
-      || !isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId)
-      || state.automationMode !== 'music-search'
-      || state.completing) return;
-    state.musicSearchRecoveryCount = Number(state.musicSearchRecoveryCount || 0) + 1;
-    state.musicSearchDocumentUrl = '';
-    state.musicResultSyncPollCount = 0;
-    state.visibilityNudgeCount = 0;
-    state.automationRerunRequested = true;
-    runtimeLog(`music search silent retry ${state.musicSearchRecoveryCount}/${MEDIA_PORTAL_MUSIC_RETRY_MAX} request=${state.requestId}`);
-    emitMediaPortalProgress(state, { percent: 68, message: '正在后台重新同步音乐搜索结果' });
-    loadMediaPortalPage(view, state, state.portalUrl, { reload: true, reason: 'music-result-retry' });
-  }, MEDIA_PORTAL_MUSIC_INITIAL_RETRY_MS);
-}
-
 function startMediaPortalVideoResultSync(state, view = mediaPortalView) {
   clearMediaPortalResultSyncTimer();
   if (!view || view.webContents.isDestroyed() || !isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId)) return;
@@ -3992,18 +3958,31 @@ function startMediaPortalMusicResultSync(state, view = mediaPortalView) {
     state.musicResultSyncPollCount = Number(state.musicResultSyncPollCount || 0) + 1;
     try {
       const snapshot = await view.webContents.executeJavaScript(mediaPortalMusicResultBridgeScript(), true);
-      const expectedDocumentUrl = String(state.musicSearchDocumentUrl || '');
       const results = Array.isArray(snapshot?.results) ? snapshot.results : [];
-      if (expectedDocumentUrl && String(snapshot?.href || '') === expectedDocumentUrl && results.length) {
+      if (results.length) {
         runtimeLog(`music result sync hit request=${state.requestId} poll=${state.musicResultSyncPollCount} count=${results.length}`);
-        clearMediaPortalMusicRecoveryTimer();
         await completeMediaPortalAutomation(state, { ok: true, results });
         return;
       }
     } catch {}
     if (Number(state.musicResultSyncPollCount || 0) === 5 || Number(state.musicResultSyncPollCount || 0) === 10) {
-      // Keep the portal beneath the app while requesting another compositor frame.
-      activateMediaPortalInBackground(view, 360, 'music result sync');
+      // Some first-load pages only flush search rows after a compositor frame.
+      // Wake the embedded portal briefly, then return to the native result view.
+      activateMediaPortalInContentRegion(view, 260, 'music result sync');
+    }
+    if (Number(state.musicResultSyncPollCount || 0) === 6 || Number(state.musicResultSyncPollCount || 0) === 11) {
+      try {
+        const result = await view.webContents.executeJavaScript(buildPortalScript({
+          mode: 'music-search',
+          value: state.value || '',
+          timeoutMs: 1200,
+        }, scoreMediaDownloadQualityLabel), true);
+        if (result?.ok && Array.isArray(result.results) && result.results.length) {
+          runtimeLog(`music result sync fallback hit request=${state.requestId} poll=${state.musicResultSyncPollCount} count=${result.results.length}`);
+          await completeMediaPortalAutomation(state, result);
+          return;
+        }
+      } catch {}
     }
     mediaPortalMusicResultSyncTimer = setTimeout(poll, 350);
   };
@@ -4606,7 +4585,6 @@ async function completeMediaPortalAutomation(state, result = {}) {
   if (state.providerRetryPending) return;
   clearMediaPortalResultSyncTimer();
   clearMediaPortalMusicResultSyncTimer();
-  clearMediaPortalMusicRecoveryTimer();
   clearMediaPortalVisibilityNudgeTimer();
   const view = mediaPortalView;
   const mode = state.automationMode;
@@ -5523,29 +5501,32 @@ function activateMediaPortalInBackground(view = mediaPortalView, durationMs = ME
   return true;
 }
 
-function activateMediaPortalForTrustedSubmit(view = mediaPortalView, durationMs = MEDIA_PORTAL_VIDEO_SUBMIT_WAKE_MS) {
+function activateMediaPortalInContentRegion(view = mediaPortalView, durationMs = MEDIA_PORTAL_VIDEO_WAKE_VISIBLE_MS, label = 'portal') {
   if (!view || view.webContents.isDestroyed() || !mainWindow || mainWindow.isDestroyed()) return false;
+  const bounds = mediaPortalLastVisibleBounds;
+  if (!bounds || bounds.width < 120 || bounds.height < 80) {
+    // Do not fall back to a full-window flash before the renderer has supplied the media frame.
+    return activateMediaPortalInBackground(view, durationMs, label);
+  }
   const restoreMainFocus = !!mainWindow.isFocused();
   if (!attachMediaPortalViewToMain(view)) return false;
-  const content = mainWindow.getContentBounds();
-  view.setBounds({
-    x: 0,
-    y: 0,
-    width: Math.max(1, Number(content?.width || MEDIA_PORTAL_WORKER_WIDTH)),
-    height: Math.max(1, Number(content?.height || MEDIA_PORTAL_WORKER_HEIGHT)),
-  });
+  view.setBounds(bounds);
   view.setVisible(true);
   view.webContents.setAudioMuted(true);
   try { view.webContents.focus(); } catch {}
-  runtimeLog('video parser trusted foreground submit wake');
+  runtimeLog(`${label} embedded compositor wake`);
   setTimeout(() => {
     if (view !== mediaPortalView || view.webContents.isDestroyed() || mediaPortalRequestedVisible) return;
     keepMediaPortalWorkerVisible(view);
     if (restoreMainFocus && mainWindow && !mainWindow.isDestroyed()) {
       try { mainWindow.webContents.focus(); } catch {}
     }
-  }, Math.max(300, Number(durationMs || 0)));
+  }, Math.max(160, Number(durationMs || 0)));
   return true;
+}
+
+function activateMediaPortalForTrustedSubmit(view = mediaPortalView, durationMs = MEDIA_PORTAL_VIDEO_SUBMIT_WAKE_MS) {
+  return activateMediaPortalInContentRegion(view, Math.max(300, Number(durationMs || 0)), 'video parser trusted submit');
 }
 
 function hideMediaPortalView(view = mediaPortalView) {
@@ -5708,7 +5689,6 @@ function ensureMediaPortalView() {
       state.musicSearchDocumentUrl = view.webContents.getURL();
       runtimeLog(`music search document ready request=${state.requestId} url=${state.musicSearchDocumentUrl}`);
       startMediaPortalMusicResultSync(state, view);
-      scheduleMediaPortalMusicSearchRecovery(state, view);
     }
     scheduleMediaPortalInput();
   });
@@ -5909,7 +5889,6 @@ function openMediaPortal(url, downloadTarget = 'download', sourceText = '', auto
       automationRunning: false,
       automationRerunRequested: false,
       musicSearchDocumentUrl: '',
-      musicSearchRecoveryCount: 0,
     }
     : null;
   clearMediaPortalInputTimer();
