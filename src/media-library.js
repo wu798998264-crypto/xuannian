@@ -12,14 +12,15 @@ const MEDIA_KIND_DIRECTORIES = Object.freeze({ video: '视频', audio: '音乐' 
 const SEEKIN_UNIVERSAL_PORTAL = 'https://www.seekin.ai/zh/downloader/';
 const DLPANDA_PORTAL = 'https://dlpanda.com/zh-CN';
 const SEEKIN_PORTAL = Object.freeze({ url: SEEKIN_UNIVERSAL_PORTAL, label: 'Seekin' });
+const DLPANDA_PORTAL_ROUTE = Object.freeze({ url: DLPANDA_PORTAL, label: 'DLPanda', requiresVpn: true });
 
 const VIDEO_PROVIDERS = [
   {
     id: 'douyin',
     label: '抖音',
     hosts: ['douyin.com', 'iesdouyin.com'],
-    portalUrl: SEEKIN_UNIVERSAL_PORTAL,
-    portals: [SEEKIN_PORTAL, { url: 'https://www.hellotik.app/zh/douyin', label: 'HelloTik' }, { url: DLPANDA_PORTAL, label: 'DLPanda', requiresVpn: true }],
+    portalUrl: DLPANDA_PORTAL,
+    portals: [DLPANDA_PORTAL_ROUTE, { url: 'https://www.hellotik.app/zh/douyin', label: 'HelloTik' }],
     autoDownloadQuality: 'highest',
   },
   {

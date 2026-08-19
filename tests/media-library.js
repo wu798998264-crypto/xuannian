@@ -51,10 +51,10 @@ async function run() {
 
   const douyin = detectVideoProvider('https://v.douyin.com/example');
   assert.strictEqual(douyin.id, 'douyin');
-  assert.strictEqual(douyin.portalUrl, 'https://www.seekin.ai/zh/downloader/');
-  assert.deepStrictEqual(douyin.portals.map((route) => route.label), ['Seekin', 'HelloTik', 'DLPanda']);
-  assert.strictEqual(douyin.portals[0].requiresVpn, undefined);
-  assert.strictEqual(douyin.portals[0].url, 'https://www.seekin.ai/zh/downloader/');
+  assert.strictEqual(douyin.portalUrl, 'https://dlpanda.com/zh-CN');
+  assert.deepStrictEqual(douyin.portals.map((route) => route.label), ['DLPanda', 'HelloTik']);
+  assert.strictEqual(douyin.portals[0].requiresVpn, true);
+  assert.strictEqual(douyin.portals[0].url, 'https://dlpanda.com/zh-CN');
   assert.strictEqual(douyin.autoDownloadQuality, 'highest');
   const tiktok = detectVideoProvider('https://www.tiktok.com/@example/video/1');
   assert.strictEqual(tiktok.id, 'tiktok');
@@ -129,9 +129,10 @@ async function run() {
   universalSources.forEach((source) => {
     const provider = detectVideoProvider(source);
     assert(provider, 'provider should be detected for ' + source);
-    assert.strictEqual(provider.portalUrl, 'https://www.seekin.ai/zh/downloader/');
+    const expectedPrimary = provider.id === 'douyin' ? 'https://dlpanda.com/zh-CN' : 'https://www.seekin.ai/zh/downloader/';
+    assert.strictEqual(provider.portalUrl, expectedPrimary);
     assert(provider.portals.length >= 1);
-    assert.strictEqual(provider.portals[0].url, 'https://www.seekin.ai/zh/downloader/');
+    assert.strictEqual(provider.portals[0].url, expectedPrimary);
   });
   assert.strictEqual(detectVideoProvider('https://youtu.be/example').id, 'youtube');
   assert.strictEqual(detectVideoProvider('https://www.instagram.com/reel/example').id, 'instagram');

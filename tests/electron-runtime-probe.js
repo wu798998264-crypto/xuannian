@@ -1719,7 +1719,7 @@ async function run() {
     })()
   `, true);
   console.log(`media library runtime metrics ${JSON.stringify(mediaLibraryMetrics)}`);
-  assert.deepStrictEqual(mediaLibraryMetrics.openedPortals, ['https://www.seekin.ai/zh/downloader/','https://www.seekin.ai/zh/downloader/','https://www.gequbao.com/s/%E6%B5%8B%E8%AF%95%E6%AD%8C%E6%9B%B2%20%E6%B5%8B%E8%AF%95%E6%AD%8C%E6%89%8B']);
+  assert.deepStrictEqual(mediaLibraryMetrics.openedPortals, ['https://dlpanda.com/zh-CN','https://www.seekin.ai/zh/downloader/','https://www.gequbao.com/s/%E6%B5%8B%E8%AF%95%E6%AD%8C%E6%9B%B2%20%E6%B5%8B%E8%AF%95%E6%AD%8C%E6%89%8B']);
   assert.deepStrictEqual(mediaLibraryMetrics.portalTargets, ['download','download','download']);
   assert.deepStrictEqual(mediaLibraryMetrics.portalInputs.map((item) => item.autoSubmit), [true,true,false]);
   assert.deepStrictEqual(mediaLibraryMetrics.portalInputs.map((item) => item.collection), ['', '', '']);
@@ -1770,12 +1770,11 @@ async function run() {
   assert.deepStrictEqual(mediaLibraryMetrics.localPlaybackRequests, []);
   assert.deepStrictEqual(mediaLibraryMetrics.downloadedMusicControls, {rowPlayButtons:0,localPlayerVisible:false,musicProviderLabel:'歌曲宝',musicManualPortalAvailable:true,firstDownloaded:'测试歌曲歌词.lrc',lyricsVisible:true,lyricsType:'歌词',lyricsFavoriteButton:false});
   assert.strictEqual(mediaLibraryMetrics.providerRouting.douyinProvider.id, 'douyin');
-  assert.strictEqual(mediaLibraryMetrics.providerRouting.douyinProvider.portalUrl, 'https://www.seekin.ai/zh/downloader/');
+  assert.strictEqual(mediaLibraryMetrics.providerRouting.douyinProvider.portalUrl, 'https://dlpanda.com/zh-CN');
   assert.strictEqual(mediaLibraryMetrics.providerRouting.douyinProvider.autoDownloadQuality, 'highest');
   assert.deepStrictEqual(mediaLibraryMetrics.providerRouting.douyinProvider.portals, [
-    {url:'https://www.seekin.ai/zh/downloader/',label:'Seekin'},
-    {url:'https://www.hellotik.app/zh/douyin',label:'HelloTik'},
     {url:'https://dlpanda.com/zh-CN',label:'DLPanda',requiresVpn:true},
+    {url:'https://www.hellotik.app/zh/douyin',label:'HelloTik'},
   ]);
   assert.strictEqual(mediaLibraryMetrics.providerRouting.dailyFallback.index, 1);
   assert.deepStrictEqual(mediaLibraryMetrics.providerRouting.dailyFallback.route, {url:'https://www.hellotik.app/zh/douyin',label:'HelloTik'});

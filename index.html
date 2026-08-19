@@ -3650,6 +3650,7 @@ function selectFileSearchResult(index,{ensureVisible=false}={}){
 }
 
 const MEDIA_VIDEO_PRIMARY_PORTAL='https://www.seekin.ai/zh/downloader/';
+const MEDIA_VIDEO_DOUYIN_PRIMARY_PORTAL='https://dlpanda.com/zh-CN';
 const MEDIA_PORTAL_CONTENT_FAILURES=new Set(['protected-or-private','content-unavailable','content-not-video','bilibili-drm-protected']);
 const MEDIA_PORTAL_CONFIRMED_PROVIDER_FAILURES=new Set(['provider-server-failed','provider-rejected','quota-or-ad-required','qr-code-required']);
 
@@ -3662,7 +3663,7 @@ function resolveMediaVideoProviderFallback(value=''){
   const matches=(domains)=>domains.some(domain=>host===domain||host.endsWith(`.${domain}`));
   const seekin=MEDIA_VIDEO_PRIMARY_PORTAL;
   const provider=(id,label,portals,extra={})=>({id,label,portalUrl:seekin,sourceUrl,portals:[{url:seekin,label:'Seekin'},...portals],...extra});
-  if(matches(['douyin.com','iesdouyin.com'])) return provider('douyin','抖音',[{url:'https://www.hellotik.app/zh/douyin',label:'HelloTik'},{url:'https://dlpanda.com/zh-CN',label:'DLPanda',requiresVpn:true}],{autoDownloadQuality:'highest'});
+  if(matches(['douyin.com','iesdouyin.com'])) return {id:'douyin',label:'抖音',portalUrl:MEDIA_VIDEO_DOUYIN_PRIMARY_PORTAL,sourceUrl,portals:[{url:MEDIA_VIDEO_DOUYIN_PRIMARY_PORTAL,label:'DLPanda',requiresVpn:true},{url:'https://www.hellotik.app/zh/douyin',label:'HelloTik'}],autoDownloadQuality:'highest'};
   if(matches(['tiktok.com'])) return provider('tiktok','TikTok',[{url:'https://dlpanda.com/zh-CN',label:'DLPanda',requiresVpn:true}],{autoDownloadQuality:'highest'});
   if(matches(['bilibili.com','b23.tv'])) return provider('bilibili','哔哩哔哩',[{url:'https://www.seekin.ai/zh/bilibili-downloader/',label:'Seekin Bilibili'}]);
   if(matches(['xiaohongshu.com','xhslink.com'])) return provider('xiaohongshu','小红书',[{url:'https://www.xiaohongshua.com/',label:'Xiaohongshua'}]);
