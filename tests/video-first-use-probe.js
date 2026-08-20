@@ -8,6 +8,12 @@ const tempAppData = fs.mkdtempSync(path.join(os.tmpdir(), 'xuannian-first-video-
 let probeSucceeded = false;
 app.setName('XuanNianFirstVideoProbe');
 app.setPath('appData', tempAppData);
+const probeDownloads = path.join(tempAppData, 'Downloads');
+const probeDocuments = path.join(tempAppData, 'Documents');
+fs.mkdirSync(probeDownloads, { recursive: true });
+fs.mkdirSync(probeDocuments, { recursive: true });
+app.setPath('downloads', probeDownloads);
+app.setPath('documents', probeDocuments);
 process.env.XUANNIAN_DEBUG_LOG = '1';
 
 require('../src/main');
@@ -55,7 +61,9 @@ async function run() {
       title: state.media.videoParse.title || '',
       downloadReady: !!state.media.videoParse.downloadReady,
       previewReady: !!(state.media.videoParse.previewUrl || state.media.videoParse.embeddedPreview),
+      previewCached: !!state.media.videoParse.previewCached,
       qualityCount: state.media.videoParse.qualityOptions.length,
+      mediaActions: (state.media.videoParse.mediaActions || []).map(action => ({label:action.label,href:action.href||'',candidateIndex:Number(action.candidateIndex??-1)})),
       error: state.media.videoParse.error || '',
       progress: document.querySelector('#mediaAutomationProgressText')?.textContent || '',
     }))()`, true);
@@ -74,7 +82,9 @@ async function run() {
         title: state.media.videoParse.title || '',
         downloadReady: !!state.media.videoParse.downloadReady,
         previewReady: !!(state.media.videoParse.previewUrl || state.media.videoParse.embeddedPreview),
+        previewCached: !!state.media.videoParse.previewCached,
         qualityCount: state.media.videoParse.qualityOptions.length,
+        mediaActions: (state.media.videoParse.mediaActions || []).map(action => ({label:action.label,href:action.href||'',candidateIndex:Number(action.candidateIndex??-1)})),
         error: state.media.videoParse.error || '',
         progress: document.querySelector('#mediaAutomationProgressText')?.textContent || '',
       }))()`, true);
@@ -82,14 +92,30 @@ async function run() {
     }
   }
 
+  if (snapshot?.status === 'ready' && !snapshot.previewCached) {
+    const cacheDeadline = Date.now() + 90000;
+    while (Date.now() < cacheDeadline) {
+      await wait(500);
+      const cached = await window.webContents.executeJavaScript('!!state.media.videoParse.previewCached', true);
+      if (cached) {
+        snapshot.previewCached = true;
+        break;
+      }
+    }
+  }
+
+  const coverResult = snapshot?.status === 'ready'
+    ? await window.webContents.executeJavaScript(`window.nativeAPI.downloadParsedMediaVideo('download','','image')`, true)
+    : null;
+
   const elapsedMs = Date.now() - startedAt;
   const logFile = path.join(tempAppData, '玄念', 'xuannian-runtime.log');
   const runtimeLog = fs.existsSync(logFile) ? fs.readFileSync(logFile, 'utf8') : '';
   const wakeCount = (runtimeLog.match(/video result visibility wake/g) || []).length;
   const recoveryCount = (runtimeLog.match(/media portal video recovery/g) || []).length;
-  console.log(`first video parse probe ${JSON.stringify({ ...snapshot, elapsedMs, wakeCount, recoveryCount })}`);
+  console.log(`first video parse probe ${JSON.stringify({ ...snapshot, coverResult, elapsedMs, wakeCount, recoveryCount })}`);
   if (snapshot?.status !== 'ready') {
-    const portal = webContents.getAllWebContents().find((contents) => /seekin\.ai/i.test(contents.getURL()));
+    const portal = webContents.getAllWebContents().find((contents) => /(?:dlpanda\.com|seekin\.ai)/i.test(contents.getURL()));
     if (portal && !portal.isDestroyed()) {
       const page = await portal.executeJavaScript(`(() => ({
         url: location.href,
@@ -109,7 +135,17 @@ async function run() {
   }
   assert.strictEqual(snapshot?.status, 'ready', `first video parse failed: ${JSON.stringify(snapshot)}`);
   assert.strictEqual(snapshot.downloadReady, true, 'first video parse did not expose a download');
-  assert.strictEqual(snapshot.previewReady, true, 'first video parse did not prepare a preview');
+  assert.deepStrictEqual(snapshot.mediaActions.map(action => action.label), ['视频', '备用下载', '音频', '封面图片']);
+  for (const action of snapshot.mediaActions.filter(item => !['备用下载', '封面图片'].includes(item.label))) {
+    assert(action.href || action.candidateIndex >= 0, `${action.label} action is not downloadable: ${JSON.stringify(action)}`);
+  }
+  const coverAction = snapshot.mediaActions.find(action => action.label === '封面图片');
+  const videoFallbackAvailable = snapshot.previewCached || snapshot.mediaActions.some(action => action.label === '备用下载' && !!action.href);
+  assert(coverAction.href || coverAction.candidateIndex >= 0 || videoFallbackAvailable, `cover action has no source: ${JSON.stringify(snapshot)}`);
+  assert(!/dlpanda\.com\/images\/logo/i.test(coverAction.href), 'the DLPanda logo must not be exposed as the video cover');
+  assert.strictEqual(coverResult?.ok, true, `cover generation failed: ${JSON.stringify(coverResult)}`);
+  assert.strictEqual(path.extname(String(coverResult.path || '')).toLowerCase(), '.png');
+  assert.strictEqual(fs.existsSync(coverResult.path), true, 'generated cover file is missing');
   probeSucceeded = true;
   app.quit();
 }

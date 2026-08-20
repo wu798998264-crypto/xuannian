@@ -1308,13 +1308,20 @@ async function run() {
         {label:'1080P - 80 MB',href:'https://cdn.example.com/runtime-1080.mp4'},
         {label:'720P - 40 MB',href:'https://cdn.example.com/runtime-720.mp4'},
       ];
+      state.media.videoParse.mediaActions=[
+        {id:'video',label:'视频',kind:'video',href:'https://cdn.example.com/runtime.mp4',candidateIndex:0},
+        {id:'backup',label:'备用下载',kind:'video',href:'https://cdn.example.com/runtime-backup.mp4',candidateIndex:1},
+        {id:'audio',label:'音频',kind:'audio',href:'https://cdn.example.com/runtime.mp3',candidateIndex:2},
+        {id:'image',label:'封面图片',kind:'image',href:'https://cdn.example.com/runtime.jpg',candidateIndex:3},
+      ];
+      state.media.videoParse.selectedActionId='video';
       state.media.videoParse.selectedQualityIndex=0;
       renderMediaPortalWorkspace();
       const videoPreview=document.querySelector('#mediaVideoPreview');
       Object.defineProperty(videoPreview,'duration',{configurable:true,get:()=>435.259});
       videoPreview.dispatchEvent(new Event('loadedmetadata'));
       const qualitySelect=document.querySelector('#mediaVideoQualitySelect');
-      qualitySelect.value='1';
+      qualitySelect.value='video';
       qualitySelect.dispatchEvent(new Event('change',{bubbles:true}));
       const videoProgressUi={
         controls:videoPreview.controls,
@@ -1329,8 +1336,9 @@ async function run() {
         topActions:!!document.querySelector('#mediaOpenVideoPortal, #mediaFavoriteVideoPortal'),
         fallbackHidden:document.querySelector('#mediaVideoFallback').hidden,
         qualityChoiceHidden:document.querySelector('#mediaVideoQualityChoice').hidden,
+        choiceLabelHidden:document.querySelector('#mediaVideoChoiceLabel').hidden,
         qualityOptions:[...qualitySelect.options].map(option=>option.textContent.trim()),
-        selectedQualityIndex:Number(qualitySelect.value),
+        selectedActionId:qualitySelect.value,
       };
       const readyVideoParse={...state.media.videoParse};
       state.media.videoParse={
@@ -1729,7 +1737,7 @@ async function run() {
   assert.deepStrictEqual(mediaLibraryMetrics.copiedText, []);
   assert.deepStrictEqual(mediaLibraryMetrics.highQualityRequests, []);
   assert.deepStrictEqual(mediaLibraryMetrics.downloadedVideos, [{target:'download',collection:''},{target:'favorite',collection:'项目收藏'}]);
-  assert.deepStrictEqual(mediaLibraryMetrics.downloadedVideoQualities, [1,1], 'selected video quality must reach both download actions');
+  assert.deepStrictEqual(mediaLibraryMetrics.downloadedVideoQualities, ['video','video'], 'selected Douyin media action must reach both download actions');
   assert.deepStrictEqual(mediaLibraryMetrics.videoButtonHitTargets, [true,true,true,true,true], 'the full visible video download button must be clickable');
   assert.strictEqual(mediaLibraryMetrics.favoritePreviewModal.requests[0]?.visible, false, 'embedded preview must hide before the favorite picker opens');
   assert.strictEqual(mediaLibraryMetrics.pickerCreateVisible, true);
@@ -1738,7 +1746,7 @@ async function run() {
   assert.deepStrictEqual(mediaLibraryMetrics.downloadedSongs, [{url:'https://www.gequbao.com/music/101',target:'download',collection:'',preferredName:'测试歌曲 - 测试歌手'}]);
   assert.deepStrictEqual(mediaLibraryMetrics.downloadedLyrics, [{url:'https://www.gequbao.com/music/101',preferredName:'测试歌曲 - 测试歌手'}]);
   assert.strictEqual(mediaLibraryMetrics.nativeMediaBridgeAvailableBeforeStub, false, 'renderer must not expose the retired high-quality music bridge');
-  assert.deepStrictEqual(mediaLibraryMetrics.videoUi, {previewSrc:'https://cdn.example.com/runtime.mp4',actions:['下载视频','下载并收藏'],topActions:false,fallbackHidden:true,qualityChoiceHidden:false,qualityOptions:['1080P · 80 MB','720P · 40 MB'],selectedQualityIndex:1,exhaustedFallbackHidden:true});
+  assert.deepStrictEqual(mediaLibraryMetrics.videoUi, {previewSrc:'https://cdn.example.com/runtime.mp4',actions:['下载','收藏'],topActions:false,fallbackHidden:true,qualityChoiceHidden:false,choiceLabelHidden:true,qualityOptions:['视频','备用下载','音频','封面图片'],selectedActionId:'video',exhaustedFallbackHidden:true});
   assert.deepStrictEqual(mediaLibraryMetrics.videoProgressUi, {controls:true,controlsAttribute:true,customProgressPresent:false,sourceDurationEndsWith:true,longDurationFormat:'02:00:00'});
   assert.deepStrictEqual(mediaLibraryMetrics.musicUi, {rows:2,actions:['lyrics:下载歌词','download:下载','favorite:下载并收藏','lyrics:下载歌词','download:下载','favorite:下载并收藏'],formatChoices:[],previewButtons:2,favoriteIconButtons:2,activeAudioControls:true,topFormatControls:false});
   assert.deepStrictEqual(mediaLibraryMetrics.mediaInputClear, {
@@ -1796,7 +1804,7 @@ async function run() {
   assert.strictEqual(mediaLibraryMetrics.activeView, 'mediaView');
   assert.strictEqual(mediaLibraryMetrics.activeNav, 'media');
   assert(mediaLibraryMetrics.rows > 0 && mediaLibraryMetrics.rows <= 48, `media virtual DOM exceeded 48 rows: ${mediaLibraryMetrics.rows}`);
-  assert.deepStrictEqual(mediaLibraryMetrics.typeOptions, ['视频','音乐']);
+  assert.deepStrictEqual(mediaLibraryMetrics.typeOptions, ['视频','音乐','图片']);
   assert.strictEqual(mediaLibraryMetrics.audioPortalSelected, true);
   assert.strictEqual(mediaLibraryMetrics.videoDownloadModeSelected, true);
   assert.strictEqual(mediaLibraryMetrics.downloadKindLabel, '视频');

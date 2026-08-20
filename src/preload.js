@@ -408,8 +408,9 @@ contextBridge.exposeInMainWorld('nativeAPI', {
   async getBilibiliSessionStatus() {
     return ipcRenderer.invoke('media:bilibiliSessionStatus');
   },
-  async downloadParsedMediaVideo(downloadTarget = 'download', collection = '', qualityIndex = 0) {
-    return ipcRenderer.invoke('media:downloadParsedVideo', downloadTarget || 'download', collection || '', Math.max(0, Number(qualityIndex) || 0));
+  async downloadParsedMediaVideo(downloadTarget = 'download', collection = '', selection = 0) {
+    const normalizedSelection = typeof selection === 'string' ? selection : Math.max(0, Number(selection) || 0);
+    return ipcRenderer.invoke('media:downloadParsedVideo', downloadTarget || 'download', collection || '', normalizedSelection);
   },
   async resumeMediaPortalAfterVerification() {
     return ipcRenderer.invoke('media:resumeAfterVerification');

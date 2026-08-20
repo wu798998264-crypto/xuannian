@@ -67,6 +67,20 @@ async function run() {
   const previewDownload = await win.webContents.executeJavaScript(buildPortalScript({ mode: 'video-download', timeoutMs: 2000, candidateIndex: 1 }, scoreMediaDownloadQualityLabel), true);
   assert.strictEqual(previewDownload.href, 'https://cdn.example.com/video-720.mp4');
 
+  await loadFixture(win, '<article class="result-card"><video src="https://cdn.example.com/douyin-preview.mp4" style="width:320px;height:180px"></video><a href="https://cdn.example.com/douyin-video.mp4" style="display:block;width:160px;height:32px">1080P 视频下载</a><a href="https://cdn.example.com/douyin-backup.mp4" style="display:block;width:160px;height:32px">备用下载</a><a href="https://cdn.example.com/douyin-audio.mp3" style="display:block;width:160px;height:32px">音频 MP3 下载</a><img src="data:image/gif;base64,R0lGODlhAQABAAAAACw="><a href="https://cdn.example.com/douyin-cover.jpg" download style="display:block;width:160px;height:32px">封面图片下载</a></article>');
+  console.log('probe: classify DLPanda media actions');
+  const douyinActionsResult = await win.webContents.executeJavaScript(buildPortalScript({
+    mode: 'video-parse', phase: 'result', value: 'https://v.douyin.com/action-test', timeoutMs: 2000,
+  }, scoreMediaDownloadQualityLabel), true);
+  assert.strictEqual(douyinActionsResult.ok, true);
+  assert.deepStrictEqual(douyinActionsResult.mediaActions.map((action) => action.label), ['视频', '备用下载', '音频', '封面图片']);
+  assert.deepStrictEqual(douyinActionsResult.mediaActions.map((action) => action.href), [
+    'https://cdn.example.com/douyin-video.mp4',
+    'https://cdn.example.com/douyin-backup.mp4',
+    'https://cdn.example.com/douyin-audio.mp3',
+    'https://cdn.example.com/douyin-cover.jpg',
+  ]);
+
   await loadFixture(win, '<article class="result-card"><img src="data:image/gif;base64,R0lGODlhAQABAAAAACw="><div>Tweet image JPG</div><a href="https://cdn.example.com/poster.jpg" style="display:block;width:160px;height:32px">JPG Download</a></article><article class="result-card"><video src="https://cdn.example.com/x-preview.mp4" style="width:320px;height:180px"></video><div>Video MP4</div><a href="https://cdn.example.com/x-video.mp4" style="display:block;width:160px;height:32px">MP4 Download</a></article>');
   console.log('probe: exclude image downloads from mixed social results');
   const mixedSocialResult = await win.webContents.executeJavaScript(buildPortalScript({

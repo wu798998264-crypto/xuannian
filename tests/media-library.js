@@ -143,6 +143,8 @@ async function run() {
   assert.strictEqual(mediaKindForPath('clip.MP4'), 'video');
   assert.strictEqual(mediaKindForPath('song.flac'), 'audio');
   assert.strictEqual(mediaKindForPath('song.lrc'), 'audio');
+  assert.strictEqual(mediaKindForPath('cover.JPG'), 'image');
+  assert.strictEqual(mediaKindForPath('cover.webp'), 'image');
   assert.strictEqual(isLyricsPath('song.LRC'), true);
   assert.strictEqual(mediaKindForPath('setup.exe'), '');
   assert.strictEqual(isAllowedPortalUrl('https://www.hellotik.app/zh/kuaishou'), true);
@@ -174,6 +176,7 @@ async function run() {
   fs.mkdirSync(downloads, { recursive: true });
   fs.writeFileSync(path.join(downloads, 'clip.mp4'), Buffer.alloc(64));
   fs.writeFileSync(path.join(downloads, 'song.mp3'), Buffer.alloc(32));
+  fs.writeFileSync(path.join(downloads, 'cover.jpg'), Buffer.alloc(24));
   fs.writeFileSync(path.join(downloads, 'ignore.txt'), Buffer.alloc(16));
   const lyricsDirectory = path.join(downloads, '音乐');
   fs.mkdirSync(lyricsDirectory, { recursive: true });
@@ -184,7 +187,7 @@ async function run() {
   fs.utimesSync(lyricsPath, nowSeconds, nowSeconds);
   try {
     let items = await listMediaFiles(downloads, favorites);
-    assert.deepStrictEqual(items.map((item) => item.kind).sort(), ['audio', 'audio', 'video']);
+    assert.deepStrictEqual(items.map((item) => item.kind).sort(), ['audio', 'audio', 'image', 'video']);
     assert.deepStrictEqual(items.filter((item) => item.kind === 'audio').map((item) => item.name), ['song歌词.lrc', 'song.mp3']);
     assert.strictEqual(items.find((item) => item.name === 'song歌词.lrc')?.lyrics, true);
     const rejectedLyricsFavorite = await copyMediaToFavorites(lyricsPath, favorites);

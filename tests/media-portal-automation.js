@@ -102,6 +102,13 @@ function run() {
   assert(parseScript.includes('repeatsSourceInput'));
   assert(parseScript.includes('candidateCount'));
   assert(parseScript.includes('qualityOptions'));
+  assert(parseScript.includes('mediaActions'));
+  assert(parseScript.includes("{ id: 'video', label: '视频'"));
+  assert(parseScript.includes("{ id: 'backup', label: '备用下载'"));
+  assert(parseScript.includes("{ id: 'audio', label: '音频'"));
+  assert(parseScript.includes("{ id: 'image', label: '封面图片'"));
+  assert(parseScript.includes('seenActionUrls'));
+  assert(parseScript.includes("kind: candidateKind"));
   assert(parseScript.includes('imageOnlyDownload'));
   assert(parseScript.includes('audioOnlyDownload'));
   assert(parseScript.includes('content-not-video'));

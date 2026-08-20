@@ -7,8 +7,11 @@ const VIDEO_EXTENSIONS = new Set([
 const AUDIO_EXTENSIONS = new Set([
   'mp3', 'wav', 'm4a', 'aac', 'flac', 'ogg', 'oga', 'opus', 'wma', 'aiff', 'ape', 'lrc',
 ]);
+const IMAGE_EXTENSIONS = new Set([
+  'jpg', 'jpeg', 'png', 'webp', 'gif', 'bmp', 'tif', 'tiff', 'avif',
+]);
 const LYRICS_EXTENSIONS = new Set(['lrc']);
-const MEDIA_KIND_DIRECTORIES = Object.freeze({ video: '视频', audio: '音乐' });
+const MEDIA_KIND_DIRECTORIES = Object.freeze({ video: '视频', audio: '音乐', image: '图片' });
 const SEEKIN_UNIVERSAL_PORTAL = 'https://www.seekin.ai/zh/downloader/';
 const DLPANDA_PORTAL = 'https://dlpanda.com/zh-CN';
 const SEEKIN_PORTAL = Object.freeze({ url: SEEKIN_UNIVERSAL_PORTAL, label: 'Seekin' });
@@ -94,6 +97,7 @@ function mediaKindForPath(filePath) {
   const extension = path.extname(String(filePath || '')).slice(1).toLowerCase();
   if (VIDEO_EXTENSIONS.has(extension)) return 'video';
   if (AUDIO_EXTENSIONS.has(extension)) return 'audio';
+  if (IMAGE_EXTENSIONS.has(extension)) return 'image';
   return '';
 }
 
@@ -423,11 +427,12 @@ async function listCollectionNames(directory, kind) {
 }
 
 async function listMediaCollections(directory) {
-  const [video, audio] = await Promise.all([
+  const [video, audio, image] = await Promise.all([
     listCollectionNames(directory, 'video'),
     listCollectionNames(directory, 'audio'),
+    listCollectionNames(directory, 'image'),
   ]);
-  return { video, audio };
+  return { video, audio, image };
 }
 
 async function listManagedMediaFiles(directory, favorite = false, limit = 100000) {
@@ -438,7 +443,7 @@ async function listManagedMediaFiles(directory, favorite = false, limit = 100000
   const maxItems = Math.max(1, requestedLimit || 100000);
   const location = favorite ? 'favorites' : 'downloads';
   const items = [];
-  for (const kind of ['video', 'audio']) {
+  for (const kind of ['video', 'audio', 'image']) {
     if (items.length >= maxItems) break;
     const typeDirectory = mediaTypeDirectory(root, kind);
     const unclassified = await scanMediaFilesInDirectory(typeDirectory, favorite, location, '', maxItems - items.length);
@@ -632,6 +637,7 @@ async function deleteMediaCollection(directory, kind, name) {
 
 module.exports = {
   AUDIO_EXTENSIONS,
+  IMAGE_EXTENSIONS,
   MEDIA_KIND_DIRECTORIES,
   VIDEO_EXTENSIONS,
   VIDEO_PROVIDERS,
@@ -655,6 +661,7 @@ module.exports = {
   listMediaFiles,
   mediaKindForPath,
   mediaCollectionDirectory,
+  movePathAcrossVolumes,
   moveMediaToCollection,
   musicSearchUrl,
   renameMediaCollection,
