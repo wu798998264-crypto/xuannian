@@ -23,6 +23,9 @@ function run() {
   assert.strictEqual(isMediaUrl('https://cdn.example.com/video-stream.m4s?token=1'), true);
   assert.strictEqual(classifyMediaPortalPopup('https://v11.douyinvod.com/token/video/tos/cn/file/?mime_type=video_mp4', 'https://www.seekin.ai/zh/downloader/'), 'download');
   assert.strictEqual(isMediaUrl('https://v11.douyinvod.com/token/video/tos/cn/file/?mime_type=video_mp4'), true);
+  assert.strictEqual(isMediaUrl('https://aweme.snssdk.com/aweme/v1/play/?video_id=test&ratio=720p&line=0'), true);
+  assert.strictEqual(classifyMediaPortalPopup('https://aweme.snssdk.com/aweme/v1/play/?video_id=test&ratio=720p&line=0', 'https://dlpanda.com/zh-CN'), 'download');
+  assert.strictEqual(isMediaUrl('https://v5-dy-ov-experiment.zjcdn.com/token/video/tos/cn/file/?mime_type=video_mp4'), true);
   assert.strictEqual(isMediaUrl('https://ads.example.com/page'), false);
 
   const activeRequest = { requestId: 12 };
@@ -86,6 +89,10 @@ function run() {
     { label: 'Original', href: 'https://cdn.example.com/original.mp4' },
     { label: 'Video', href: 'https://cdn.example.com/video.mp4' },
   ], 96 * 1024 ** 2).index, 1);
+  assert.strictEqual(selectMediaPreviewOption([
+    { label: 'Original (1.05 GB)', href: 'https://cdn.example.com/original.mp4' },
+    { label: '1080P (79.37 MB)', href: 'https://cdn.example.com/1080.mp4' },
+  ], 0).index, 0, 'full-source preview must keep the first selected video instead of choosing a lower-quality file');
 
   const parseScript = buildPortalScript({ mode: 'video-parse', phase: 'result', timeoutMs: 45000 }, scoreMediaDownloadQualityLabel);
   assert(parseScript.includes("mode === 'video-parse'"));
@@ -100,6 +107,8 @@ function run() {
   assert(parseScript.includes('mismatchedPlatformLink'));
   assert(parseScript.includes('hasResultEvidence'));
   assert(parseScript.includes('repeatsSourceInput'));
+  assert(parseScript.includes('dlpanda\\.com$/i.test(current.hostname)'));
+  assert(parseScript.includes('descriptiveLabel.length > 180'));
   assert(parseScript.includes('candidateCount'));
   assert(parseScript.includes('qualityOptions'));
   assert(parseScript.includes('mediaActions'));

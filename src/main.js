@@ -179,6 +179,7 @@ let mediaPortalCacheCheckPromise = null;
 let mediaPortalRequestId = 0;
 let mediaPortalInputState = null;
 let mediaPortalParsedVideo = null;
+const mediaPortalPreviewPromises = new WeakMap();
 let mediaPortalProgressTimer = null;
 let mediaPortalPendingDownload = null;
 let mediaPortalPreviewCapture = null;
@@ -230,8 +231,11 @@ const MEDIA_PORTAL_VIDEO_WAKE_VISIBLE_MS = 520;
 const MEDIA_PORTAL_VIDEO_SUBMIT_WAKE_MS = 900;
 const MEDIA_PREVIEW_CACHE_DIRECTORY = 'media-preview-cache';
 const MEDIA_PREVIEW_MAX_AGE_MS = 24 * 60 * 60 * 1000;
-const MEDIA_PREVIEW_MAX_BYTES = 96 * 1024 * 1024;
-const MEDIA_PREVIEW_DOWNLOAD_TIMEOUT_MS = 2 * 60 * 1000;
+// Preview uses the same full media source as the eventual download. A zero limit
+// avoids silently selecting a lower-quality substitute or rejecting a valid source.
+const MEDIA_PREVIEW_MAX_BYTES = 0;
+const MEDIA_PREVIEW_START_TIMEOUT_MS = 25 * 1000;
+const MEDIA_PREVIEW_DOWNLOAD_TIMEOUT_MS = 10 * 60 * 1000;
 const MEDIA_PORTAL_VIDEO_RESULT_TIMEOUT_MS = 30 * 1000;
 const MEDIA_PORTAL_VIDEO_EXTENDED_RESULT_TIMEOUT_MS = 40 * 1000;
 const MEDIA_DOWNLOAD_HISTORY_FILE = 'xuannian-media-download-history.json';
@@ -2926,6 +2930,19 @@ function mediaKindForDownloadUrl(value) {
   }
 }
 
+function looksLikeTextualMediaPayload(value) {
+  const buffer = Buffer.isBuffer(value) ? value : Buffer.from(value || '');
+  if (!buffer.length) return false;
+  const sample = buffer.subarray(0, 512).toString('utf8').replace(/^\uFEFF/, '').trimStart();
+  return /^(?:<!doctype\s+html|<html(?:\s|>)|<head(?:\s|>)|<body(?:\s|>)|<\?xml|\{\s*["']|\[\s*\{)/i.test(sample);
+}
+
+function isUsableMediaResponseChunk(value, contentType = '') {
+  const type = String(contentType || '').toLowerCase();
+  if (/^(?:text\/|application\/(?:json|xml|xhtml\+xml))/i.test(type)) return false;
+  return !looksLikeTextualMediaPayload(value);
+}
+
 function isDirectMediaActionUrl(value) {
   const url = sanitizeRemoteMediaUrl(value);
   if (!url) return false;
@@ -2951,7 +2968,7 @@ function mediaDownloadReferer(value, fallback = '') {
     const parsed = new URL(String(value || ''));
     const pathname = parsed.pathname;
     if (/(?:^|\.)xhscdn\.com$/i.test(parsed.hostname)) return 'https://www.xiaohongshu.com/';
-    if (/(?:^|\.)(?:douyinvod\.com|bytev\.com|douyinpic\.com|snssdk\.com)$/i.test(parsed.hostname)) return 'https://www.douyin.com/';
+    if (/(?:^|\.)(?:douyinvod\.com|bytev\.com|douyinpic\.com|snssdk\.com|zjcdn\.com)$/i.test(parsed.hostname)) return 'https://www.douyin.com/';
     if (/\/upgcxcode\//i.test(pathname)) return 'https://www.bilibili.com/';
   } catch {}
   return String(fallback || '').trim();
@@ -3156,8 +3173,11 @@ function streamNodeMediaPortalUrlToFile(url, destination, options = {}, redirect
         return;
       }
       const contentType = String(response.headers['content-type'] || '').toLowerCase();
-      const kind = mediaKindForDownloadUrl(value)
-        || (/^video\//i.test(contentType) ? 'video' : (/^audio\//i.test(contentType) ? 'audio' : ''));
+      const hintedKind = ['video', 'audio', 'image'].includes(String(options.kindHint || '')) ? String(options.kindHint) : '';
+      const textualResponse = /^(?:text\/|application\/(?:json|xml|xhtml\+xml))/i.test(contentType);
+      const kind = textualResponse ? '' : (mediaKindForDownloadUrl(value)
+        || (/^video\//i.test(contentType) ? 'video' : (/^audio\//i.test(contentType) ? 'audio' : (/^image\//i.test(contentType) ? 'image' : '')))
+        || (hintedKind && isMediaUrl(value) ? hintedKind : ''));
       if (response.statusCode < 200 || response.statusCode >= 300) {
         response.resume();
         finish(new Error(`HTTP ${response.statusCode}`));
@@ -3183,7 +3203,7 @@ function streamNodeMediaPortalUrlToFile(url, destination, options = {}, redirect
         return;
       }
       let receivedBytes = 0;
-      options.onStarted?.({ contentType, kind, resolvedUrl: value, totalBytes });
+      let firstChunk = true;
       if (control) {
         const applyControlState = ({ paused, cancelled }) => {
           if (cancelled) {
@@ -3205,6 +3225,17 @@ function streamNodeMediaPortalUrlToFile(url, destination, options = {}, redirect
         if (settled) return;
       }
       response.on('data', (chunk) => {
+        if (firstChunk) {
+          firstChunk = false;
+          if (!isUsableMediaResponseChunk(chunk, contentType)) {
+            const error = new Error(`unexpected media response ${contentType || 'textual payload'}`);
+            try { response.destroy(error); } catch {}
+            try { request.destroy(error); } catch {}
+            finish(error);
+            return;
+          }
+          options.onStarted?.({ contentType, kind, resolvedUrl: value, totalBytes });
+        }
         receivedBytes += chunk.length;
         if (maxBytes && receivedBytes > maxBytes) {
           const error = mediaPreviewLimitError(maxBytes, receivedBytes);
@@ -3303,9 +3334,12 @@ async function streamMediaPortalUrlToFile(webContents, url, destination, options
     responseTimeout = null;
     const contentType = String(response.headers.get('content-type') || '').toLowerCase();
     const resolvedUrl = String(response.url || url);
-    const kind = mediaKindForDownloadUrl(resolvedUrl)
+    const hintedKind = ['video', 'audio', 'image'].includes(String(options.kindHint || '')) ? String(options.kindHint) : '';
+    const textualResponse = /^(?:text\/|application\/(?:json|xml|xhtml\+xml))/i.test(contentType);
+    const kind = textualResponse ? '' : (mediaKindForDownloadUrl(resolvedUrl)
       || mediaKindForDownloadUrl(url)
-      || (/^video\//i.test(contentType) ? 'video' : (/^audio\//i.test(contentType) ? 'audio' : ''));
+      || (/^video\//i.test(contentType) ? 'video' : (/^audio\//i.test(contentType) ? 'audio' : (/^image\//i.test(contentType) ? 'image' : '')))
+      || (hintedKind && isMediaUrl(resolvedUrl || url) ? hintedKind : ''));
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     if (!kind || !response.body) throw new Error(`unexpected media response ${contentType || 'without content type'}`);
     fs.mkdirSync(path.dirname(destination), { recursive: true });
@@ -3315,13 +3349,20 @@ async function streamMediaPortalUrlToFile(webContents, url, destination, options
     const totalBytes = Math.max(0, Number(response.headers.get('content-length') || 0));
     if (maxBytes && totalBytes > maxBytes) throw mediaPreviewLimitError(maxBytes, totalBytes);
     let receivedBytes = 0;
-    options.onStarted?.({ contentType, kind, resolvedUrl, totalBytes });
+    let firstChunk = true;
     while (true) {
       await control?.waitIfPaused();
       const chunk = await reader.read();
       if (chunk.done) break;
       await control?.waitIfPaused();
       const buffer = Buffer.from(chunk.value);
+      if (firstChunk) {
+        firstChunk = false;
+        if (!isUsableMediaResponseChunk(buffer, contentType)) {
+          throw new Error(`unexpected media response ${contentType || 'textual payload'}`);
+        }
+        options.onStarted?.({ contentType, kind, resolvedUrl, totalBytes });
+      }
       if (maxBytes && receivedBytes + buffer.length > maxBytes) {
         throw mediaPreviewLimitError(maxBytes, receivedBytes + buffer.length);
       }
@@ -3366,9 +3407,12 @@ async function startDirectMediaPortalPreview(webContents, url, referer) {
     const result = await streamMediaPortalUrlToFile(webContents, url, destination, {
       referer,
       control: captureState.control,
+      kindHint: 'video',
       maxBytes: MEDIA_PREVIEW_MAX_BYTES,
       onStarted: ({ totalBytes }) => {
         started = true;
+        captureState.started = true;
+        clearTimeout(captureState.startTimeout);
         runtimeLog(`direct media preview response started bytes=${totalBytes || 0}`);
       },
       onProgress: ({ receivedBytes, totalBytes }) => {
@@ -3457,6 +3501,7 @@ async function startDirectTrackedMediaDownload(webContents, url, referer) {
     const result = await streamMediaPortalUrlToFile(webContents, url, destination, {
       referer,
       control,
+      kindHint,
       onStarted: (details) => {
         started = true;
         if (target.taskId === taskId) target.taskId = '';
@@ -3514,13 +3559,18 @@ async function startDirectTrackedMediaDownload(webContents, url, referer) {
 }
 
 function startCapturedMediaPortalDownload(webContents, url) {
+  const safeUrl = sanitizeRemoteMediaUrl(url);
+  if (!isDirectMediaActionUrl(safeUrl)) {
+    runtimeLog(`ignored non-media portal download source=${String(url || '').slice(0, 260)}`);
+    return null;
+  }
   const portalReferer = webContents.getURL();
   const previewCapture = mediaPortalPreviewCapture?.webContents === webContents;
   const sourceUrl = previewCapture
     ? String(mediaPortalPreviewCapture?.sourceUrl || '')
     : String(mediaPortalParsedVideo?.sourceUrl || '');
   const direct = (async () => {
-    let resolvedUrl = String(url || '');
+    let resolvedUrl = safeUrl;
     if (/\.m4s(?:[?#]|$)/i.test(resolvedUrl) && bilibiliProgressiveApiUrl(sourceUrl)) {
       const playableUrl = await resolveBilibiliProgressiveDownload(webContents, sourceUrl);
       if (playableUrl) resolvedUrl = playableUrl;
@@ -3532,14 +3582,15 @@ function startCapturedMediaPortalDownload(webContents, url) {
   })();
   direct.then((result) => {
     if (result?.started || webContents.isDestroyed()) return;
-    runtimeLog('direct media request did not start; falling back to header-free Electron downloadURL');
-    try { webContents.downloadURL(url); } catch {}
     if (previewCapture) {
-      setTimeout(() => {
-        if (mediaPortalPreviewCapture?.webContents === webContents) clearMediaPortalPreviewCapture(null);
-      }, 15000);
+      runtimeLog('direct media preview request did not start; preview remains unavailable');
+      if (mediaPortalPreviewCapture?.webContents === webContents) clearMediaPortalPreviewCapture(null);
+      return;
     }
+    runtimeLog('direct media request did not start; falling back to header-free Electron downloadURL');
+    try { webContents.downloadURL(safeUrl); } catch {}
   }).catch((error) => runtimeLog(`captured media download failed: ${error?.message || error}`));
+  return direct;
 }
 
 function configureMediaDownloadSession(electronSession) {
@@ -3561,18 +3612,21 @@ function configureMediaDownloadSession(electronSession) {
       const mimeType = String(item.getMimeType() || '');
       const filenameKind = mediaKindForPath(filename);
       const urlKind = mediaKindForDownloadUrl(item.getURL());
-      const kind = filenameKind || urlKind || (/^video\//i.test(mimeType) ? 'video' : '');
+      const textualMime = /^(?:text\/|application\/(?:json|xml|xhtml\+xml))/i.test(mimeType);
+      const kind = textualMime ? '' : (filenameKind || urlKind || (/^video\//i.test(mimeType) ? 'video' : ''));
       if (kind !== 'video') {
         event.preventDefault();
         clearMediaPortalPreviewCapture(null);
         return;
       }
+      captureState.started = true;
+      clearTimeout(captureState.startTimeout);
       const extension = filenameKind === 'video'
         ? path.extname(filename)
         : (urlKind === 'video' ? mediaExtensionForDownloadUrl(item.getURL()) : '.mp4');
       const destination = mediaPreviewCachePath(captureState.sourceUrl, extension);
       const initialBytes = Math.max(0, Number(item.getTotalBytes() || 0));
-      if (initialBytes > MEDIA_PREVIEW_MAX_BYTES) {
+      if (MEDIA_PREVIEW_MAX_BYTES && initialBytes > MEDIA_PREVIEW_MAX_BYTES) {
         event.preventDefault();
         runtimeLog(`media preview download skipped bytes=${initialBytes} limit=${MEDIA_PREVIEW_MAX_BYTES}`);
         clearMediaPortalPreviewCapture(null);
@@ -3592,7 +3646,7 @@ function configureMediaDownloadSession(electronSession) {
       const updatePreviewProgress = () => {
         const receivedBytes = Math.max(0, Number(item.getReceivedBytes() || 0));
         const totalBytes = Math.max(0, Number(item.getTotalBytes() || 0));
-        if (receivedBytes > MEDIA_PREVIEW_MAX_BYTES || totalBytes > MEDIA_PREVIEW_MAX_BYTES) {
+        if (MEDIA_PREVIEW_MAX_BYTES && (receivedBytes > MEDIA_PREVIEW_MAX_BYTES || totalBytes > MEDIA_PREVIEW_MAX_BYTES)) {
           runtimeLog(`media preview download cancelled bytes=${Math.max(receivedBytes, totalBytes)} limit=${MEDIA_PREVIEW_MAX_BYTES}`);
           clearMediaPortalPreviewCapture(null);
           return;
@@ -3622,7 +3676,6 @@ function configureMediaDownloadSession(electronSession) {
       });
       return;
     }
-    markMediaPortalTransferStarted(webContents);
     const directories = mediaDirectories();
     const target = mediaPortalDownloadTargets.get(webContents) || {};
     const favoriteDownload = target.location === 'favorite';
@@ -3631,13 +3684,15 @@ function configureMediaDownloadSession(electronSession) {
     const mimeType = String(item.getMimeType() || '');
     const filenameKind = mediaKindForPath(receivedFilename);
     const urlKind = mediaKindForDownloadUrl(item.getURL());
-    const kind = filenameKind || urlKind
-      || (/^video\//i.test(mimeType) ? 'video' : (/^audio\//i.test(mimeType) ? 'audio' : (/^image\//i.test(mimeType) ? 'image' : '')));
+    const textualMime = /^(?:text\/|application\/(?:json|xml|xhtml\+xml))/i.test(mimeType);
+    const kind = textualMime ? '' : (filenameKind || urlKind
+      || (/^video\//i.test(mimeType) ? 'video' : (/^audio\//i.test(mimeType) ? 'audio' : (/^image\//i.test(mimeType) ? 'image' : ''))));
     if (!kind) {
       item.cancel();
       notifyMediaDownloadsChanged({ status: 'blocked', message: '已拦截非媒体文件下载' });
       return;
     }
+    markMediaPortalTransferStarted(webContents);
     let filename = receivedFilename;
     if (String(target.preferredName || '').trim()) {
       const extension = filenameKind === kind
@@ -3775,8 +3830,13 @@ function destroyMediaPortalView({ notify = true } = {}) {
 }
 
 function scheduleMediaPortalIdleDestroy() {
-  if (mediaPortalIdleTimer || !mediaPortalView || mediaPortalView.webContents.isDestroyed()) return;
+  if (mediaPortalIdleTimer || mediaPortalPreviewCapture || !mediaPortalView || mediaPortalView.webContents.isDestroyed()) return;
   mediaPortalIdleTimer = setTimeout(() => {
+    mediaPortalIdleTimer = null;
+    if (mediaPortalPreviewCapture) {
+      scheduleMediaPortalIdleDestroy();
+      return;
+    }
     runtimeLog('destroying idle media portal view');
     destroyMediaPortalView();
   }, MEDIA_PORTAL_IDLE_DESTROY_MS);
@@ -4280,6 +4340,7 @@ function clearMediaPortalPreviewCapture(result = null) {
   mediaPortalPreviewCapture = null;
   if (!capture) return;
   clearTimeout(capture.timeout);
+  clearTimeout(capture.startTimeout);
   if (!result) capture.control?.cancel?.();
   if (!result && capture.item && !capture.item.isDestroyed?.()) {
     try { capture.item.cancel(); } catch {}
@@ -4306,16 +4367,23 @@ async function prepareMediaPortalVideoPreview(state, parsed) {
   clearMediaPortalPreviewCapture();
   const beginCapture = () => new Promise((resolve) => {
     clearMediaPortalPreviewCapture();
+    cancelMediaPortalIdleDestroy();
+    keepMediaPortalWorkerVisible(view);
     const capture = {
       requestId: state.requestId,
       webContents: view.webContents,
       sourceUrl: state.value,
       state,
       item: null,
+      started: false,
       control: createMediaDownloadControl(),
       resolve,
       timeout: null,
+      startTimeout: null,
     };
+    capture.startTimeout = setTimeout(() => {
+      if (mediaPortalPreviewCapture === capture && !capture.started) clearMediaPortalPreviewCapture(null);
+    }, MEDIA_PREVIEW_START_TIMEOUT_MS);
     capture.timeout = setTimeout(() => {
       if (mediaPortalPreviewCapture === capture) clearMediaPortalPreviewCapture(null);
     }, MEDIA_PREVIEW_DOWNLOAD_TIMEOUT_MS);
@@ -4381,8 +4449,16 @@ async function prepareMediaPortalVideoPreview(state, parsed) {
       clearMediaPortalPreviewCapture();
       return null;
     }
+    runtimeLog(`media preview candidate=${candidateIndex + 1}/${Math.max(1, Number(result?.candidateCount || parsed.candidateCount || 1))} ok=${!!result?.ok} native=${!!result?.nativeClickRequired} href=${isDirectMediaActionUrl(result?.href) ? 'media' : 'none'} label=${String(result?.label || '').slice(0, 160)}`);
+    if (result?.nativeClickRequired) {
+      await dispatchTrustedMediaPortalDownloadClick(view, result.actionPoint);
+    }
     const href = sanitizeRemoteMediaUrl(result?.href);
-    if (href && result?.ok) startCapturedMediaPortalDownload(view.webContents, href);
+    if (href && result?.ok && isDirectMediaActionUrl(href)) {
+      startCapturedMediaPortalDownload(view.webContents, href);
+    } else if (href && result?.ok) {
+      runtimeLog(`ignored non-media preview candidate href=${href.slice(0, 260)}`);
+    }
     if (!result?.ok) {
       clearMediaPortalPreviewCapture();
       return null;
@@ -4557,7 +4633,26 @@ function publicMediaPortalVideoPayload(parsed) {
     promotedLocalPath: _promotedLocalPath,
     ...publicParsed
   } = parsed;
-  return { ...publicParsed, previewCached: !!parsed.capturedLocalPath };
+  const reusableLocalPath = [parsed.capturedLocalPath, parsed.promotedLocalPath]
+    .map((value) => String(value || ''))
+    .find((value) => value && fs.existsSync(value));
+  return { ...publicParsed, previewCached: !!reusableLocalPath };
+}
+
+function applyCapturedMediaPortalPreview(parsed, captured) {
+  if (!parsed || !captured) return;
+  if (captured.embedded && captured.url) {
+    parsed.embeddedPreview = true;
+    parsed.previewUrl = '';
+    parsed.capturedDownloadUrl = captured.url;
+    parsed.capturedFilename = String(captured.filename || '').slice(0, 220);
+    return;
+  }
+  if (!captured.url) return;
+  parsed.previewUrl = captured.temporary ? String(captured.url || '') : sanitizeRemoteMediaUrl(captured.url);
+  parsed.capturedFilename = String(captured.filename || '').slice(0, 220);
+  parsed.capturedLocalPath = captured.temporary ? String(captured.localPath || '') : '';
+  parsed.qualityLabel = String(captured.label || parsed.qualityLabel || '');
 }
 
 function publishMediaPortalVideo(state, parsed, { finalize = true } = {}) {
@@ -4672,7 +4767,7 @@ async function completeMediaPortalAutomation(state, result = {}) {
       sourceUrl: state.value,
       portalUrl: state.portalUrl,
       previewUrl: sanitizeRemoteMediaUrl(result.previewUrl),
-      title: sanitizeMediaVideoTitle(result.title, state.value),
+      title: sanitizeMediaVideoTitle(result.title, state.originalSourceText || state.value),
       downloadReady: !!result.downloadReady,
       downloadActionReady: !!result.downloadActionReady,
       qualityLabel: String(result.qualityLabel || '').trim().slice(0, 120),
@@ -4690,6 +4785,7 @@ async function completeMediaPortalAutomation(state, result = {}) {
       capturedLocalPath: '',
       promotedLocalPath: '',
     };
+    runtimeLog(`media portal parsed result preview=${parsed.previewUrl ? (isDirectMediaActionUrl(parsed.previewUrl) ? 'media' : 'non-media') : 'none'} actions=${parsed.mediaActions.map((action) => `${action.id}:${action.href && isDirectMediaActionUrl(action.href) ? 'media' : (Number(action.candidateIndex ?? -1) >= 0 ? 'candidate' : 'none')}`).join(',')}`);
     const canResolveBilibiliQualities = !!bilibiliViewApiUrl(state.value)
       || !!bilibiliProgressiveApiUrl(state.value, 80);
     if (canResolveBilibiliQualities) {
@@ -4721,19 +4817,17 @@ async function completeMediaPortalAutomation(state, result = {}) {
       // Make the verified result actionable immediately. Preview capture is optional and
       // may take much longer than parsing on large source videos.
       publishMediaPortalVideo(state, parsed);
-      const captured = await prepareMediaPortalVideoPreview(state, parsed);
-      if (state.requestId !== mediaPortalRequestId) return;
-      if (captured?.embedded && captured.url) {
-        parsed.embeddedPreview = true;
-        parsed.previewUrl = '';
-        parsed.capturedDownloadUrl = captured.url;
-        parsed.capturedFilename = String(captured.filename || '').slice(0, 220);
-      } else if (captured?.url) {
-        parsed.previewUrl = captured.temporary ? String(captured.url || '') : sanitizeRemoteMediaUrl(captured.url);
-        parsed.capturedFilename = String(captured.filename || '').slice(0, 220);
-        parsed.capturedLocalPath = captured.temporary ? String(captured.localPath || '') : '';
-        parsed.qualityLabel = String(captured.label || parsed.qualityLabel || '');
+      const previewPromise = prepareMediaPortalVideoPreview(state, parsed).then((captured) => {
+        applyCapturedMediaPortalPreview(parsed, captured);
+        return captured;
+      });
+      mediaPortalPreviewPromises.set(parsed, previewPromise);
+      try {
+        await previewPromise;
+      } finally {
+        mediaPortalPreviewPromises.delete(parsed);
       }
+      if (state.requestId !== mediaPortalRequestId) return;
       if (!parsed.previewUrl && !parsed.embeddedPreview) {
         emitMediaPortalProgress(state, { percent: 98, message: '正在从备用渠道补充视频预览' });
         const alternate = await prepareAlternateMediaPortalPreview(state);
@@ -4744,6 +4838,7 @@ async function completeMediaPortalAutomation(state, result = {}) {
         }
       }
       if (parsed.previewUrl || parsed.embeddedPreview) updatePublishedMediaPortalVideo(parsed);
+      if (!mediaPortalInputState && !activeMediaPortalDownloads) scheduleMediaPortalIdleDestroy();
       return;
     }
     publishMediaPortalVideo(state, parsed);
@@ -5119,7 +5214,7 @@ async function saveMediaPreviewCoverToLibrary(parsed, downloadTarget = 'download
     const rootPath = favoriteDownload ? directories.favoritePath : directories.downloadPath;
     const cleanTitle = sanitizeMediaVideoTitle(parsed.title, parsed.sourceUrl);
     const filename = sanitizeDownloadFilename(`${cleanTitle || '视频'}-封面.png`, 'image/png');
-    const downloadPath = mediaCollectionDirectory(rootPath, 'image', String(collection || '').trim());
+    const downloadPath = mediaCollectionDirectory(rootPath, 'video', String(collection || '').trim());
     fs.mkdirSync(downloadPath, { recursive: true });
     const destination = uniqueMediaDownloadPath(downloadPath, filename);
     const taskId = `media-cover-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
@@ -5165,14 +5260,24 @@ async function downloadParsedMediaVideo(downloadTarget = 'download', collection 
     : 0;
   const selectedQuality = qualityOptions[selectedQualityIndex] || null;
   const selectedQualityLabel = String(selectedAction?.label || selectedQuality?.label || parsed.qualityLabel || '最高可用画质').trim();
+  const isDouyin = detectVideoProvider(parsed.sourceUrl)?.id === 'douyin';
+  const pendingPreview = actionId !== 'backup' ? mediaPortalPreviewPromises.get(parsed) : null;
+  if (pendingPreview) {
+    runtimeLog(`parsed media waiting for active preview cache action=${actionId || 'video'}`);
+    await pendingPreview.catch(() => null);
+    if (mediaPortalParsedVideo !== parsed) return { ok: false, code: 'cancelled', reason: '解析结果已更新' };
+  }
   runtimeLog(`parsed media selected action=${actionId || '-'} qualityIndex=${selectedQualityIndex} label=${selectedQualityLabel.slice(0, 120)}`);
-  if ((!selectedAction || selectedKind === 'video') && actionId !== 'backup' && parsed.capturedLocalPath && fs.existsSync(parsed.capturedLocalPath)) {
+  const reusableLocalPath = [parsed.capturedLocalPath, parsed.promotedLocalPath]
+    .map((value) => String(value || ''))
+    .find((value) => value && fs.existsSync(value));
+  if ((!selectedAction || selectedKind === 'video') && actionId !== 'backup' && reusableLocalPath) {
     return promoteMediaPreviewToLibrary(parsed, downloadTarget, collection);
   }
   if (selectedAction?.id === 'backup' && !selectedAction.href && Number(selectedAction.candidateIndex ?? -1) < 0) {
     return { ok: false, code: 'manual-fallback', reason: '请在当前下载站手动选择备用下载', manual: true };
   }
-  if (selectedKind === 'image' && !selectedAction?.href && Number(selectedAction?.candidateIndex ?? -1) < 0) {
+  if (selectedKind === 'image') {
     return saveMediaPreviewCoverToLibrary(parsed, downloadTarget, collection);
   }
   if (selectedAction && selectedKind !== 'video' && !selectedAction.href && Number(selectedAction.candidateIndex ?? -1) < 0) {
@@ -5206,6 +5311,13 @@ async function downloadParsedMediaVideo(downloadTarget = 'download', collection 
     };
     const onDownload = (_event, item, sourceWebContents) => {
       if (sourceWebContents !== view.webContents) return;
+      const filenameKind = mediaKindForPath(item.getFilename());
+      const urlKind = mediaKindForDownloadUrl(item.getURL());
+      const mimeType = String(item.getMimeType() || '');
+      const textualMime = /^(?:text\/|application\/(?:json|xml|xhtml\+xml))/i.test(mimeType);
+      const kind = textualMime ? '' : (filenameKind || urlKind
+        || (/^video\//i.test(mimeType) ? 'video' : (/^audio\//i.test(mimeType) ? 'audio' : (/^image\//i.test(mimeType) ? 'image' : ''))));
+      if (!kind) return;
       finish({ ok: true, filename: String(item.getFilename() || '') });
     };
     electronSession.on('will-download', onDownload);
@@ -5264,9 +5376,14 @@ async function downloadParsedMediaVideo(downloadTarget = 'download', collection 
           const href = sanitizeRemoteMediaUrl(result?.href);
           runtimeLog(`parsed video candidate=${candidateIndex + 1}/${candidateCount} ok=${!!result?.ok} clicked=${!!result?.clicked} href=${href && isMediaUrl(href) ? 'media' : 'none'} label=${String(result?.label || '').slice(0, 160)}`);
           if (!result?.ok) return { ok: false, reason: String(result?.reason || '当前画质按钮暂时不可用') };
-          if (href) {
+          if (result.nativeClickRequired) {
+            await dispatchTrustedMediaPortalDownloadClick(view, result.actionPoint);
+          }
+          if (href && isDirectMediaActionUrl(href)) {
             mediaPortalExpectedPopupDownloads.delete(view.webContents);
             startCapturedMediaPortalDownload(view.webContents, href);
+          } else if (href) {
+            runtimeLog(`ignored non-media download candidate href=${href.slice(0, 260)}`);
           }
           return { ok: true };
         }, firstPass ? 8000 : (candidateIndex === firstCandidateIndex ? 12000 : 9000));
@@ -5281,7 +5398,7 @@ async function downloadParsedMediaVideo(downloadTarget = 'download', collection 
       const candidateCount = Math.max(1, Math.min(8, Number(parsed.candidateCount || 3)));
       started = await tryCandidates(candidateCount, true, selectedCandidateIndex);
     }
-    if (!started.ok && parsed.portalUrl) {
+    if (!started.ok && parsed.portalUrl && !isDouyin) {
       notifyMediaBrowserState({ opening: true, automationStage: 'video-download-reparse', autoActionMissing: false });
       const replay = await reloadParsedVideoDownloadPage(view, parsed);
       if (replay.ok) {
@@ -5696,6 +5813,29 @@ function activateMediaPortalForTrustedSubmit(view = mediaPortalView, durationMs 
   return activateMediaPortalInContentRegion(view, Math.max(300, Number(durationMs || 0)), 'video parser trusted submit');
 }
 
+async function dispatchTrustedMediaPortalDownloadClick(view, fallbackPoint = {}) {
+  if (!view || view.webContents.isDestroyed()) return false;
+  activateMediaPortalInContentRegion(view, MEDIA_PORTAL_VIDEO_SUBMIT_WAKE_MS, 'video download trusted click');
+  await new Promise((resolve) => setTimeout(resolve, 90));
+  const refreshedPoint = await view.webContents.executeJavaScript(`(() => {
+    const action = document.querySelector('[data-xuannian-download-action="true"]');
+    if (!action) return null;
+    action.scrollIntoView({ block: 'center', inline: 'center' });
+    const rect = action.getBoundingClientRect();
+    return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
+  })()`, true).catch(() => null);
+  const point = refreshedPoint || fallbackPoint || {};
+  const bounds = view.getBounds();
+  const x = Math.max(1, Math.min(Math.max(1, Number(bounds?.width || MEDIA_PORTAL_WORKER_WIDTH) - 1), Math.round(Number(point.x || 0))));
+  const y = Math.max(1, Math.min(Math.max(1, Number(bounds?.height || MEDIA_PORTAL_WORKER_HEIGHT) - 1), Math.round(Number(point.y || 0))));
+  view.webContents.focus();
+  view.webContents.sendInputEvent({ type: 'mouseMove', x, y, movementX: 0, movementY: 0 });
+  view.webContents.sendInputEvent({ type: 'mouseDown', x, y, button: 'left', clickCount: 1 });
+  view.webContents.sendInputEvent({ type: 'mouseUp', x, y, button: 'left', clickCount: 1 });
+  runtimeLog(`media portal trusted download click point=${x},${y}`);
+  return true;
+}
+
 function hideMediaPortalView(view = mediaPortalView) {
   if (!view || view.webContents.isDestroyed()) return;
   view.setVisible(false);
@@ -5812,8 +5952,8 @@ function ensureMediaPortalView() {
   }
   view.webContents.setWindowOpenHandler(({ url }) => {
     const disposition = classifyMediaPortalPopup(url, view.webContents.getURL());
-    const expectedDownload = consumeMediaPortalPopupDownload(view.webContents);
-    if (disposition === 'download' || (expectedDownload && isHttpUrl(url))) {
+    if (disposition === 'download') {
+      consumeMediaPortalPopupDownload(view.webContents);
       runtimeLog('captured media portal download popup: ' + String(url || '').slice(0, 300));
       setImmediate(() => startCapturedMediaPortalDownload(view.webContents, url));
     } else if (disposition === 'same-site') {
@@ -5826,8 +5966,8 @@ function ensureMediaPortalView() {
   });
   view.webContents.on('will-navigate', (event, url) => {
     const disposition = classifyMediaPortalPopup(url, view.webContents.getURL());
-    const expectedDownload = consumeMediaPortalPopupDownload(view.webContents);
-    if (disposition === 'download' || (expectedDownload && isHttpUrl(url))) {
+    if (disposition === 'download') {
+      consumeMediaPortalPopupDownload(view.webContents);
       event.preventDefault();
       startCapturedMediaPortalDownload(view.webContents, url);
     } else if (disposition === 'block') {
@@ -5916,7 +6056,7 @@ function setMediaPortalBounds(bounds = {}, visible = false, mode = 'browser') {
   }
   const previewUrl = mediaPortalParsedVideo?.capturedDownloadUrl || mediaPortalParsedVideo?.previewUrl || '';
   setMediaPortalPresentationMode(shouldShow && mode === 'preview' ? 'preview' : 'browser', previewUrl);
-  const keepWorkerActive = !shouldShow && (!!mediaPortalInputState || activeMediaPortalDownloads > 0);
+  const keepWorkerActive = !shouldShow && (!!mediaPortalInputState || !!mediaPortalPreviewCapture || activeMediaPortalDownloads > 0);
   if (shouldShow) {
     attachMediaPortalViewToMain(view);
     if (mediaPortalLastVisibleBounds) view.setBounds(mediaPortalLastVisibleBounds);
@@ -5927,7 +6067,7 @@ function setMediaPortalBounds(bounds = {}, visible = false, mode = 'browser') {
   if (shouldShow) {
     cancelMediaPortalIdleDestroy();
     enforceMediaPortalCacheLimit(view.webContents);
-  } else if (mediaPortalInputState || activeMediaPortalDownloads) {
+  } else if (mediaPortalInputState || mediaPortalPreviewCapture || activeMediaPortalDownloads) {
     cancelMediaPortalIdleDestroy();
   } else {
     scheduleMediaPortalIdleDestroy();
@@ -6009,19 +6149,33 @@ function loadMediaPortalPage(view, state, value, { reload = false, reason = 'ope
   return true;
 }
 
-function openMediaPortal(url, downloadTarget = 'download', sourceText = '', autoSubmit = false, collection = '', qualityPreference = '', automationMode = '') {
+function openMediaPortal(url, downloadTarget = 'download', sourceText = '', autoSubmit = false, collection = '', qualityPreference = '', automationMode = '', originalSourceText = '') {
   const value = String(url || '').trim();
   if (!isAllowedPortalUrl(value)) return false;
-  const view = ensureMediaPortalView();
-  if (!view) return false;
-  failMediaPortalPendingTask(view.webContents, 'cancelled');
-  if (automationMode) clearMediaPortalVerificationMonitor();
-  mediaPortalRequestId += 1;
   const normalizedQualityPreference = qualityPreference === 'highest' ? 'highest' : '';
   const normalizedAutomationMode = ['video-parse', 'music-search', 'music-preview', 'music-download'].includes(automationMode)
     ? automationMode
     : 'video-parse';
   const automationValue = String(sourceText || '').trim();
+  const activeParsedVideo = normalizedAutomationMode === 'video-parse'
+    && automationValue
+    && mediaPortalParsedVideo?.sourceUrl === automationValue
+    ? mediaPortalParsedVideo
+    : null;
+  const activePreviewCache = activeParsedVideo && (
+    mediaPortalPreviewPromises.has(activeParsedVideo)
+    || mediaPortalPreviewCapture?.sourceUrl === automationValue
+  );
+  if (activePreviewCache) {
+    runtimeLog(`media portal ignored duplicate parse while preview cache is active request=${activeParsedVideo.requestId}`);
+    updatePublishedMediaPortalVideo(activeParsedVideo);
+    return { ok: true, requestId: activeParsedVideo.requestId, reusedActivePreview: true };
+  }
+  const view = ensureMediaPortalView();
+  if (!view) return false;
+  failMediaPortalPendingTask(view.webContents, 'cancelled');
+  if (automationMode) clearMediaPortalVerificationMonitor();
+  mediaPortalRequestId += 1;
   const previousParsedVideo = normalizedAutomationMode === 'video-parse'
     && mediaPortalParsedVideo?.sourceUrl === automationValue
     ? mediaPortalParsedVideo
@@ -6038,6 +6192,9 @@ function openMediaPortal(url, downloadTarget = 'download', sourceText = '', auto
     ? {
       requestId: mediaPortalRequestId,
       value: automationValue,
+      originalSourceText: normalizedAutomationMode === 'video-parse'
+        ? String(originalSourceText || sourceText || '').trim()
+        : '',
       autoSubmit: !!autoSubmit,
       qualityPreference: normalizedQualityPreference,
       automationMode: normalizedAutomationMode,
@@ -8783,8 +8940,8 @@ ipcMain.handle('media:cancelDownloadTask', (_event, taskId) => {
   }
   return { ok: true, cancelled: !!handle };
 });
-ipcMain.handle('media:openPortal', (_event, url, downloadTarget = 'download', sourceText = '', autoSubmit = false, collection = '', qualityPreference = '', automationMode = '') => (
-  openMediaPortal(url, downloadTarget, sourceText, autoSubmit, collection, qualityPreference, automationMode)
+ipcMain.handle('media:openPortal', (_event, url, downloadTarget = 'download', sourceText = '', autoSubmit = false, collection = '', qualityPreference = '', automationMode = '', originalSourceText = '') => (
+  openMediaPortal(url, downloadTarget, sourceText, autoSubmit, collection, qualityPreference, automationMode, originalSourceText)
 ));
 ipcMain.handle('media:resetPortal', (_event, kind = '') => resetMediaPortalAutomation(kind));
 ipcMain.handle('media:bilibiliSessionStatus', () => bilibiliSessionStatus(mediaPortalView?.webContents));

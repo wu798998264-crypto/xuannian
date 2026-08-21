@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>玄念9.1.3</title>
+  <title>玄念9.1.4</title>
   <link rel="icon" href="src/xuannian-logo-256.png" />
   <link rel="stylesheet" href="src/media-library.css" />
   <style>
@@ -1123,7 +1123,6 @@
             <div class="media-kind-menu" id="mediaKindMenu" role="listbox" aria-label="媒体类型" hidden>
               <button class="media-kind-option active" data-media-kind="video" type="button" role="option" aria-selected="true"><span><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="m10 9 5 3-5 3Z"></path></svg></span>视频</button>
               <button class="media-kind-option" data-media-kind="audio" type="button" role="option" aria-selected="false"><span><svg viewBox="0 0 24 24"><path d="M9 18V5l10-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="16" cy="16" r="3"></circle></svg></span>音乐</button>
-              <button class="media-kind-option" data-media-kind="image" type="button" role="option" aria-selected="false"><span><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"></rect><circle cx="9" cy="9" r="2"></circle><path d="m4 17 5-5 4 4 2-2 5 5"></path></svg></span>图片</button>
             </div>
           </div>
           <div class="media-tabs" id="mediaTabs" role="tablist" aria-label="本地媒体">
@@ -1488,8 +1487,8 @@ const state = {
     items:[],
     downloadPath:'',
     favoritePath:'',
-    collections:{downloads:{video:[],audio:[],image:[]},favorites:{video:[],audio:[],image:[]}},
-    activeCollections:{downloads:{video:'',audio:'',image:''},favorites:{video:'',audio:'',image:''}},
+    collections:{downloads:{video:[],audio:[]},favorites:{video:[],audio:[]}},
+    activeCollections:{downloads:{video:'',audio:''},favorites:{video:'',audio:''}},
     loading:false,
     loaded:false,
     requestId:0,
@@ -1516,8 +1515,8 @@ const state = {
     renderVersion:0,
     virtualRanges:{downloads:{key:'',start:-1,end:-1},favorites:{key:'',start:-1,end:-1}},
     batchDelete:{
-      downloads:{video:{active:false,selectedPaths:new Set(),revision:0,busy:false},audio:{active:false,selectedPaths:new Set(),revision:0,busy:false},image:{active:false,selectedPaths:new Set(),revision:0,busy:false}},
-      favorites:{video:{active:false,selectedPaths:new Set(),revision:0,busy:false},audio:{active:false,selectedPaths:new Set(),revision:0,busy:false},image:{active:false,selectedPaths:new Set(),revision:0,busy:false}},
+      downloads:{video:{active:false,selectedPaths:new Set(),revision:0,busy:false},audio:{active:false,selectedPaths:new Set(),revision:0,busy:false}},
+      favorites:{video:{active:false,selectedPaths:new Set(),revision:0,busy:false},audio:{active:false,selectedPaths:new Set(),revision:0,busy:false}},
     },
     localPlayer:{path:'',name:'',url:''},
     favoriteOrders:{},
@@ -1787,7 +1786,7 @@ function createBrowserFallbackAPI(){
     async resolveMediaVideoProvider(value){ return resolveMediaVideoProviderFallback(value); },
     async getMediaMusicSearchUrl(keyword){ return mediaMusicSearchUrlFallback(keyword); },
     async getMediaConfig(){ return {downloadPath:'浏览器下载目录',favoritePath:'浏览器收藏目录',downloadHistory:[]}; },
-    async listLocalMedia(){ return {ok:true,downloadPath:'浏览器下载目录',favoritePath:'浏览器收藏目录',items:[],collections:{downloads:{video:[],audio:[],image:[]},favorites:{video:[],audio:[],image:[]}}}; },
+    async listLocalMedia(){ return {ok:true,downloadPath:'浏览器下载目录',favoritePath:'浏览器收藏目录',items:[],collections:{downloads:{video:[],audio:[]},favorites:{video:[],audio:[]}}}; },
     async favoriteLocalMedia(){ return {ok:false,reason:'预览环境不支持本地文件收藏'}; },
     async createMediaCollection(){ return {ok:false,reason:'预览环境不支持收藏夹操作'}; },
     async renameMediaCollection(){ return {ok:false,reason:'预览环境不支持收藏夹操作'}; },
@@ -1852,7 +1851,7 @@ function createBrowserFallbackAPI(){
     async deleteInspiration(id){ const data=read(); data.inspirations=data.inspirations.filter(x=>x.id!==id); write(data); return data.inspirations; },
     async getSettings(){ return read().settings; },
     async saveSettings(settings){ const data=read(); data.settings={...data.settings,...settings}; write(data); return data.settings; },
-    async getUpdateState(){ return {status:'current',revision:0,currentVersion:'9.1.3',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false,repositoryUrl:'https://github.com/wu798998264-crypto/xuannian'}; },
+    async getUpdateState(){ return {status:'current',revision:0,currentVersion:'9.1.4',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false,repositoryUrl:'https://github.com/wu798998264-crypto/xuannian'}; },
     async checkForUpdates(){ return this.getUpdateState(); },
     async downloadUpdate(){ return this.getUpdateState(); },
     async installUpdate(){ return false; },
@@ -1935,7 +1934,7 @@ function createUnifiedAPI(nativeApi, fallback){
     clearMediaDownloadHistory: ()=> nativeApi.clearMediaDownloadHistory ? nativeApi.clearMediaDownloadHistory() : fallback.clearMediaDownloadHistory(),
     cancelMediaDownloadTask: (taskId)=> nativeApi.cancelMediaDownloadTask ? nativeApi.cancelMediaDownloadTask(taskId) : fallback.cancelMediaDownloadTask(taskId),
     setMediaDownloadTaskPaused: (taskId,paused=true)=> nativeApi.setMediaDownloadTaskPaused ? nativeApi.setMediaDownloadTaskPaused(taskId,paused) : fallback.setMediaDownloadTaskPaused(taskId,paused),
-    openMediaPortal: (url,downloadTarget,sourceText,autoSubmit,collection,qualityPreference,automationMode)=> nativeApi.openMediaPortal ? nativeApi.openMediaPortal(url,downloadTarget,sourceText,autoSubmit,collection,qualityPreference,automationMode) : fallback.openMediaPortal(url,downloadTarget,sourceText,autoSubmit,collection,qualityPreference,automationMode),
+    openMediaPortal: (url,downloadTarget,sourceText,autoSubmit,collection,qualityPreference,automationMode,originalSourceText)=> nativeApi.openMediaPortal ? nativeApi.openMediaPortal(url,downloadTarget,sourceText,autoSubmit,collection,qualityPreference,automationMode,originalSourceText) : fallback.openMediaPortal(url,downloadTarget,sourceText,autoSubmit,collection,qualityPreference,automationMode,originalSourceText),
     resetMediaPortal: (kind)=> nativeApi.resetMediaPortal ? nativeApi.resetMediaPortal(kind) : fallback.resetMediaPortal(kind),
     getBilibiliSessionStatus: ()=> nativeApi.getBilibiliSessionStatus ? nativeApi.getBilibiliSessionStatus() : fallback.getBilibiliSessionStatus(),
     downloadParsedMediaVideo: (downloadTarget,collection,qualityIndex=0)=> nativeApi.downloadParsedMediaVideo ? nativeApi.downloadParsedMediaVideo(downloadTarget,collection,qualityIndex) : Promise.resolve({ok:false,reason:'当前环境不支持媒体下载'}),
@@ -2408,7 +2407,7 @@ function bindEvents(){
   });
   $('#mediaKindHome')?.addEventListener('click',()=>{
     setMediaKindMenuExpanded(false);
-    setMediaTab(state.media.kind==='image'?'downloads':'portal');
+    setMediaTab('portal');
   });
   $('#mediaKindToggle')?.addEventListener('click',event=>{
     event.stopPropagation();
@@ -4271,7 +4270,7 @@ async function parseMediaVideo(routeSelection=null,{force=false}={}){
   state.media.browser={...state.media.browser,ready:true,loading:true,opening:true,url,autoActionMissing:false,qualityLabel:'',externalOpened:false};
   renderMediaPortalWorkspace();
   renderMediaBrowserState();
-  const opened=await api.openMediaPortal(url,'download',provider.sourceUrl,true,'','highest','video-parse');
+  const opened=await api.openMediaPortal(url,'download',provider.sourceUrl,true,'','highest','video-parse',value);
   if(!opened||opened?.ok===false){
     state.media.videoParse={...state.media.videoParse,status:'error',error:'load-error'};
     renderMediaPortalWorkspace();
@@ -4322,7 +4321,7 @@ async function downloadParsedVideo(favorite=false,options={}){
     if(favorite&&!Object.prototype.hasOwnProperty.call(options,'collection')){
       api.setMediaBrowserBounds({},false,'browser');
       try{
-        collection=await showMediaCollectionPicker(selectedAction?.kind||'video');
+        collection=await showMediaCollectionPicker(selectedAction?.kind==='audio'?'audio':'video');
       }finally{
         syncMediaBrowserBounds();
       }
@@ -4758,7 +4757,7 @@ function saveMediaFavoriteOrders(){
 }
 
 function mediaFavoriteOrderKey(kind,collection=''){
-  return `${['video','audio','image'].includes(kind)?kind:'video'}\n${String(collection||'')}`;
+  return `${['video','audio'].includes(kind)?kind:'video'}\n${String(collection||'')}`;
 }
 
 function orderedFavoriteItems(items,kind,collection=''){
@@ -4790,7 +4789,7 @@ function updateMediaFavoriteOrder(kind,collection,names){
 
 function moveMediaFavoriteOrder(item,targetCollection,targetPath=''){
   if(!item) return;
-  const kind=['video','audio','image'].includes(item.kind)?item.kind:'video';
+  const kind=['video','audio'].includes(item.kind)?item.kind:'video';
   const sourceCollection=String(item.collection||'');
   const target=String(targetCollection||'');
   const sourceKey=mediaFavoriteOrderKey(kind,sourceCollection);
@@ -4866,13 +4865,13 @@ function setMediaKindMenuExpanded(expanded){
 }
 
 function renderMediaKindSelector(){
-  const kind=['video','audio','image'].includes(state.media.kind)?state.media.kind:'video';
+  const kind=['video','audio'].includes(state.media.kind)?state.media.kind:'video';
   const label=$('#mediaKindLabel');
   const icon=$('#mediaKindToggleIcon');
   const home=$('#mediaKindHome');
-  if(label) label.textContent=kind==='audio'?'音乐':(kind==='image'?'图片':'视频');
+  if(label) label.textContent=kind==='audio'?'音乐':'视频';
   if(icon) icon.innerHTML=mediaKindIcon(kind);
-  if(home) home.title=kind==='audio'?'打开音乐下载页':(kind==='image'?'查看已下载图片':'打开视频下载页');
+  if(home) home.title=kind==='audio'?'打开音乐下载页':'打开视频下载页';
   $$('#mediaKindMenu [data-media-kind]').forEach(button=>{
     const active=button.dataset.mediaKind===state.media.kind;
     button.classList.toggle('active',active);
@@ -4881,7 +4880,7 @@ function renderMediaKindSelector(){
 }
 
 function setMediaKind(kind,{showPortal=false}={}){
-  if(!['video','audio','image'].includes(kind)) kind='video';
+  if(!['video','audio'].includes(kind)) kind='video';
   const changed=state.media.kind!==kind;
   state.media.kind=kind;
   if(changed) clearMediaManualPortal(kind);
@@ -4893,11 +4892,7 @@ function setMediaKind(kind,{showPortal=false}={}){
     resetMediaListViewport('favorites');
   }
   if(showPortal){
-    setMediaTab(kind==='image'?'downloads':'portal');
-    return;
-  }
-  if(kind==='image'&&state.media.tab==='portal'){
-    setMediaTab('downloads');
+    setMediaTab('portal');
     return;
   }
   renderMediaLists({force:changed});
@@ -4928,7 +4923,7 @@ function activeMediaCollection(location,kind=state.media.kind){
 }
 
 function setActiveMediaCollection(location,collection){
-  if(!state.media.activeCollections[location]) state.media.activeCollections[location]={video:'',audio:'',image:''};
+  if(!state.media.activeCollections[location]) state.media.activeCollections[location]={video:'',audio:''};
   state.media.activeCollections[location][state.media.kind]=String(collection||'');
   resetMediaListViewport(location);
   renderMediaLists({force:true});
@@ -4956,7 +4951,7 @@ async function showMediaCollectionPicker(kind=state.media.kind){
       setTimeout(()=>$('#mediaCollectionPicker')?.focus(),30);
     });
     if(choice!=='__create_media_collection__') return choice;
-    const name=await showTextInputModal({title:'新建收藏夹',label:`${kind==='video'?'视频':(kind==='image'?'图片':'音乐')}收藏夹名称`,confirmText:'新建'});
+    const name=await showTextInputModal({title:'新建收藏夹',label:`${kind==='video'?'视频':'音乐'}收藏夹名称`,confirmText:'新建'});
     if(!name) continue;
     const result=await api.createMediaCollection('favorites',kind,name);
     toast(result?.ok?'收藏夹已新建':(result?.reason||'新建失败'));
@@ -4984,13 +4979,13 @@ function filteredMediaItems(tab){
 
 function mediaBatchState(tab,kind=state.media.kind){
   const location=tab==='favorites'?'favorites':'downloads';
-  const mediaKind=['video','audio','image'].includes(kind)?kind:'video';
+  const mediaKind=['video','audio'].includes(kind)?kind:'video';
   return state.media.batchDelete[location][mediaKind];
 }
 
 function mediaBatchItems(tab,kind=state.media.kind){
   const location=tab==='favorites'?'favorites':'downloads';
-  const mediaKind=['video','audio','image'].includes(kind)?kind:'video';
+  const mediaKind=['video','audio'].includes(kind)?kind:'video';
   return state.media.items.filter(item=>item.location===location&&item.kind===mediaKind&&item.path);
 }
 
@@ -5001,7 +4996,7 @@ function selectedMediaBatchItems(tab,kind=state.media.kind){
 
 function pruneMediaBatchSelections(){
   for(const tab of ['downloads','favorites']){
-    for(const kind of ['video','audio','image']){
+    for(const kind of ['video','audio']){
       const batch=mediaBatchState(tab,kind);
       const existingPaths=new Set(mediaBatchItems(tab,kind).map(item=>item.path));
       let changed=false;
@@ -5131,7 +5126,6 @@ async function confirmMediaBatchDelete(tab){
 
 function mediaKindIcon(kind){
   if(kind==='video') return '<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="m10 9 5 3-5 3Z"></path></svg>';
-  if(kind==='image') return '<svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"></rect><circle cx="9" cy="9" r="2"></circle><path d="m4 17 5-5 4 4 2-2 5 5"></path></svg>';
   if(kind==='lyrics') return '<svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"></path><path d="M14 2v6h6"></path><path d="M8 13h8"></path><path d="M8 17h6"></path></svg>';
   return '<svg viewBox="0 0 24 24"><path d="M9 18V5l10-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="16" cy="16" r="3"></circle></svg>';
 }
@@ -5185,7 +5179,7 @@ function mediaRowHtml(item,index,tab){
   const batch=mediaBatchState(tab,item.kind);
   const batchSelected=batch.selectedPaths.has(item.path);
   return `<div class="media-row ${batch.active?'batch-selectable':''} ${batchSelected?'batch-selected':''}" data-media-row="${index}" data-media-list="${tab}" data-media-path="${escapeHtml(item.path||'')}" draggable="${batch.active?'false':'true'}" title="${batch.active?(batchSelected?'点击取消选择':'点击选择'):escapeHtml(item.path||'')}">
-    <div class="media-primary">${batch.active?`<span class="media-batch-check ${batchSelected?'selected':''}" role="checkbox" aria-checked="${batchSelected}" title="${batchSelected?'取消选择':'选择'}"><svg viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"></path></svg></span>`:''}<span class="media-kind ${lyrics?'lyrics':item.kind}">${mediaKindIcon(lyrics?'lyrics':item.kind)}</span><span class="media-name-wrap"><span class="media-name">${escapeHtml(item.name||'')}</span><span class="media-type-label">${item.kind==='video'?'视频':(item.kind==='image'?'图片':(lyrics?'歌词':'音乐'))}</span></span></div>
+    <div class="media-primary">${batch.active?`<span class="media-batch-check ${batchSelected?'selected':''}" role="checkbox" aria-checked="${batchSelected}" title="${batchSelected?'取消选择':'选择'}"><svg viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"></path></svg></span>`:''}<span class="media-kind ${lyrics?'lyrics':item.kind}">${mediaKindIcon(lyrics?'lyrics':item.kind)}</span><span class="media-name-wrap"><span class="media-name">${escapeHtml(item.name||'')}</span><span class="media-type-label">${item.kind==='video'?'视频':(lyrics?'歌词':'音乐')}</span></span></div>
     <div class="media-path">${escapeHtml(item.directory||'')}</div>
     <div class="media-size">${escapeHtml(formatFileSize(item.size))}</div>
     <div class="media-date">${escapeHtml(formatFileModified(item.modifiedAt))}</div>
@@ -5207,7 +5201,7 @@ function renderMediaList(tab,{force=false}={}){
   list.classList.toggle('batch-mode',batch.active);
   renderMediaBatchActions(tab,items);
   const query=String($(tab==='favorites'?'#mediaFavoritesSearch':'#mediaDownloadsSearch')?.value||'').trim();
-  summary.textContent=state.media.loading?'正在刷新':`${state.media.kind==='video'?'视频':(state.media.kind==='image'?'图片':'音乐')} · ${items.length} 个${query?'匹配':'文件'}`;
+  summary.textContent=state.media.loading?'正在刷新':`${state.media.kind==='video'?'视频':'音乐'} · ${items.length} 个${query?'匹配':'文件'}`;
   if(!items.length){
     list.innerHTML=`<div class="media-empty">${state.media.loading?'正在读取目录':(query?'没有匹配的媒体文件':(tab==='favorites'?'暂无媒体收藏':'临时储存路径中暂无音视频文件'))}</div>`;
     state.media.virtualRanges[tab]={key:'',start:-1,end:-1};
@@ -5260,7 +5254,7 @@ async function refreshMediaLibrary({quiet=false}={}){
     pruneMediaBatchSelections();
     if(state.media.localPlayer?.path&&!state.media.items.some(item=>item.path===state.media.localPlayer.path)) closeMediaLocalPlayer();
     for(const location of ['downloads','favorites']){
-      for(const kind of ['video','audio','image']){
+      for(const kind of ['video','audio']){
         const active=activeMediaCollection(location,kind);
         if(active&&!mediaCollectionsFor(location,kind).includes(active)) state.media.activeCollections[location][kind]='';
       }
@@ -5534,7 +5528,7 @@ async function handleMediaFavoriteDrop(event){
 }
 
 async function createMediaCollectionFor(location){
-  const name=await showTextInputModal({title:'新建收藏夹',label:`${state.media.kind==='video'?'视频':(state.media.kind==='image'?'图片':'音乐')}收藏夹名称`,confirmText:'新建'});
+  const name=await showTextInputModal({title:'新建收藏夹',label:`${state.media.kind==='video'?'视频':'音乐'}收藏夹名称`,confirmText:'新建'});
   if(!name) return;
   const result=await api.createMediaCollection(location,state.media.kind,name);
   toast(result?.ok?'收藏夹已新建':(result?.reason||'新建失败'));
@@ -8401,7 +8395,7 @@ function showUpdateDialog(){
   showModal(`
     <div data-update-dialog>
       <div class="modal-header"><h3>软件更新</h3><button class="modal-close" id="closeModal">×</button></div>
-      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '9.1.3')}</b><span>${hasNewerUpdateVersion(update)?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
+      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '9.1.4')}</b><span>${hasNewerUpdateVersion(update)?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
       <div class="modal-message">${escapeHtml(updateStatusText())}</div>
       <p class="update-network-tip">提示：开启 VPN 后再检测更新，结果会更加准确。</p>
       ${busy||downloaded?`<div class="update-progress"><span style="width:${downloaded?100:progress}%"></span></div>`:''}

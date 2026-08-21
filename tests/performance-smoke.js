@@ -115,7 +115,7 @@ async function run() {
   assert(videoThumbnailSource.includes("canvas.toDataURL('image/jpeg', 0.82)"), 'video fallback must return a compressed still frame');
   assert(/function ensureMediaPortalView\([\s\S]*?new WebContentsView[\s\S]*?partition:\s*'persist:xuannian-media-portals'[\s\S]*?nodeIntegration:\s*false[\s\S]*?sandbox:\s*true/.test(mainSource), 'third-party media sites must run in an isolated sandboxed view');
   assert(mainSource.includes('classifyMediaPortalPopup(url, view.webContents.getURL())') && mainSource.includes('popupBlocked: true') && mainSource.includes("return { action: 'deny' }"), 'unexpected third-party popups must be denied without replacing the active parser page');
-  assert(mainSource.includes('expectMediaPortalPopupDownload(view.webContents') && mainSource.includes('expectedDownload && isHttpUrl(url)'), 'an explicitly clicked result must capture extensionless CDN download popups without allowing unrelated popups');
+  assert(mainSource.includes('expectMediaPortalPopupDownload(view.webContents') && mainSource.includes('dispatchTrustedMediaPortalDownloadClick') && mainSource.includes("if (disposition === 'download')"), 'an explicitly clicked result must use a trusted click and capture only verified media popups');
   assert(mainSource.includes('MEDIA_PORTAL_WORKER_WIDTH = 1280') && mainSource.includes('MEDIA_PORTAL_WORKER_HEIGHT = 900') && mainSource.includes('new BaseWindow({') && mainSource.includes('workerWindow.showInactive()'), 'hidden media workers need a full offscreen visible compositor so provider parsing continues without opening the source site');
   assert(mainSource.includes('MEDIA_PORTAL_VIDEO_WAKE_MAX = 4') && mainSource.includes('MEDIA_PORTAL_VIDEO_WAKE_VISIBLE_MS = 520') && mainSource.includes("const videoResult = state?.automationMode === 'video-parse' && state?.phase === 'result'") && mainSource.includes("const wakeKind = musicSearch ? 'music search' : 'video result'"), 'video result pages must receive staged background visibility wakes just like delayed music pages');
   assert(mainSource.includes("nativeSubmit: state.automationMode === 'video-parse' && state.phase !== 'result'") && mainSource.includes('media portal trusted submit request='), 'video parser submission must use a trusted Chromium input event without requiring a manual click');
@@ -130,7 +130,7 @@ async function run() {
   assert(mainSource.includes('rememberCompletedMediaDownload(completedTask);'), 'completed downloads must be persisted before the renderer is notified');
   assert(mainSource.includes('showMediaDownloadNotification({ status: \'completed\'') && mainSource.includes("new Notification({ title, body, silent: false })"), 'completed downloads must trigger a native XuanNian notification from the real download completion event');
   assert(mainSource.includes("mode: 'video-download'") && mainSource.includes('downloadParsedMediaVideo'), 'video automation must parse before an explicit highest-quality download action');
-  assert(mainSource.includes('reloadParsedVideoDownloadPage') && mainSource.includes("automationStage: 'video-download-reparse'"), 'a stale or preview-consumed result page must be reparsed before download fallback candidates are tried');
+  assert(mainSource.includes('!isDouyin') && mainSource.includes("automationStage: 'video-download-reparse'"), 'Douyin downloads must never reparse after the original capture session, while other providers retain their existing fallback');
   assert(mainSource.includes('promoteMediaPreviewToLibrary') && mainSource.includes('parsed.capturedLocalPath'), 'a completed temporary preview must become the tracked download fallback when higher qualities fail');
   assert(mainSource.includes('media portal reused cached preview for repeated source'), 'repeated video links should reuse the valid preview cache instead of re-triggering a rate-limited parse');
   assert(mainSource.includes('streamMediaPortalUrlToFile') && mainSource.includes('webContents.session.fetch'), 'captured CDN responses must have a session-aware streaming path when Electron downloadURL does not emit will-download');
@@ -141,11 +141,13 @@ async function run() {
   assert(/let reader = null;\s*const referer = mediaDownloadReferer\(url, options\.referer\);\s*const userAgent = [\s\S]*?\s*try \{/.test(mainSource), 'the XHS Node HTTP fallback must retain referer and user-agent values outside the Electron fetch try block');
   assert(mainSource.includes('douyinvod\\.com|bytev\\.com|douyinpic\\.com') && mainSource.includes("return 'https://www.douyin.com/'"), 'Douyin CDN downloads must use a Douyin referer instead of the Seekin page referer');
   assert(mainSource.includes('startDirectMediaPortalPreview') && mainSource.includes('startDirectTrackedMediaDownload'), 'direct CDN streaming must support both temporary previews and tracked final downloads');
-  assert(mainSource.includes('MEDIA_PREVIEW_MAX_BYTES = 96 * 1024 * 1024'), 'temporary previews must have a strict size ceiling');
-  assert(mainSource.includes("error.code = 'MEDIA_PREVIEW_TOO_LARGE'") && mainSource.includes('maxBytes: MEDIA_PREVIEW_MAX_BYTES'), 'oversized temporary previews must stop before consuming a full media file');
+  assert(mainSource.includes("const hintedKind = ['video', 'audio', 'image']") && mainSource.includes('const textualResponse ='), 'typed media actions must accept generic binary streams without accepting HTML or JSON error pages');
+  assert(mainSource.includes('ignored non-media portal download source=') && mainSource.includes('if (!isDirectMediaActionUrl(safeUrl))'), 'portal pages must never enter the direct media download path');
+  assert(mainSource.includes('MEDIA_PREVIEW_MAX_BYTES = 0'), 'Douyin preview caching must retain the selected full media source instead of forcing a lower-quality size-limited file');
+  assert(mainSource.includes('isUsableMediaResponseChunk') && mainSource.includes('looksLikeTextualMediaPayload'), 'media streaming must reject HTML or JSON payloads even when a provider labels them as binary');
   assert(mainSource.includes('control: createMediaDownloadControl()') && mainSource.includes('capture.control?.cancel?.()'), 'cancelling a preview must abort its direct network stream');
   assert(mainSource.includes('后台搜索已提交，正在等待下载站返回结果'), 'video parsing must expose the submitted background-search state');
-  assert(mainSource.includes('falling back to header-free Electron downloadURL') && mainSource.includes('webContents.downloadURL(url);'), 'CDN fallback must avoid custom Referer headers that Chromium blocks for XHS signed media URLs');
+  assert(mainSource.includes('falling back to header-free Electron downloadURL') && mainSource.includes('webContents.downloadURL(safeUrl);'), 'CDN fallback must avoid custom Referer headers that Chromium blocks for XHS signed media URLs');
   assert(mainSource.includes("mode === 'music-search'") && mainSource.includes('sanitizeMusicResults') && mainSource.includes('downloadMediaMusicResult'), 'music automation must return multiple results before downloading the selected version');
   assert(mainSource.includes('media:portalProgress') && mainSource.includes('waitForMediaPortalDownload'), 'media parsing and delayed music downloads must expose real progress states');
   assert(mainSource.includes('findInstalledMusicClient') && mainSource.includes('openHighQualityMusic'), 'high-quality music must prefer an installed cloud-drive client');
@@ -164,6 +166,7 @@ async function run() {
   assert(mainSource.includes("ipcMain.handle('media:openCollection'") && /kind === 'media-folder'[\s\S]*?action\('open-folder', '打开文件夹'\)/.test(mainSource), 'media collection context menus must open their managed folder');
   assert(mediaLibrarySource.includes('async function scanMediaDirectory'), 'local media files must be derived from the selected folders');
   assert(mediaLibrarySource.includes('async function listManagedMediaFiles'), 'media scanning must enumerate only supported media files');
+  assert(mediaLibrarySource.includes("MEDIA_LIBRARY_KINDS = Object.freeze(['video', 'audio'])"), 'the media library must expose only video and music categories');
   assert(mediaLibrarySource.includes('async function deleteMediaCollection'), 'media collections need a file-preserving delete path');
   assert(mediaLibrarySource.includes('movePathAcrossVolumes') && mediaLibrarySource.includes('preserved, folders, otherFiles'), 'deleting a media collection must preserve nested folders and non-media files');
   assert(!mediaLibrarySource.includes('收藏夹中包含子文件夹或非媒体文件'), 'complex collection contents must no longer block collection deletion');
@@ -174,6 +177,8 @@ async function run() {
   assert(!mediaLibrarySource.includes('fetch('), 'media library must not call third-party private download APIs');
 
   const indexSource = fs.readFileSync(path.join(__dirname, '..', 'index.html'), 'utf8');
+  assert(!indexSource.includes('data-media-kind="image"'), 'the redundant image category must be removed from the media-library selector');
+  assert(mainSource.includes("mediaCollectionDirectory(rootPath, 'video'"), 'generated Douyin covers must be stored as video-associated files instead of recreating an image library category');
   assert(mainSource.includes("ipcMain.handle('media:clearDownloadHistory'") && indexSource.includes('clearMediaDownloadHistory()'), 'completed download history must support one-click clearing without touching media files');
   assert(indexSource.includes('id="mediaDownloadViewAll"') && indexSource.includes('async function openAllMediaDownloads()') && indexSource.includes("state.media.tab='downloads'") && indexSource.includes("switchView('media',{skipCoach:true})"), 'download history must offer a direct route to the complete downloaded-media list');
   const quickSource = fs.readFileSync(path.join(__dirname, '..', 'quick.html'), 'utf8');

@@ -18,6 +18,7 @@ const {
   listManagedMediaFiles,
   listMediaCollections,
   listMediaFiles,
+  MEDIA_LIBRARY_KINDS,
   mediaKindForPath,
   moveMediaToCollection,
   musicSearchUrl,
@@ -145,6 +146,7 @@ async function run() {
   assert.strictEqual(mediaKindForPath('song.lrc'), 'audio');
   assert.strictEqual(mediaKindForPath('cover.JPG'), 'image');
   assert.strictEqual(mediaKindForPath('cover.webp'), 'image');
+  assert.deepStrictEqual(MEDIA_LIBRARY_KINDS, ['video', 'audio']);
   assert.strictEqual(isLyricsPath('song.LRC'), true);
   assert.strictEqual(mediaKindForPath('setup.exe'), '');
   assert.strictEqual(isAllowedPortalUrl('https://www.hellotik.app/zh/kuaishou'), true);
@@ -168,6 +170,17 @@ async function run() {
     sanitizeMediaVideoTitle('免费的社交媒体视频下载', '34 【个人作品集网站】 https://www.xiaohongshu.com/discovery/item/abc 复制此链接'),
     '34 【个人作品集网站】',
   );
+  assert.strictEqual(
+    sanitizeMediaVideoTitle(
+      '抖音TikTok无水印 DLPanda.com 视频下载',
+      '8.55 v@l.fB 03/18 Fcn:/ 这才是夏天该有的样子 😆 #治愈 #旅行 @无关账号 https://v.douyin.com/RSoqNxKyWQE/ 复制此链接，打开抖音搜索，直接观看视频！',
+    ),
+    '这才是夏天该有的样子',
+  );
+  assert.strictEqual(
+    sanitizeMediaVideoTitle('抖音TikTok无水印', 'https://v.douyin.com/RSoqNxKyWQE/'),
+    '抖音-RSoqNxKyWQE',
+  );
   assert(sanitizeMediaVideoTitle('', 'https://x.com/example/status/2034711267571609988').includes('2034711267571609988'));
 
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'xuannian-media-test-'));
@@ -187,7 +200,8 @@ async function run() {
   fs.utimesSync(lyricsPath, nowSeconds, nowSeconds);
   try {
     let items = await listMediaFiles(downloads, favorites);
-    assert.deepStrictEqual(items.map((item) => item.kind).sort(), ['audio', 'audio', 'image', 'video']);
+    assert.deepStrictEqual(items.map((item) => item.kind).sort(), ['audio', 'audio', 'video']);
+    assert.strictEqual(items.some((item) => item.name === 'cover.jpg'), false, 'images must not be returned as a media-library category');
     assert.deepStrictEqual(items.filter((item) => item.kind === 'audio').map((item) => item.name), ['song歌词.lrc', 'song.mp3']);
     assert.strictEqual(items.find((item) => item.name === 'song歌词.lrc')?.lyrics, true);
     const rejectedLyricsFavorite = await copyMediaToFavorites(lyricsPath, favorites);
@@ -204,6 +218,7 @@ async function run() {
     assert.strictEqual(moved.ok, true);
     assert.strictEqual(fs.existsSync(moved.path), true);
     let collections = await listMediaCollections(downloads);
+    assert.deepStrictEqual(Object.keys(collections).sort(), ['audio', 'video']);
     assert.deepStrictEqual(collections.audio, ['工作配乐']);
     const renamed = await renameMediaCollection(downloads, 'audio', '工作配乐', '常用配乐');
     assert.strictEqual(renamed.ok, true);

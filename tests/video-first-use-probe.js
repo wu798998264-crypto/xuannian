@@ -10,6 +10,8 @@ app.setName('XuanNianFirstVideoProbe');
 app.setPath('appData', tempAppData);
 const probeDownloads = path.join(tempAppData, 'Downloads');
 const probeDocuments = path.join(tempAppData, 'Documents');
+const expectedCaption = '这才是夏天该有的样子';
+const douyinShareText = `8.55 v@l.fB 03/18 Fcn:/ ${expectedCaption} 😆 #治愈 #旅行 @无关账号 https://v.douyin.com/RSoqNxKyWQE/ 复制此链接，打开抖音搜索，直接观看视频！`;
 fs.mkdirSync(probeDownloads, { recursive: true });
 fs.mkdirSync(probeDocuments, { recursive: true });
 app.setPath('downloads', probeDownloads);
@@ -48,7 +50,7 @@ async function run() {
     await switchView('media', { skipCoach: true });
     setMediaKind('video', { showPortal: true });
     const input = document.querySelector('#mediaVideoInput');
-    input.value = 'https://v.douyin.com/RSoqNxKyWQE/';
+    input.value = ${JSON.stringify(douyinShareText)};
     await parseMediaVideo();
     return true;
   })()`, true);
@@ -96,14 +98,21 @@ async function run() {
     const cacheDeadline = Date.now() + 90000;
     while (Date.now() < cacheDeadline) {
       await wait(500);
-      const cached = await window.webContents.executeJavaScript('!!state.media.videoParse.previewCached', true);
-      if (cached) {
-        snapshot.previewCached = true;
+      const cachedState = await window.webContents.executeJavaScript(`(() => ({
+        previewCached: !!state.media.videoParse.previewCached,
+        previewReady: !!(state.media.videoParse.previewUrl || state.media.videoParse.embeddedPreview),
+        previewUrl: String(state.media.videoParse.previewUrl || ''),
+      }))()`, true);
+      if (cachedState.previewCached) {
+        Object.assign(snapshot, cachedState);
         break;
       }
     }
   }
 
+  const videoResult = snapshot?.status === 'ready'
+    ? await window.webContents.executeJavaScript(`window.nativeAPI.downloadParsedMediaVideo('download','','video')`, true)
+    : null;
   const coverResult = snapshot?.status === 'ready'
     ? await window.webContents.executeJavaScript(`window.nativeAPI.downloadParsedMediaVideo('download','','image')`, true)
     : null;
@@ -113,7 +122,7 @@ async function run() {
   const runtimeLog = fs.existsSync(logFile) ? fs.readFileSync(logFile, 'utf8') : '';
   const wakeCount = (runtimeLog.match(/video result visibility wake/g) || []).length;
   const recoveryCount = (runtimeLog.match(/media portal video recovery/g) || []).length;
-  console.log(`first video parse probe ${JSON.stringify({ ...snapshot, coverResult, elapsedMs, wakeCount, recoveryCount })}`);
+  console.log(`first video parse probe ${JSON.stringify({ ...snapshot, videoResult, coverResult, elapsedMs, wakeCount, recoveryCount })}`);
   if (snapshot?.status !== 'ready') {
     const portal = webContents.getAllWebContents().find((contents) => /(?:dlpanda\.com|seekin\.ai)/i.test(contents.getURL()));
     if (portal && !portal.isDestroyed()) {
@@ -134,18 +143,26 @@ async function run() {
     }
   }
   assert.strictEqual(snapshot?.status, 'ready', `first video parse failed: ${JSON.stringify(snapshot)}`);
+  assert.strictEqual(snapshot.title, expectedCaption, `parsed title did not use the cleaned Douyin caption: ${snapshot.title}`);
   assert.strictEqual(snapshot.downloadReady, true, 'first video parse did not expose a download');
+  assert.strictEqual(snapshot.previewCached, true, 'first video parse did not cache the resolved video');
+  assert.strictEqual(snapshot.previewReady, true, 'cached video was not published to the native preview element');
   assert.deepStrictEqual(snapshot.mediaActions.map(action => action.label), ['视频', '备用下载', '音频', '封面图片']);
-  for (const action of snapshot.mediaActions.filter(item => !['备用下载', '封面图片'].includes(item.label))) {
+  for (const action of snapshot.mediaActions.filter(item => item.label === '视频')) {
     assert(action.href || action.candidateIndex >= 0, `${action.label} action is not downloadable: ${JSON.stringify(action)}`);
   }
   const coverAction = snapshot.mediaActions.find(action => action.label === '封面图片');
   const videoFallbackAvailable = snapshot.previewCached || snapshot.mediaActions.some(action => action.label === '备用下载' && !!action.href);
   assert(coverAction.href || coverAction.candidateIndex >= 0 || videoFallbackAvailable, `cover action has no source: ${JSON.stringify(snapshot)}`);
   assert(!/dlpanda\.com\/images\/logo/i.test(coverAction.href), 'the DLPanda logo must not be exposed as the video cover');
+  assert.strictEqual(videoResult?.ok, true, `cached video promotion failed: ${JSON.stringify(videoResult)}`);
+  assert.strictEqual(fs.existsSync(videoResult.path), true, 'promoted video file is missing');
+  assert.strictEqual(path.basename(videoResult.path, path.extname(videoResult.path)), expectedCaption, 'downloaded video filename did not use the cleaned Douyin caption');
   assert.strictEqual(coverResult?.ok, true, `cover generation failed: ${JSON.stringify(coverResult)}`);
   assert.strictEqual(path.extname(String(coverResult.path || '')).toLowerCase(), '.png');
   assert.strictEqual(fs.existsSync(coverResult.path), true, 'generated cover file is missing');
+  assert.strictEqual(path.basename(coverResult.path, '.png'), `${expectedCaption}-封面`, 'cover filename did not use the cleaned Douyin caption');
+  assert(runtimeLog.includes('promoted cached media preview to '), 'final download did not promote the cached preview file');
   probeSucceeded = true;
   app.quit();
 }

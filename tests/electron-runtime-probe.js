@@ -1248,7 +1248,7 @@ async function run() {
       const deletedFavorites=[];
       const syntheticDownloads=Array.from({length:5000},(_,index)=>({path:'C:/Downloads/archive/video-'+index+'.mp4',directory:'C:/Downloads/archive',name:'video-'+index+'.mp4',kind:'video',size:4096+index,modifiedAt:index,favorite:false,location:'downloads',collection:'项目视频'}));
       api.resolveMediaVideoProvider=async value=>resolveMediaVideoProviderFallback(value);
-      api.openMediaPortal=async(url,target,sourceText,autoSubmit,collection,qualityPreference,automationMode)=>{ openedPortals.push(url); portalTargets.push(target); portalInputs.push({sourceText,autoSubmit,collection,qualityPreference,automationMode}); return true; };
+      api.openMediaPortal=async(url,target,sourceText,autoSubmit,collection,qualityPreference,automationMode,originalSourceText)=>{ openedPortals.push(url); portalTargets.push(target); portalInputs.push({sourceText,autoSubmit,collection,qualityPreference,automationMode,originalSourceText}); return true; };
       api.resetMediaPortal=async kind=>{ resetMediaPortals.push(kind); return {ok:true,requestId:900+resetMediaPortals.length}; };
       api.getBilibiliSessionStatus=async()=>{ bilibiliSessionChecks+=1; return {authenticated:true,sessionFingerprint:'runtime-member'}; };
       api.getMediaMusicSearchUrl=async keyword=>'https://www.gequbao.com/s/'+encodeURIComponent(keyword);
@@ -1301,7 +1301,7 @@ async function run() {
       const videoInput=document.querySelector('#mediaVideoInput');
       const douyinProvider=resolveMediaVideoProviderFallback('https://v.douyin.com/runtime');
       const tiktokProvider=resolveMediaVideoProviderFallback('https://www.tiktok.com/@runtime/video/1');
-      videoInput.value='https://v.douyin.com/runtime';
+      videoInput.value='8.55 Fcn:/ 测试抖音文案 #测试话题 https://v.douyin.com/runtime 复制此链接，打开抖音搜索，直接观看视频！';
       await parseMediaVideo(false);
       state.media.videoParse={status:'ready',sourceUrl:'https://v.douyin.com/runtime',previewUrl:'https://cdn.example.com/runtime.mp4',title:'测试视频',qualityLabel:'1080P 无水印下载',downloadReady:true,error:''};
       state.media.videoParse.qualityOptions=[
@@ -1733,6 +1733,7 @@ async function run() {
   assert.deepStrictEqual(mediaLibraryMetrics.portalInputs.map((item) => item.collection), ['', '', '']);
   assert.deepStrictEqual(mediaLibraryMetrics.portalInputs.map((item) => item.qualityPreference || ''), ['highest','highest','']);
   assert.deepStrictEqual(mediaLibraryMetrics.portalInputs.map((item) => item.automationMode || ''), ['video-parse','video-parse','music-search']);
+  assert.strictEqual(mediaLibraryMetrics.portalInputs[0].originalSourceText, '8.55 Fcn:/ 测试抖音文案 #测试话题 https://v.douyin.com/runtime 复制此链接，打开抖音搜索，直接观看视频！');
   assert.deepStrictEqual(mediaLibraryMetrics.externalUrls, []);
   assert.deepStrictEqual(mediaLibraryMetrics.copiedText, []);
   assert.deepStrictEqual(mediaLibraryMetrics.highQualityRequests, []);
@@ -1804,7 +1805,7 @@ async function run() {
   assert.strictEqual(mediaLibraryMetrics.activeView, 'mediaView');
   assert.strictEqual(mediaLibraryMetrics.activeNav, 'media');
   assert(mediaLibraryMetrics.rows > 0 && mediaLibraryMetrics.rows <= 48, `media virtual DOM exceeded 48 rows: ${mediaLibraryMetrics.rows}`);
-  assert.deepStrictEqual(mediaLibraryMetrics.typeOptions, ['视频','音乐','图片']);
+  assert.deepStrictEqual(mediaLibraryMetrics.typeOptions, ['视频','音乐']);
   assert.strictEqual(mediaLibraryMetrics.audioPortalSelected, true);
   assert.strictEqual(mediaLibraryMetrics.videoDownloadModeSelected, true);
   assert.strictEqual(mediaLibraryMetrics.downloadKindLabel, '视频');

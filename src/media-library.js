@@ -12,6 +12,7 @@ const IMAGE_EXTENSIONS = new Set([
 ]);
 const LYRICS_EXTENSIONS = new Set(['lrc']);
 const MEDIA_KIND_DIRECTORIES = Object.freeze({ video: '视频', audio: '音乐', image: '图片' });
+const MEDIA_LIBRARY_KINDS = Object.freeze(['video', 'audio']);
 const SEEKIN_UNIVERSAL_PORTAL = 'https://www.seekin.ai/zh/downloader/';
 const DLPANDA_PORTAL = 'https://dlpanda.com/zh-CN';
 const SEEKIN_PORTAL = Object.freeze({ url: SEEKIN_UNIVERSAL_PORTAL, label: 'Seekin' });
@@ -284,25 +285,46 @@ function scoreMediaDownloadQualityLabel(value) {
 }
 
 function sanitizeMediaVideoTitle(value, sourceValue = '') {
-  const clean = (input) => String(input || '')
-    .normalize('NFKC')
-    .replace(/https?:\/\/[^\s<>"']+/gi, ' ')
-    .replace(/(?:复制此链接|复制链接|打开(?:抖音|Dou音|小红书|快手|哔哩哔哩|B站|TikTok|X|Twitter)[^。！？!?\n]{0,80}|直接观看视频)[。！？!?\s]*$/gi, ' ')
-    .replace(/\b(?:download|original|best|video|mp4|m4v|mov|webm|mkv)\b/gi, ' ')
-    .replace(/(?:下载视频|立即下载|无水印下载|原画下载|最高画质|超清|高清)/g, ' ')
-    .replace(/\b\d{3,4}\s*p\b/gi, ' ')
-    .replace(/\b\d+(?:\.\d+)?\s*(?:gb|mb|kb)\b/gi, ' ')
-    .replace(/[\u0000-\u001f\u007f-\u009f\uFFFD]/g, ' ')
-    .replace(/[^\p{L}\p{N}\s，。！？、；：,.!?;:（）()《》【】「」『』—_-]/gu, ' ')
-    .replace(/([，。！？、；：,.!?;:])\1+/g, '$1')
-    .replace(/\s+/g, ' ')
-    .replace(/^[\s，。！？、；：,.!?;:_-]+|[\s，。！？、；：,.!?;:_-]+$/g, '')
-    .trim();
-  const genericTitle = /^(?:免费的?社交媒体视频下载|视频下载|社交媒体视频|seekin|download|已解析视频)$/i;
-  let title = clean(value);
-  if (!title || genericTitle.test(title)) title = clean(String(sourceValue || '').replace(extractHttpUrl(sourceValue), ' '));
-  if (!title || genericTitle.test(title)) {
-    const provider = detectVideoProvider(sourceValue);
+  const provider = detectVideoProvider(sourceValue);
+  const isDouyinSource = provider?.id === 'douyin';
+  const clean = (input, { stripSocialMetadata = false } = {}) => {
+    let title = String(input || '').normalize('NFKC');
+    if (stripSocialMetadata) {
+      title = title
+        // 抖音分享文本常见的随机口令，例如“8.55 v@l.fB 03/18 Fcn:/”。
+        .replace(/^\s*\d+(?:\.\d+)?\s+/u, ' ')
+        .replace(/^\s*[A-Za-z0-9]@[A-Za-z0-9._-]+(?:\s+\d{1,2}\/\d{1,2})?\s+/u, ' ')
+        .replace(/^\s*(?!https?:)[A-Za-z0-9]{1,12}:\/?\s*/iu, ' ')
+        .replace(/(?:复制)?打开(?:抖音|Dou音)[，,\s]*(?:看看|搜索)?\s*(?:【[^】\n]{0,80}(?:的作品)?】)?[，,：:\s]*/giu, ' ')
+        .replace(/(?:复制此链接|复制链接|长按复制(?:此条|这条)?消息|打开抖音搜索|直接观看视频|粘贴到抖音)[，,：:\s]*/giu, ' ')
+        .replace(/(?:^|\s)@[\p{L}\p{N}_.-]+/gu, ' ')
+        .replace(/#[^\s#，。！？、；：,.!?;:]+/gu, ' ')
+        .replace(/(?:^|\s)\d{1,2}\/\d{1,2}\s+[A-Za-z]@[\p{L}\p{N}._-]+\s*$/gu, ' ');
+    }
+    return title
+      .replace(/https?:\/\/[^\s<>"']+/gi, ' ')
+      .replace(/(?:复制此链接|复制链接|打开(?:抖音|Dou音|小红书|快手|哔哩哔哩|B站|TikTok|X|Twitter)[^。！？!?\n]{0,80}|直接观看视频)[。！？!?\s]*$/gi, ' ')
+      .replace(/\b(?:download|original|best|video|mp4|m4v|mov|webm|mkv)\b/gi, ' ')
+      .replace(/(?:下载视频|立即下载|无水印下载|原画下载|最高画质|超清|高清)/g, ' ')
+      .replace(/\b\d{3,4}\s*p\b/gi, ' ')
+      .replace(/\b\d+(?:\.\d+)?\s*(?:gb|mb|kb)\b/gi, ' ')
+      .replace(/[\u0000-\u001f\u007f-\u009f\uFFFD]/g, ' ')
+      .replace(/[^\p{L}\p{N}\s，。！？、；：,.!?;:（）()《》【】「」『』—_-]/gu, ' ')
+      .replace(/([，。！？、；：,.!?;:])\1+/g, '$1')
+      .replace(/\s+/g, ' ')
+      .replace(/^[\s，。！？、；：,.!?;:_-]+|[\s，。！？、；：,.!?;:_-]+$/g, '')
+      .trim();
+  };
+  const genericTitle = /^(?:免费的?社交媒体视频下载|视频下载|社交媒体视频|抖音(?:tiktok)?(?:无水印)?|dlpanda(?:\.com)?|seekin|download|已解析视频|视频)$/i;
+  const providerJunkTitle = (title) => /(?:dlpanda|seekin).*(?:下载|download)|(?:抖音|tiktok).*(?:无水印|解析|download)/i.test(String(title || ''));
+  const sourceTitle = isDouyinSource ? clean(sourceValue, { stripSocialMetadata: true }) : '';
+  let title = sourceTitle || clean(value);
+  if (!title || genericTitle.test(title) || (!sourceTitle && providerJunkTitle(title))) {
+    title = clean(String(sourceValue || '').replace(extractHttpUrl(sourceValue), ' '), {
+      stripSocialMetadata: isDouyinSource,
+    });
+  }
+  if (!title || genericTitle.test(title) || providerJunkTitle(title)) {
     let token = '';
     try {
       const url = new URL(provider?.sourceUrl || extractHttpUrl(sourceValue));
@@ -427,12 +449,8 @@ async function listCollectionNames(directory, kind) {
 }
 
 async function listMediaCollections(directory) {
-  const [video, audio, image] = await Promise.all([
-    listCollectionNames(directory, 'video'),
-    listCollectionNames(directory, 'audio'),
-    listCollectionNames(directory, 'image'),
-  ]);
-  return { video, audio, image };
+  const [video, audio] = await Promise.all(MEDIA_LIBRARY_KINDS.map((kind) => listCollectionNames(directory, kind)));
+  return { video, audio };
 }
 
 async function listManagedMediaFiles(directory, favorite = false, limit = 100000) {
@@ -443,7 +461,7 @@ async function listManagedMediaFiles(directory, favorite = false, limit = 100000
   const maxItems = Math.max(1, requestedLimit || 100000);
   const location = favorite ? 'favorites' : 'downloads';
   const items = [];
-  for (const kind of ['video', 'audio', 'image']) {
+  for (const kind of MEDIA_LIBRARY_KINDS) {
     if (items.length >= maxItems) break;
     const typeDirectory = mediaTypeDirectory(root, kind);
     const unclassified = await scanMediaFilesInDirectory(typeDirectory, favorite, location, '', maxItems - items.length);
@@ -485,6 +503,7 @@ async function listMediaFiles(downloadDirectory, favoriteDirectory) {
   const seen = new Set();
   const items = [];
   for (const item of [...favorites, ...downloads]) {
+    if (!MEDIA_LIBRARY_KINDS.includes(item.kind)) continue;
     const key = normalizedPathKey(item.path);
     if (seen.has(key)) continue;
     seen.add(key);
@@ -638,6 +657,7 @@ async function deleteMediaCollection(directory, kind, name) {
 module.exports = {
   AUDIO_EXTENSIONS,
   IMAGE_EXTENSIONS,
+  MEDIA_LIBRARY_KINDS,
   MEDIA_KIND_DIRECTORIES,
   VIDEO_EXTENSIONS,
   VIDEO_PROVIDERS,

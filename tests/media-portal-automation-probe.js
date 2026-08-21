@@ -67,6 +67,29 @@ async function run() {
   const previewDownload = await win.webContents.executeJavaScript(buildPortalScript({ mode: 'video-download', timeoutMs: 2000, candidateIndex: 1 }, scoreMediaDownloadQualityLabel), true);
   assert.strictEqual(previewDownload.href, 'https://cdn.example.com/video-720.mp4');
 
+  await loadFixture(win, `
+    <input id="source" value="https://v.douyin.com/landing-test" style="width:500px;height:42px">
+    <button style="width:120px;height:42px">解析</button>
+    <a href="/vimeo" style="display:block;width:240px;height:32px">Vimeo 视频下载</a>
+    <p>直接粘贴分享的内容，解析后即可下载无水印视频</p>
+  `);
+  console.log('probe: reject DLPanda landing controls before parsed result');
+  const landingControls = await win.webContents.executeJavaScript(buildPortalScript({
+    mode: 'video-parse', phase: 'result', value: 'https://v.douyin.com/landing-test', timeoutMs: 1100,
+  }, scoreMediaDownloadQualityLabel), true);
+  assert.strictEqual(landingControls.ok, false);
+  assert.strictEqual(landingControls.reason, 'parse-timeout');
+
+  await loadFixture(win, '<article class="result-card"><button style="display:block;width:180px;height:36px">1080P 视频下载</button></article>');
+  console.log('probe: request a trusted click for button-only video results');
+  const buttonOnlyDownload = await win.webContents.executeJavaScript(buildPortalScript({
+    mode: 'video-download', value: 'https://v.douyin.com/button-only', timeoutMs: 2000,
+  }, scoreMediaDownloadQualityLabel), true);
+  assert.strictEqual(buttonOnlyDownload.ok, true);
+  assert.strictEqual(buttonOnlyDownload.nativeClickRequired, true);
+  assert.strictEqual(buttonOnlyDownload.clicked, false);
+  assert(buttonOnlyDownload.actionPoint.x > 0 && buttonOnlyDownload.actionPoint.y > 0);
+
   await loadFixture(win, '<article class="result-card"><video src="https://cdn.example.com/douyin-preview.mp4" style="width:320px;height:180px"></video><a href="https://cdn.example.com/douyin-video.mp4" style="display:block;width:160px;height:32px">1080P 视频下载</a><a href="https://cdn.example.com/douyin-backup.mp4" style="display:block;width:160px;height:32px">备用下载</a><a href="https://cdn.example.com/douyin-audio.mp3" style="display:block;width:160px;height:32px">音频 MP3 下载</a><img src="data:image/gif;base64,R0lGODlhAQABAAAAACw="><a href="https://cdn.example.com/douyin-cover.jpg" download style="display:block;width:160px;height:32px">封面图片下载</a></article>');
   console.log('probe: classify DLPanda media actions');
   const douyinActionsResult = await win.webContents.executeJavaScript(buildPortalScript({
