@@ -8685,7 +8685,10 @@ async function captureScreenSelection() {
 if (gotSingleInstanceLock) {
 app.whenReady().then(() => {
   runtimeLog(`app ready platform=${process.platform} arch=${process.arch} packaged=${app.isPackaged} appPath=${app.getAppPath()} resources=${process.resourcesPath || ''}`);
-  app.setAppUserModelId('app.xuannian.desktop.rounded');
+  // Keep the runtime identity identical to package.json build.appId. Windows
+  // uses this value to associate the running window with the installed
+  // shortcut; a mismatched identity falls back to Electron's default icon.
+  app.setAppUserModelId('app.xuannian.desktop');
   Menu.setApplicationMenu(null);
   protectUserDataOnStartup();
   cleanupMediaPreviewCache();

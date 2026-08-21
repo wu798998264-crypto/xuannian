@@ -96,6 +96,9 @@ async function run() {
   const mainSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
   const mediaLibrarySource = fs.readFileSync(path.join(__dirname, '..', 'src', 'media-library.js'), 'utf8');
   const videoThumbnailSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'video-thumbnail.html'), 'utf8');
+  const packageMetadata = require('../package.json');
+  assert(mainSource.includes(`app.setAppUserModelId('${packageMetadata.build.appId}')`), 'the Windows runtime identity must match the packaged shortcut so the taskbar uses the XuanNian logo');
+  assert(!mainSource.includes('app.xuannian.desktop.rounded'), 'the obsolete rounded taskbar identity must not return');
   assert(/function createQuickWindow\(\)[\s\S]*?backgroundThrottling:\s*true/.test(mainSource), 'hidden quick window must allow Chromium background throttling');
   const warmRefreshStart = mainSource.indexOf('function scheduleQuickWindowWarmRefresh');
   const warmRefreshEnd = mainSource.indexOf('\nfunction stopClipboardWatcher', warmRefreshStart);
