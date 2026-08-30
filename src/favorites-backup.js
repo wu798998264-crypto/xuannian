@@ -81,6 +81,11 @@ function normalizedPathKey(value = '') {
   return String(value || '').replace(/\\/g, '/').toLocaleLowerCase('en-US');
 }
 
+function isPortableAbsolutePath(value = '') {
+  const text = String(value || '');
+  return path.isAbsolute(text) || /^[a-zA-Z]:[\\/]/.test(text) || /^\\\\/.test(text);
+}
+
 function collectFavoriteAssetPaths(value = {}) {
   const seen = new Set();
   const result = [];
@@ -120,7 +125,7 @@ function rewriteAttachment(attachment, lookup) {
       const mapped = mappedAssetReference(next[key], lookup);
       next[key] = mapped !== next[key]
         ? mapped
-        : (path.isAbsolute(fileUrlToPath(next[key]) || next[key]) ? '' : next[key]);
+        : (isPortableAbsolutePath(fileUrlToPath(next[key]) || next[key]) ? '' : next[key]);
     }
   }
   if (next.path || next.filePath) next.dataUrl = '';
