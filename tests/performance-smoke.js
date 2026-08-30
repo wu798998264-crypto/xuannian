@@ -95,10 +95,14 @@ async function run() {
 
   const mainSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
   const mediaLibrarySource = fs.readFileSync(path.join(__dirname, '..', 'src', 'media-library.js'), 'utf8');
+  const favoritesBackupSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'favorites-backup.js'), 'utf8');
   const videoThumbnailSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'video-thumbnail.html'), 'utf8');
   const packageMetadata = require('../package.json');
   assert(mainSource.includes(`app.setAppUserModelId('${packageMetadata.build.appId}')`), 'the Windows runtime identity must match the packaged shortcut so the taskbar uses the XuanNian logo');
   assert(!mainSource.includes('app.xuannian.desktop.rounded'), 'the obsolete rounded taskbar identity must not return');
+  assert(favoritesBackupSource.includes("FAVORITES_BACKUP_FORMAT = 'xuannian-favorites-backup'"), 'favorites backup must use a dedicated portable format');
+  assert(mainSource.includes("favorites-data.json") && mainSource.includes("manifest.json") && mainSource.includes('.part'), 'favorites export must use a manifest, a favorites-only data file, and an atomic partial archive');
+  assert(mainSource.includes('normalizeImportedFavorites') && mainSource.includes('broadcastDataRefresh(saved)'), 'favorites import must normalize the package and refresh all data views');
   assert(/function createQuickWindow\(\)[\s\S]*?backgroundThrottling:\s*true/.test(mainSource), 'hidden quick window must allow Chromium background throttling');
   const warmRefreshStart = mainSource.indexOf('function scheduleQuickWindowWarmRefresh');
   const warmRefreshEnd = mainSource.indexOf('\nfunction stopClipboardWatcher', warmRefreshStart);

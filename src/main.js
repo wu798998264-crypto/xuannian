@@ -15,6 +15,15 @@ const {
   readJsonWithRecoverySync,
   writeJsonAtomicSync,
 } = require('./data-persistence');
+const {
+  FAVORITES_BACKUP_FORMAT,
+  FAVORITES_BACKUP_VERSION,
+  createFavoritesBackupSnapshot,
+  normalizeImportedFavorites,
+  collectFavoriteAssetPaths,
+  rewriteFavoriteAssetPaths,
+  favoriteContentCounts,
+} = require('./favorites-backup');
 const { FileSearchService, fileTypeForPath } = require('./file-search');
 const {
   copyMediaToFavorites,
@@ -7280,6 +7289,48 @@ function findExportedDataFile(rootDir) {
   return '';
 }
 
+function findExportedFile(rootDir, fileName) {
+  const stack = [rootDir];
+  while (stack.length) {
+    const dir = stack.pop();
+    let entries = [];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name);
+      if (entry.isFile() && entry.name === fileName) return full;
+      if (entry.isDirectory()) stack.push(full);
+    }
+  }
+  return '';
+}
+
+function copyFavoriteBackupAsset(sourcePath, packageRoot, assetsRoot, index) {
+  if (!sourcePath || !path.isAbsolute(sourcePath) || !fs.existsSync(sourcePath)) return '';
+  let stat;
+  try {
+    stat = fs.statSync(sourcePath);
+  } catch {
+    return '';
+  }
+  if (!stat.isFile()) return '';
+  const ext = path.extname(sourcePath);
+  const stem = safeBaseName(path.basename(sourcePath, ext)).slice(0, 70) || 'attachment';
+  const fingerprint = crypto.createHash('sha256').update(`${sourcePath}|${stat.size}|${stat.mtimeMs}`).digest('hex').slice(0, 16);
+  const relative = path.join('assets', `${String(index).padStart(4, '0')}-${stem}-${fingerprint}${ext}`);
+  const target = path.join(packageRoot, relative);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  fs.copyFileSync(sourcePath, target);
+  return relative.replace(/\\/g, '/');
+}
+
+function favoriteBackupSnapshotForExport(data) {
+  return createFavoritesBackupSnapshot(localizePersistentContent(data));
+}
+
 function rewriteImportedStoragePath(value, storageRoot) {
   if (typeof value !== 'string' || !value) return value;
   const normalized = value.replace(/\\/g, '/');
@@ -7309,7 +7360,7 @@ function rewriteImportedDataPaths(value, storageRoot) {
 
 async function exportUserDataPackage(ownerWindow = mainWindow) {
   const data = loadData({ clone: false });
-  await saveDataDurable(data, { skipLocalizeAssets: true, clone: false });
+  await saveDataDurable(data, { clone: false });
   const storageRoot = appStorageRoot(data);
   const defaultPath = path.join(app.getPath('desktop'), `玄念收藏备份-${exportFileNameStamp()}.zip`);
   const result = await dialog.showSaveDialog(ownerWindow || mainWindow, {
@@ -7321,32 +7372,47 @@ async function exportUserDataPackage(ownerWindow = mainWindow) {
 
   const stagingRoot = fs.mkdtempSync(path.join(app.getPath('temp'), 'xuannian-export-'));
   const packageRoot = path.join(stagingRoot, '玄念收藏数据包');
+  const partPath = `${result.filePath}.part`;
   fs.mkdirSync(packageRoot, { recursive: true });
-  const entries = [
-    'xuannian-data.json',
-    'xuannian-assets',
-    'clipboard-images',
-    'screenshots',
-    'drag-images',
-  ];
-  for (const entry of entries) {
-    copyPathRecursive(path.join(storageRoot, entry), path.join(packageRoot, entry));
+  const snapshot = favoriteBackupSnapshotForExport(data);
+  const sourcePaths = collectFavoriteAssetPaths(snapshot);
+  const assetMap = new Map();
+  let assetIndex = 0;
+  for (const sourcePath of sourcePaths) {
+    const relative = copyFavoriteBackupAsset(sourcePath, packageRoot, path.join(packageRoot, 'assets'), assetIndex);
+    if (relative) {
+      assetMap.set(sourcePath, relative);
+      assetIndex += 1;
+    }
   }
+  const portableSnapshot = rewriteFavoriteAssetPaths(snapshot, assetMap);
+  const counts = favoriteContentCounts(portableSnapshot);
+  fs.writeFileSync(path.join(packageRoot, 'manifest.json'), JSON.stringify({
+    format: FAVORITES_BACKUP_FORMAT,
+    version: FAVORITES_BACKUP_VERSION,
+    exportedAt: portableSnapshot.exportedAt,
+    counts,
+  }, null, 2), 'utf8');
+  fs.writeFileSync(path.join(packageRoot, 'favorites-data.json'), JSON.stringify(portableSnapshot.data, null, 2), 'utf8');
   fs.writeFileSync(path.join(packageRoot, 'README.txt'), [
     '玄念收藏数据包',
     '',
-    '此压缩包用于迁移玄念收藏、提示词、便签、灵感、附件和相关图片数据。',
+    '此压缩包只包含收藏、便签、灵感及其附件，不包含剪切板历史和剪切板图片。',
     `导出时间：${new Date().toLocaleString()}`,
-    `原始数据目录：${storageRoot}`,
     '',
-    '恢复到新电脑时，请先关闭玄念，再把压缩包内文件复制到新电脑的玄念数据目录。',
-    '默认数据目录：',
-    'Windows: %APPDATA%\\玄念',
-    'macOS: ~/Library/Application Support/玄念',
+    '请在玄念“设置 > 收藏导入”中选择此 ZIP 文件，不要手动解压覆盖数据目录。',
   ].join('\r\n'), 'utf8');
-  createZipFromDirectory(packageRoot, result.filePath);
-  fs.rmSync(stagingRoot, { recursive: true, force: true });
-  return { ok: true, filePath: result.filePath, storageRoot };
+  try {
+    createZipFromDirectory(packageRoot, partPath);
+    const partStat = fs.statSync(partPath);
+    if (!partStat.isFile() || partStat.size <= 0) throw new Error('导出的收藏备份为空。');
+    if (fs.existsSync(result.filePath)) fs.rmSync(result.filePath, { force: true });
+    fs.renameSync(partPath, result.filePath);
+  } finally {
+    if (fs.existsSync(partPath)) fs.rmSync(partPath, { force: true });
+    fs.rmSync(stagingRoot, { recursive: true, force: true });
+  }
+  return { ok: true, filePath: result.filePath, storageRoot, counts };
 }
 
 async function importUserDataPackage(ownerWindow = mainWindow) {
@@ -7360,32 +7426,71 @@ async function importUserDataPackage(ownerWindow = mainWindow) {
   const zipPath = result.filePaths[0];
   const stagingRoot = fs.mkdtempSync(path.join(app.getPath('temp'), 'xuannian-import-'));
   try {
-    extractZipToDirectory(zipPath, stagingRoot);
-    const dataFile = findExportedDataFile(stagingRoot);
-    if (!dataFile) return { ok: false, reason: '导入包里没有找到 xuannian-data.json。' };
-
-    const packageRoot = path.dirname(dataFile);
-    const importedRaw = readJson(dataFile, null);
-    if (!importedRaw || typeof importedRaw !== 'object') {
-      return { ok: false, reason: '导入包里的数据文件无法读取。' };
+    try {
+      extractZipToDirectory(zipPath, stagingRoot);
+    } catch (error) {
+      return { ok: false, reason: `无法读取 ZIP 收藏备份：${error?.message || '压缩包可能已损坏或传输不完整。'}` };
     }
-
+    let stagedBytes = 0;
+    try { stagedBytes = fs.statSync(zipPath).size; } catch {}
+    if (!stagedBytes) return { ok: false, reason: '导入文件是 0 字节，或远程复制尚未完成。请确认传输完整后再导入。' };
+    const manifestFile = findExportedFile(stagingRoot, 'manifest.json');
+    const favoritesFile = findExportedFile(stagingRoot, 'favorites-data.json');
+    const legacyFile = findExportedDataFile(stagingRoot);
     const current = loadData();
     const storageRoot = appStorageRoot(current);
-    for (const entry of ['xuannian-assets', 'clipboard-images', 'screenshots', 'drag-images']) {
-      copyPathRecursive(path.join(packageRoot, entry), path.join(storageRoot, entry));
+    let imported;
+    let packageRoot;
+    if (manifestFile && favoritesFile) {
+      const manifest = readJson(manifestFile, null);
+      if (!manifest || manifest.format !== FAVORITES_BACKUP_FORMAT) return { ok: false, reason: '这不是有效的玄念收藏备份。' };
+      if (Number(manifest.version || 0) > FAVORITES_BACKUP_VERSION) return { ok: false, reason: `收藏备份版本 ${manifest.version} 暂不受支持，请先更新玄念。` };
+      packageRoot = path.dirname(favoritesFile);
+      const importedRaw = readJson(favoritesFile, null);
+      if (!importedRaw || typeof importedRaw !== 'object') return { ok: false, reason: '收藏备份数据文件无法读取。' };
+      const assetRoot = path.join(packageRoot, 'assets');
+      const importedAssetRoot = attachmentStorageDir(current, 'imported');
+      const assetMap = new Map();
+      const stack = [assetRoot];
+      while (stack.length) {
+        const dir = stack.pop();
+        let entries = [];
+        try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { continue; }
+        for (const entry of entries) {
+          const source = path.join(dir, entry.name);
+          if (entry.isDirectory()) {
+            stack.push(source);
+            continue;
+          }
+          if (!entry.isFile()) continue;
+          const relative = path.relative(packageRoot, source).replace(/\\/g, '/');
+          const target = path.join(importedAssetRoot, path.basename(source));
+          fs.mkdirSync(path.dirname(target), { recursive: true });
+          if (!fs.existsSync(target)) fs.copyFileSync(source, target);
+          assetMap.set(relative, target);
+        }
+      }
+      imported = normalizeImportedFavorites(rewriteFavoriteAssetPaths({ format: FAVORITES_BACKUP_FORMAT, version: manifest.version, data: importedRaw }, assetMap));
+    } else if (legacyFile) {
+      packageRoot = path.dirname(legacyFile);
+      const importedRaw = readJson(legacyFile, null);
+      if (!importedRaw || typeof importedRaw !== 'object') return { ok: false, reason: '导入包里的数据文件无法读取。' };
+      for (const entry of ['xuannian-assets']) {
+        copyPathRecursive(path.join(packageRoot, entry), path.join(storageRoot, entry));
+      }
+      imported = normalizeImportedFavorites(rewriteImportedDataPaths(importedRaw, storageRoot));
+    } else {
+      return { ok: false, reason: '未找到收藏备份数据。请选择玄念导出的 ZIP 文件。' };
     }
-
-    const imported = rewriteImportedDataPaths(importedRaw, storageRoot);
     const merged = mergeDataSnapshots(current, imported);
     const saved = await saveDataDurable(merged, { skipLocalizeAssets: true, clone: false });
-    sendDataChanged(saved);
+    broadcastDataRefresh(saved);
+    const counts = favoriteContentCounts(imported);
     return {
       ok: true,
       filePath: zipPath,
       storageRoot,
-      notes: Array.isArray(imported.notes) ? imported.notes.length : 0,
-      inspirations: Array.isArray(imported.inspirations) ? imported.inspirations.length : 0,
+      counts,
     };
   } finally {
     fs.rmSync(stagingRoot, { recursive: true, force: true });
