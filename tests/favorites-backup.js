@@ -7,6 +7,7 @@ const {
   normalizeImportedFavorites,
   collectFavoriteAssetPaths,
   rewriteFavoriteAssetPaths,
+  remapConflictingProjectIds,
   favoriteContentCounts,
 } = require('../src/favorites-backup');
 
@@ -51,16 +52,16 @@ assert.strictEqual(snapshot.version, FAVORITES_BACKUP_VERSION);
 assert.strictEqual(snapshot.exportedAt, '2026-08-30T00:00:00.000Z');
 assert(!Object.prototype.hasOwnProperty.call(snapshot.data, 'records'), 'clipboard records must not be exported');
 assert(!Object.prototype.hasOwnProperty.call(snapshot.data, 'settings'), 'device settings must not be exported');
+assert(!Object.prototype.hasOwnProperty.call(snapshot.data, 'stickyProjects'), 'sticky categories must not be exported');
+assert(!Object.prototype.hasOwnProperty.call(snapshot.data, 'stickyNotes'), 'sticky notes must not be exported as a separate feature');
+assert(!Object.prototype.hasOwnProperty.call(snapshot.data, 'inspirationCategories'), 'inspiration categories must not be exported');
+assert(!Object.prototype.hasOwnProperty.call(snapshot.data, 'inspirations'), 'inspirations must not be exported');
 assert.deepStrictEqual(snapshot.data.noteProjects, source.noteProjects);
-assert.deepStrictEqual(snapshot.data.notes, source.notes);
-assert.deepStrictEqual(snapshot.data.stickyNotes, source.stickyNotes);
-assert.deepStrictEqual(snapshot.data.inspirations, source.inspirations);
+assert.strictEqual(snapshot.data.notes.length, 1, 'new backups must contain only ordinary favorites');
 
 const paths = collectFavoriteAssetPaths(snapshot);
 assert.deepStrictEqual(paths.sort(), [
-  'C:\\profile\\玄念\\xuannian-assets\\ideas\\idea.jpg',
   'C:\\profile\\玄念\\xuannian-assets\\notes\\prompt.png',
-  'D:\\references\\brief.pdf',
 ].sort(), 'only attachments referenced by favorite content should be collected');
 assert(!paths.some((item) => item.includes('clipboard-images')), 'clipboard image cache must not enter favorites backups');
 
@@ -71,28 +72,42 @@ const portable = rewriteFavoriteAssetPaths(snapshot, new Map([
 ]));
 assert.strictEqual(portable.data.notes[0].attachments[0].path, 'assets/prompt.png');
 assert.strictEqual(portable.data.notes[0].attachments[0].preview, 'assets/prompt.png');
-assert.strictEqual(portable.data.stickyNotes[0].attachments[0].filePath, 'assets/brief.pdf');
-assert.strictEqual(portable.data.inspirations[0].attachments[0].path, 'assets/idea.jpg');
 const missingAsset = rewriteFavoriteAssetPaths(snapshot, new Map());
 assert.strictEqual(missingAsset.data.notes[0].attachments[0].path, '', 'missing absolute attachment paths must not leak into a portable backup');
 
 const importedLegacy = normalizeImportedFavorites(source);
 assert(!Object.prototype.hasOwnProperty.call(importedLegacy, 'records'), 'legacy imports must discard clipboard records');
 assert(!Object.prototype.hasOwnProperty.call(importedLegacy, 'settings'), 'legacy imports must discard source-device settings');
-assert.strictEqual(importedLegacy.notes.length, 1);
-assert.strictEqual(importedLegacy.stickyNotes.length, 1);
-assert.strictEqual(importedLegacy.inspirations.length, 1);
+assert.strictEqual(importedLegacy.notes.length, 2, 'legacy sticky notes should import as ordinary favorites');
+assert(!Object.prototype.hasOwnProperty.call(importedLegacy, 'stickyNotes'));
+assert(!Object.prototype.hasOwnProperty.call(importedLegacy, 'inspirations'));
 
 const importedCurrent = normalizeImportedFavorites(portable);
 assert.deepStrictEqual(importedCurrent, portable.data, 'current backup envelopes must normalize to favorite data');
 assert.deepStrictEqual(favoriteContentCounts(importedCurrent), {
   projects: 1,
   notes: 1,
-  stickyNotes: 1,
-  inspirationCategories: 1,
-  inspirations: 1,
-  attachments: 3,
+  attachments: 1,
 });
+const currentWithLegacyFields = normalizeImportedFavorites({
+  format: FAVORITES_BACKUP_FORMAT,
+  version: FAVORITES_BACKUP_VERSION,
+  data: { ...source, notes: source.notes, stickyNotes: source.stickyNotes },
+});
+assert.strictEqual(currentWithLegacyFields.notes.length, 1, 'v3 backups must ignore retired fields');
+
+const remapped = remapConflictingProjectIds(
+  {
+    noteProjects: [{ id: 'same-id', name: '目标分类' }],
+    notes: [],
+  },
+  {
+    noteProjects: [{ id: 'same-id', name: '导入分类' }],
+    notes: [{ id: 'import-note', projectId: 'same-id', content: '收藏内容' }],
+  },
+);
+assert.notStrictEqual(remapped.noteProjects[0].id, 'same-id');
+assert.strictEqual(remapped.notes[0].projectId, remapped.noteProjects[0].id);
 
 assert.throws(
   () => normalizeImportedFavorites({ format: FAVORITES_BACKUP_FORMAT, version: FAVORITES_BACKUP_VERSION + 1, data: {} }),

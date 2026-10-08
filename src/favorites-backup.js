@@ -1,25 +1,68 @@
 const path = require('path');
 
 const FAVORITES_BACKUP_FORMAT = 'xuannian-favorites-backup';
-const FAVORITES_BACKUP_VERSION = 2;
-const FAVORITE_ARRAY_KEYS = [
-  'noteProjects',
-  'notes',
-  'stickyProjects',
-  'stickyNotes',
-  'inspirationCategories',
-  'inspirations',
-];
-const FAVORITE_ITEM_KEYS = ['notes', 'stickyNotes', 'inspirations'];
+const FAVORITES_BACKUP_VERSION = 3;
+const FAVORITE_ARRAY_KEYS = ['noteProjects', 'notes'];
+const FAVORITE_ITEM_KEYS = ['notes'];
 
 function clone(value) {
   return value == null ? value : JSON.parse(JSON.stringify(value));
 }
 
-function pickFavoritesData(source = {}) {
+function legacyStickyNotesAsFavorites(source = {}, noteProjects = [], notes = []) {
+  const stickyProjects = Array.isArray(source?.stickyProjects) ? source.stickyProjects : [];
+  const stickyNotes = Array.isArray(source?.stickyNotes) ? source.stickyNotes : [];
+  if (!stickyNotes.length) return { noteProjects, notes };
+
+  const projects = [...noteProjects];
+  const projectMap = new Map();
+  for (const project of stickyProjects) {
+    const name = String(project?.name || '').trim() || '便签收藏';
+    let target = projects.find((item) => String(item?.name || '').trim() === name);
+    if (!target) {
+      target = {
+        id: `cp_legacy_${projects.length + 1}`,
+        name,
+        description: String(project?.description || ''),
+      };
+      projects.push(target);
+    }
+    if (project?.id) projectMap.set(String(project.id), target.id);
+  }
+
+  const existingIds = new Set(notes.map((item) => String(item?.id || '')));
+  const converted = stickyNotes
+    .filter((item) => item && item.id && !item.ordinary && !item.sourceRecordId && !item.sourceRecordDigest)
+    .filter((item) => !existingIds.has(String(item.id)))
+    .map((item, index) => {
+      const content = String(item.content || '').trim();
+      const firstAttachment = Array.isArray(item.attachments) ? item.attachments[0] : null;
+      return {
+        id: item.id,
+        projectId: projectMap.get(String(item.projectId || '')) || projects[0]?.id || '',
+        order: Number(item.order || 0) || notes.length + index + 1,
+        type: 'text',
+        title: item.title || (content ? content.slice(0, 18) : (firstAttachment?.name || '便签收藏')),
+        content,
+        note: item.note || '',
+        attachments: Array.isArray(item.attachments) ? clone(item.attachments) : [],
+        sourceStickyId: item.id,
+        createdAt: item.createdAt || Date.now(),
+        updatedAt: item.updatedAt || item.createdAt || Date.now(),
+      };
+    });
+  return { noteProjects: projects, notes: [...notes, ...converted] };
+}
+
+function pickFavoritesData(source = {}, options = {}) {
+  const noteProjects = Array.isArray(source?.noteProjects) ? clone(source.noteProjects) : [];
+  const notes = Array.isArray(source?.notes) ? clone(source.notes) : [];
+  const migrated = options.includeLegacySticky
+    ? legacyStickyNotesAsFavorites(source, noteProjects, notes)
+    : { noteProjects, notes };
   return Object.fromEntries(FAVORITE_ARRAY_KEYS.map((key) => [
     key,
-    Array.isArray(source?.[key]) ? clone(source[key]) : [],
+    key === 'noteProjects' ? migrated.noteProjects : migrated.notes,
   ]));
 }
 
@@ -40,9 +83,9 @@ function normalizeImportedFavorites(raw) {
       throw new Error(`收藏备份版本 ${raw.version || '未知'} 暂不受支持，请先更新玄念。`);
     }
     if (!raw.data || typeof raw.data !== 'object') throw new Error('收藏备份缺少 data 数据。');
-    return pickFavoritesData(raw.data);
+    return pickFavoritesData(raw.data, { includeLegacySticky: version < FAVORITES_BACKUP_VERSION });
   }
-  return pickFavoritesData(raw);
+  return pickFavoritesData(raw, { includeLegacySticky: true });
 }
 
 function fileUrlToPath(value = '') {
@@ -148,14 +191,50 @@ function rewriteFavoriteAssetPaths(value = {}, assetMap = new Map()) {
   return result;
 }
 
+function projectNamesMatch(left = {}, right = {}) {
+  return String(left?.name || '').trim() === String(right?.name || '').trim();
+}
+
+function remapConflictingProjectIds(base = {}, incoming = {}) {
+  const result = clone(incoming) || {};
+  const remapReferences = (items, key, idMap) => {
+    result[items] = Array.isArray(result[items])
+      ? result[items].map((item) => (
+        item && idMap.has(item[key]) ? { ...item, [key]: idMap.get(item[key]) } : item
+      ))
+      : [];
+  };
+  const reconcile = (projectKey, itemKey, referenceKey, prefix) => {
+    const baseProjects = Array.isArray(base?.[projectKey]) ? base[projectKey] : [];
+    const incomingProjects = Array.isArray(result?.[projectKey]) ? result[projectKey] : [];
+    const used = new Set([
+      ...baseProjects.map((item) => String(item?.id || '').trim()).filter(Boolean),
+      ...incomingProjects.map((item) => String(item?.id || '').trim()).filter(Boolean),
+    ]);
+    const idMap = new Map();
+    let sequence = 1;
+    result[projectKey] = incomingProjects.map((project) => {
+      const id = String(project?.id || '').trim();
+      if (!id) return project;
+      const existing = baseProjects.find((item) => String(item?.id || '').trim() === id);
+      if (!existing || projectNamesMatch(existing, project)) return project;
+      let nextId = `${prefix}_imported_${sequence++}`;
+      while (used.has(nextId)) nextId = `${prefix}_imported_${sequence++}`;
+      used.add(nextId);
+      idMap.set(id, nextId);
+      return { ...project, id: nextId };
+    });
+    remapReferences(itemKey, referenceKey, idMap);
+  };
+  reconcile('noteProjects', 'notes', 'projectId', 'cp');
+  return result;
+}
+
 function favoriteContentCounts(value = {}) {
   const data = normalizeImportedFavorites(value);
   return {
     projects: data.noteProjects.length,
     notes: data.notes.length,
-    stickyNotes: data.stickyNotes.length,
-    inspirationCategories: data.inspirationCategories.length,
-    inspirations: data.inspirations.length,
     attachments: favoriteAttachments(data).length,
   };
 }
@@ -168,5 +247,6 @@ module.exports = {
   normalizeImportedFavorites,
   collectFavoriteAssetPaths,
   rewriteFavoriteAssetPaths,
+  remapConflictingProjectIds,
   favoriteContentCounts,
 };

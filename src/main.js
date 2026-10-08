@@ -22,6 +22,7 @@ const {
   normalizeImportedFavorites,
   collectFavoriteAssetPaths,
   rewriteFavoriteAssetPaths,
+  remapConflictingProjectIds,
   favoriteContentCounts,
 } = require('./favorites-backup');
 const { FileSearchService, fileTypeForPath } = require('./file-search');
@@ -37,6 +38,7 @@ const {
   bilibiliViewApiUrl,
   isAllowedPortalUrl,
   isLyricsPath,
+  invalidateMediaListCache,
   listMediaCollections,
   listMediaFiles,
   mediaCollectionDirectory,
@@ -2771,6 +2773,7 @@ function clearCompletedMediaDownloadHistory() {
 }
 
 function notifyMediaDownloadsChanged(payload = {}) {
+  invalidateMediaListCache();
   if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
   mainWindow.webContents.send('media:downloadsChanged', payload || {});
 }
@@ -6685,28 +6688,26 @@ function removeBurstDuplicateRecords(records = []) {
 }
 
 function removeCompositeTextShadowRecords(records = []) {
-  const compositeTextRecords = [];
+  const compositeTextRecords = new Map();
   for (const record of records) {
     if (!Array.isArray(record?.files) || !record.files.length) continue;
     const digest = textDigestForContent(record.content);
     if (!digest) continue;
-    compositeTextRecords.push({
-      digest,
-      createdAt: Number(record.createdAt || record.updatedAt || 0),
-    });
+    const createdAt = Number(record.createdAt || record.updatedAt || 0);
+    if (!createdAt) continue;
+    const entries = compositeTextRecords.get(digest);
+    if (entries) entries.push(createdAt);
+    else compositeTextRecords.set(digest, [createdAt]);
   }
-  if (!compositeTextRecords.length) return records;
+  if (!compositeTextRecords.size) return records;
   return records.filter((record) => {
     if (record?.type !== 'text' && record?.type !== 'link') return true;
     const digest = textDigestForContent(record.content);
     if (!digest) return true;
     const createdAt = Number(record.createdAt || record.updatedAt || 0);
-    return !compositeTextRecords.some((item) => (
-      item.digest === digest &&
-      createdAt &&
-      item.createdAt &&
-      Math.abs(item.createdAt - createdAt) <= 45000
-    ));
+    if (!createdAt) return true;
+    const entries = compositeTextRecords.get(digest);
+    return !entries?.some((itemCreatedAt) => Math.abs(itemCreatedAt - createdAt) <= 45000);
   });
 }
 
@@ -7397,7 +7398,7 @@ async function exportUserDataPackage(ownerWindow = mainWindow) {
   fs.writeFileSync(path.join(packageRoot, 'README.txt'), [
     '玄念收藏数据包',
     '',
-    '此压缩包只包含收藏、便签、灵感及其附件，不包含剪切板历史和剪切板图片。',
+    '此压缩包只包含收藏分类、收藏内容及其附件，不包含剪切板历史、剪切板图片或设备设置。',
     `导出时间：${new Date().toLocaleString()}`,
     '',
     '请在玄念“设置 > 收藏导入”中选择此 ZIP 文件，不要手动解压覆盖数据目录。',
@@ -7424,6 +7425,9 @@ async function importUserDataPackage(ownerWindow = mainWindow) {
   if (result.canceled || !result.filePaths?.[0]) return { ok: false, canceled: true };
 
   const zipPath = result.filePaths[0];
+  let stagedBytes = 0;
+  try { stagedBytes = fs.statSync(zipPath).size; } catch {}
+  if (!stagedBytes) return { ok: false, reason: '导入文件是 0 字节，或远程复制尚未完成。请确认传输完整后再导入。' };
   const stagingRoot = fs.mkdtempSync(path.join(app.getPath('temp'), 'xuannian-import-'));
   try {
     try {
@@ -7431,9 +7435,6 @@ async function importUserDataPackage(ownerWindow = mainWindow) {
     } catch (error) {
       return { ok: false, reason: `无法读取 ZIP 收藏备份：${error?.message || '压缩包可能已损坏或传输不完整。'}` };
     }
-    let stagedBytes = 0;
-    try { stagedBytes = fs.statSync(zipPath).size; } catch {}
-    if (!stagedBytes) return { ok: false, reason: '导入文件是 0 字节，或远程复制尚未完成。请确认传输完整后再导入。' };
     const manifestFile = findExportedFile(stagingRoot, 'manifest.json');
     const favoritesFile = findExportedFile(stagingRoot, 'favorites-data.json');
     const legacyFile = findExportedDataFile(stagingRoot);
@@ -7482,7 +7483,7 @@ async function importUserDataPackage(ownerWindow = mainWindow) {
     } else {
       return { ok: false, reason: '未找到收藏备份数据。请选择玄念导出的 ZIP 文件。' };
     }
-    const merged = mergeDataSnapshots(current, imported);
+    const merged = mergeDataSnapshots(current, remapConflictingProjectIds(current, imported));
     const saved = await saveDataDurable(merged, { skipLocalizeAssets: true, clone: false });
     broadcastDataRefresh(saved);
     const counts = favoriteContentCounts(imported);
@@ -8881,12 +8882,13 @@ ipcMain.handle('media:getConfig', () => ({
   ...mediaDirectories(),
   downloadHistory: loadMediaDownloadHistory(),
 }));
-ipcMain.handle('media:listLocal', async () => {
+ipcMain.handle('media:listLocal', async (_event, options = {}) => {
   const directories = mediaDirectories();
+  const listOptions = { force: options?.force === true };
   const [items, downloadCollections, favoriteCollections] = await Promise.all([
-    listMediaFiles(directories.downloadPath, directories.favoritePath),
-    listMediaCollections(directories.downloadPath),
-    listMediaCollections(directories.favoritePath),
+    listMediaFiles(directories.downloadPath, directories.favoritePath, listOptions),
+    listMediaCollections(directories.downloadPath, listOptions),
+    listMediaCollections(directories.favoritePath, listOptions),
   ]);
   return {
     ok: true,
@@ -8914,17 +8916,23 @@ ipcMain.handle('media:favoriteLocal', async (_event, filePath, collection = '') 
 ipcMain.handle('media:createCollection', async (_event, location, kind, name) => {
   const directories = mediaDirectories();
   const root = location === 'favorites' ? directories.favoritePath : directories.downloadPath;
-  return runMediaFileOperation('create media collection', () => createMediaCollection(root, kind, name));
+  const result = await runMediaFileOperation('create media collection', () => createMediaCollection(root, kind, name));
+  if (result.ok) invalidateMediaListCache();
+  return result;
 });
 ipcMain.handle('media:renameCollection', async (_event, location, kind, currentName, nextName) => {
   const directories = mediaDirectories();
   const root = location === 'favorites' ? directories.favoritePath : directories.downloadPath;
-  return runMediaFileOperation('rename media collection', () => renameMediaCollection(root, kind, currentName, nextName));
+  const result = await runMediaFileOperation('rename media collection', () => renameMediaCollection(root, kind, currentName, nextName));
+  if (result.ok) invalidateMediaListCache();
+  return result;
 });
 ipcMain.handle('media:deleteCollection', async (_event, location, kind, name) => {
   const directories = mediaDirectories();
   const root = location === 'favorites' ? directories.favoritePath : directories.downloadPath;
-  return runMediaFileOperation('delete media collection', () => deleteMediaCollection(root, kind, name));
+  const result = await runMediaFileOperation('delete media collection', () => deleteMediaCollection(root, kind, name));
+  if (result.ok) invalidateMediaListCache();
+  return result;
 });
 ipcMain.handle('media:openCollection', async (_event, location, kind, name) => {
   const directories = mediaDirectories();
@@ -8945,7 +8953,9 @@ ipcMain.handle('media:openCollection', async (_event, location, kind, name) => {
 ipcMain.handle('media:moveLocal', async (_event, filePath, location, collection = '') => {
   const directories = mediaDirectories();
   const root = location === 'favorites' ? directories.favoritePath : directories.downloadPath;
-  return runMediaFileOperation('move media file', () => moveMediaToCollection(filePath, root, collection));
+  const result = await runMediaFileOperation('move media file', () => moveMediaToCollection(filePath, root, collection));
+  if (result.ok) invalidateMediaListCache();
+  return result;
 });
 ipcMain.handle('media:deleteLocal', async (_event, filePath, location) => {
   const directories = mediaDirectories();
@@ -8954,11 +8964,13 @@ ipcMain.handle('media:deleteLocal', async (_event, filePath, location) => {
   if (!value || !path.isAbsolute(value) || !isPathInside(value, root) || !mediaKindForPath(value) || !fs.existsSync(value)) {
     return { ok: false, reason: '文件已被移动或删除' };
   }
-  return runMediaFileOperation('delete media file', async () => {
+  const result = await runMediaFileOperation('delete media file', async () => {
     await shell.trashItem(value);
     notifyMediaDownloadsChanged({ status: 'deleted', path: value });
     return { ok: true };
   });
+  if (result.ok) invalidateMediaListCache();
+  return result;
 });
 ipcMain.handle('media:deleteLocalBatch', async (_event, filePaths, location) => {
   const directories = mediaDirectories();
@@ -8971,7 +8983,7 @@ ipcMain.handle('media:deleteLocalBatch', async (_event, filePaths, location) => 
     uniquePaths.set(process.platform === 'win32' ? resolved.toLocaleLowerCase('en-US') : resolved, resolved);
   }
   if (!uniquePaths.size) return { ok: false, reason: '没有可删除的媒体文件', deletedPaths: [] };
-  return runMediaFileOperation('batch delete media files', async () => {
+  const result = await runMediaFileOperation('batch delete media files', async () => {
     const deletedPaths = [];
     const skippedPaths = [];
     const failedPaths = [];
@@ -8999,6 +9011,8 @@ ipcMain.handle('media:deleteLocalBatch', async (_event, filePaths, location) => 
       failedPaths,
     };
   });
+  if (result.ok) invalidateMediaListCache();
+  return result;
 });
 ipcMain.handle('media:deleteDownloadHistoryItem', async (_event, taskId) => {
   const id = String(taskId || '').trim();

@@ -13,6 +13,14 @@ const IMAGE_EXTENSIONS = new Set([
 const LYRICS_EXTENSIONS = new Set(['lrc']);
 const MEDIA_KIND_DIRECTORIES = Object.freeze({ video: '视频', audio: '音乐', image: '图片' });
 const MEDIA_LIBRARY_KINDS = Object.freeze(['video', 'audio']);
+const MEDIA_LIST_CACHE_TTL_MS = 3000;
+const mediaCollectionCache = new Map();
+const mediaFilesCache = new Map();
+
+function invalidateMediaListCache() {
+  mediaCollectionCache.clear();
+  mediaFilesCache.clear();
+}
 const SEEKIN_UNIVERSAL_PORTAL = 'https://www.seekin.ai/zh/downloader/';
 const DLPANDA_PORTAL = 'https://dlpanda.com/zh-CN';
 const SEEKIN_PORTAL = Object.freeze({ url: SEEKIN_UNIVERSAL_PORTAL, label: 'Seekin' });
@@ -433,27 +441,33 @@ async function scanMediaFilesInDirectory(directory, favorite, location, collecti
   return items.filter(Boolean);
 }
 
-async function listCollectionNames(directory, kind) {
+async function listCollectionNames(directory, kind, options = {}) {
   const typeDirectory = mediaTypeDirectory(directory, kind);
   if (!typeDirectory) return [];
+  const cacheKey = `${normalizedPathKey(typeDirectory)}\ncollections`;
+  const cached = mediaCollectionCache.get(cacheKey);
+  const now = Date.now();
+  if (!options.force && cached && cached.expiresAt > now) return cached.value;
   let entries;
   try {
     entries = await fs.promises.readdir(typeDirectory, { withFileTypes: true });
   } catch {
     return [];
   }
-  return entries
+  const value = entries
     .filter((entry) => entry.isDirectory() && sanitizeCollectionName(entry.name) === entry.name)
     .map((entry) => entry.name)
     .sort((left, right) => left.localeCompare(right, 'zh-CN'));
+  mediaCollectionCache.set(cacheKey, { value, expiresAt: now + MEDIA_LIST_CACHE_TTL_MS });
+  return value;
 }
 
-async function listMediaCollections(directory) {
-  const [video, audio] = await Promise.all(MEDIA_LIBRARY_KINDS.map((kind) => listCollectionNames(directory, kind)));
+async function listMediaCollections(directory, options = {}) {
+  const [video, audio] = await Promise.all(MEDIA_LIBRARY_KINDS.map((kind) => listCollectionNames(directory, kind, options)));
   return { video, audio };
 }
 
-async function listManagedMediaFiles(directory, favorite = false, limit = 100000) {
+async function listManagedMediaFiles(directory, favorite = false, limit = 100000, options = {}) {
   const root = String(directory || '').trim();
   if (!root || !path.isAbsolute(root)) return [];
   const requestedLimit = Number(limit);
@@ -466,7 +480,7 @@ async function listManagedMediaFiles(directory, favorite = false, limit = 100000
     const typeDirectory = mediaTypeDirectory(root, kind);
     const unclassified = await scanMediaFilesInDirectory(typeDirectory, favorite, location, '', maxItems - items.length);
     items.push(...unclassified.filter((item) => item.kind === kind));
-    const collections = await listCollectionNames(root, kind);
+    const collections = await listCollectionNames(root, kind, options);
     for (const collection of collections) {
       if (items.length >= maxItems) break;
       const collected = await scanMediaFilesInDirectory(
@@ -482,21 +496,25 @@ async function listManagedMediaFiles(directory, favorite = false, limit = 100000
   return items;
 }
 
-async function scanMediaDirectory(directory, favorite = false, limit = 2500) {
+async function scanMediaDirectory(directory, favorite = false, limit = 2500, options = {}) {
   const root = String(directory || '').trim();
   if (!root || !path.isAbsolute(root)) return [];
   const maxItems = Math.max(1, Number(limit) || 2500);
   const location = favorite ? 'favorites' : 'downloads';
   const items = await scanMediaFilesInDirectory(root, favorite, location, '', maxItems);
-  const managed = await listManagedMediaFiles(root, favorite, maxItems - items.length);
+  const managed = await listManagedMediaFiles(root, favorite, maxItems - items.length, options);
   items.push(...managed);
   return items;
 }
 
-async function listMediaFiles(downloadDirectory, favoriteDirectory) {
+async function listMediaFiles(downloadDirectory, favoriteDirectory, options = {}) {
+  const cacheKey = `${normalizedPathKey(downloadDirectory)}\n${normalizedPathKey(favoriteDirectory)}`;
+  const now = Date.now();
+  const cached = mediaFilesCache.get(cacheKey);
+  if (!options.force && cached && cached.expiresAt > now) return cached.value;
   const [downloads, favorites] = await Promise.all([
-    scanMediaDirectory(downloadDirectory, false),
-    scanMediaDirectory(favoriteDirectory, true),
+    scanMediaDirectory(downloadDirectory, false, 2500, options),
+    scanMediaDirectory(favoriteDirectory, true, 2500, options),
   ]);
   const favoriteKeys = new Set(favorites.map((item) => normalizedPathKey(item.path)));
   const favoriteSignatures = new Set(favorites.map((item) => `${String(item.name || '').toLowerCase()}\n${Number(item.size || 0)}`));
@@ -510,7 +528,9 @@ async function listMediaFiles(downloadDirectory, favoriteDirectory) {
     const signature = `${String(item.name || '').toLowerCase()}\n${Number(item.size || 0)}`;
     items.push({ ...item, favorite: item.favorite || favoriteKeys.has(key) || favoriteSignatures.has(signature) });
   }
-  return items.sort((left, right) => Number(right.modifiedAt || 0) - Number(left.modifiedAt || 0));
+  const value = items.sort((left, right) => Number(right.modifiedAt || 0) - Number(left.modifiedAt || 0));
+  mediaFilesCache.set(cacheKey, { value, expiresAt: now + MEDIA_LIST_CACHE_TTL_MS });
+  return value;
 }
 
 function collisionFreePath(directory, filename) {
@@ -560,6 +580,7 @@ async function copyMediaToFavorites(sourcePath, favoriteDirectory, collection = 
   const target = collisionFreePath(targetRoot, path.basename(source));
   await fs.promises.copyFile(source, target, fs.constants.COPYFILE_EXCL);
   await fs.promises.utimes(target, stat.atime, stat.mtime).catch(() => {});
+  invalidateMediaListCache();
   return { ok: true, path: target, alreadyFavorite: false };
 }
 
@@ -575,6 +596,7 @@ async function createMediaCollection(directory, kind, name) {
     await fs.promises.mkdir(path.dirname(target), { recursive: true });
     await fs.promises.mkdir(target, { recursive: false });
   });
+  invalidateMediaListCache();
   return { ok: true, name: collection, path: target };
 }
 
@@ -591,6 +613,7 @@ async function renameMediaCollection(directory, kind, currentName, nextName) {
   if (!fs.existsSync(source)) return { ok: false, reason: '收藏夹已不存在' };
   if (fs.existsSync(target)) return { ok: false, reason: '同名收藏夹已存在' };
   await fs.promises.rename(source, target);
+  invalidateMediaListCache();
   return { ok: true, name: next, path: target };
 }
 
@@ -624,6 +647,7 @@ async function moveMediaToCollection(sourcePath, directory, collection = '') {
   }
   const target = collisionFreePath(targetRoot, path.basename(source));
   await movePathAcrossVolumes(source, target);
+  invalidateMediaListCache();
   return { ok: true, path: target };
 }
 
@@ -651,6 +675,7 @@ async function deleteMediaCollection(directory, kind, name) {
     else otherFiles += 1;
   }
   await fs.promises.rmdir(source);
+  invalidateMediaListCache();
   return { ok: true, moved, preserved, folders, otherFiles };
 }
 
@@ -679,6 +704,7 @@ module.exports = {
   listManagedMediaFiles,
   listMediaCollections,
   listMediaFiles,
+  invalidateMediaListCache,
   mediaKindForPath,
   mediaCollectionDirectory,
   movePathAcrossVolumes,

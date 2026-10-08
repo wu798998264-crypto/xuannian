@@ -357,8 +357,8 @@ contextBridge.exposeInMainWorld('nativeAPI', {
   async getMediaConfig() {
     return ipcRenderer.invoke('media:getConfig');
   },
-  async listLocalMedia() {
-    return ipcRenderer.invoke('media:listLocal');
+  async listLocalMedia(options = {}) {
+    return ipcRenderer.invoke('media:listLocal', options || {});
   },
   async favoriteLocalMedia(filePath, collection = '') {
     return ipcRenderer.invoke('media:favoriteLocal', filePath || '', collection || '');

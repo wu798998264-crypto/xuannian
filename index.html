@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>玄念9.1.7</title>
+  <title>玄念9.1.8</title>
   <link rel="icon" href="src/xuannian-logo-256.png" />
   <link rel="stylesheet" href="src/media-library.css" />
   <style>
@@ -1301,7 +1301,7 @@
             <button class="ghost-btn" id="exportUserData" type="button">收藏导出</button>
             <button class="ghost-btn" id="importUserData" type="button">收藏导入</button>
           </div>
-            <small class="setting-hint">导出包只包含收藏、提示词、便签、灵感和实际引用的附件，不包含剪切板历史或剪切板图片；导入会自动合并，不覆盖当前收藏。</small>
+            <small class="setting-hint">导出包只包含收藏分类、收藏内容和实际引用的附件，不包含剪切板历史、剪切板图片或设备设置；导入会自动合并，不覆盖当前收藏。</small>
         </div>
         <div class="setting-card">
           <span>媒体库临时储存路径</span>
@@ -1786,7 +1786,7 @@ function createBrowserFallbackAPI(){
     async resolveMediaVideoProvider(value){ return resolveMediaVideoProviderFallback(value); },
     async getMediaMusicSearchUrl(keyword){ return mediaMusicSearchUrlFallback(keyword); },
     async getMediaConfig(){ return {downloadPath:'浏览器下载目录',favoritePath:'浏览器收藏目录',downloadHistory:[]}; },
-    async listLocalMedia(){ return {ok:true,downloadPath:'浏览器下载目录',favoritePath:'浏览器收藏目录',items:[],collections:{downloads:{video:[],audio:[]},favorites:{video:[],audio:[]}}}; },
+    async listLocalMedia(_options={}){ return {ok:true,downloadPath:'浏览器下载目录',favoritePath:'浏览器收藏目录',items:[],collections:{downloads:{video:[],audio:[]},favorites:{video:[],audio:[]}}}; },
     async favoriteLocalMedia(){ return {ok:false,reason:'预览环境不支持本地文件收藏'}; },
     async createMediaCollection(){ return {ok:false,reason:'预览环境不支持收藏夹操作'}; },
     async renameMediaCollection(){ return {ok:false,reason:'预览环境不支持收藏夹操作'}; },
@@ -1851,7 +1851,7 @@ function createBrowserFallbackAPI(){
     async deleteInspiration(id){ const data=read(); data.inspirations=data.inspirations.filter(x=>x.id!==id); write(data); return data.inspirations; },
     async getSettings(){ return read().settings; },
     async saveSettings(settings){ const data=read(); data.settings={...data.settings,...settings}; write(data); return data.settings; },
-    async getUpdateState(){ return {status:'current',revision:0,currentVersion:'9.1.7',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false,repositoryUrl:'https://github.com/wu798998264-crypto/xuannian'}; },
+    async getUpdateState(){ return {status:'current',revision:0,currentVersion:'9.1.8',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false,repositoryUrl:'https://github.com/wu798998264-crypto/xuannian'}; },
     async checkForUpdates(){ return this.getUpdateState(); },
     async downloadUpdate(){ return this.getUpdateState(); },
     async installUpdate(){ return false; },
@@ -1921,7 +1921,7 @@ function createUnifiedAPI(nativeApi, fallback){
     resolveMediaVideoProvider: (value)=> nativeApi.resolveMediaVideoProvider ? nativeApi.resolveMediaVideoProvider(value) : fallback.resolveMediaVideoProvider(value),
     getMediaMusicSearchUrl: (keyword)=> nativeApi.getMediaMusicSearchUrl ? nativeApi.getMediaMusicSearchUrl(keyword) : fallback.getMediaMusicSearchUrl(keyword),
     getMediaConfig: ()=> nativeApi.getMediaConfig ? nativeApi.getMediaConfig() : fallback.getMediaConfig(),
-    listLocalMedia: ()=> nativeApi.listLocalMedia ? nativeApi.listLocalMedia() : fallback.listLocalMedia(),
+    listLocalMedia: (options)=> nativeApi.listLocalMedia ? nativeApi.listLocalMedia(options||{}) : fallback.listLocalMedia(options||{}),
     favoriteLocalMedia: (filePath,collection)=> nativeApi.favoriteLocalMedia ? nativeApi.favoriteLocalMedia(filePath,collection) : fallback.favoriteLocalMedia(filePath,collection),
     createMediaCollection: (location,kind,name)=> nativeApi.createMediaCollection ? nativeApi.createMediaCollection(location,kind,name) : fallback.createMediaCollection(location,kind,name),
     renameMediaCollection: (location,kind,currentName,nextName)=> nativeApi.renameMediaCollection ? nativeApi.renameMediaCollection(location,kind,currentName,nextName) : fallback.renameMediaCollection(location,kind,currentName,nextName),
@@ -2053,7 +2053,9 @@ async function init(){
       renderClipboard();
     }
   });
-  window.nativeAPI?.onDataRefresh?.(async()=>{
+  let dataRefreshInFlight=false;
+  let dataRefreshQueued=false;
+  const refreshApplicationData=async()=>{
     const [records,noteProjects,notes,stickyProjects,stickyNotes,inspirationCategories,inspirations] = await Promise.all([
       api.getRecords(),
       api.getNoteProjects(),
@@ -2074,7 +2076,22 @@ async function init(){
       state.activeStickyProject=state.stickyProjects[0]?.id || null;
     }
     renderAll();
-  });
+  };
+  const requestApplicationDataRefresh=()=>{
+    if(dataRefreshInFlight){
+      dataRefreshQueued=true;
+      return;
+    }
+    dataRefreshInFlight=true;
+    refreshApplicationData().catch(()=>{}).finally(()=>{
+      dataRefreshInFlight=false;
+      if(dataRefreshQueued){
+        dataRefreshQueued=false;
+        requestAnimationFrame(requestApplicationDataRefresh);
+      }
+    });
+  };
+  window.nativeAPI?.onDataRefresh?.(requestApplicationDataRefresh);
   window.nativeAPI?.onStickyPinState?.((ids)=>{
     state.pinnedStickyIds=new Set(ids || []);
     if(state.view==='notes') renderNotes();
@@ -5239,13 +5256,13 @@ function renderMediaLists({force=false}={}){
   renderMediaList('favorites',{force});
 }
 
-async function refreshMediaLibrary({quiet=false}={}){
+async function refreshMediaLibrary({quiet=false,force=false}={}){
   if(state.media.loading) return;
   const requestId=++state.media.requestId;
   state.media.loading=true;
   if(!quiet) renderMediaLists();
   try{
-    const result=await api.listLocalMedia();
+    const result=await api.listLocalMedia({force:!!force || !quiet});
     if(requestId!==state.media.requestId) return;
     state.media.items=Array.isArray(result?.items)?result.items:[];
     state.media.loaded=true;
@@ -8012,7 +8029,7 @@ async function exportUserDataPackage(){
   async function importUserDataPackage(){
   const confirmed=await showConfirmModal({
     title:'导入收藏数据包',
-    message:'导入会把数据包里的收藏、提示词、便签、灵感和附件合并到当前玄念数据中，不会覆盖现有收藏。导入前建议先导出一份备份。',
+    message:'导入会把数据包里的收藏分类、收藏内容和附件合并到当前玄念数据中，不会覆盖现有收藏。导入前建议先导出一份备份。',
     confirmText:'选择导入包',
   });
   if(!confirmed) return;
@@ -8025,7 +8042,7 @@ async function exportUserDataPackage(){
     state.inspirationCategories=inspirationCategories; state.inspirations=inspirations;
     renderAll();
     const counts=result.counts||{};
-    toast(`收藏数据包已导入：${Number(counts.notes||0)} 条收藏，${Number(counts.stickyNotes||0)} 条便签`);
+    toast(`收藏数据包已导入：${Number(counts.notes||0)} 条收藏，${Number(counts.projects||0)} 个分类`);
     return;
   }
   if(result?.canceled) return;
@@ -8402,7 +8419,7 @@ function showUpdateDialog(){
   showModal(`
     <div data-update-dialog>
       <div class="modal-header"><h3>软件更新</h3><button class="modal-close" id="closeModal">×</button></div>
-      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '9.1.7')}</b><span>${hasNewerUpdateVersion(update)?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
+      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '9.1.8')}</b><span>${hasNewerUpdateVersion(update)?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
       <div class="modal-message">${escapeHtml(updateStatusText())}</div>
       <p class="update-network-tip">提示：开启 VPN 后再检测更新，结果会更加准确。</p>
       ${busy||downloaded?`<div class="update-progress"><span style="width:${downloaded?100:progress}%"></span></div>`:''}
