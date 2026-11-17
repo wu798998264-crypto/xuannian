@@ -38,3 +38,11 @@ The workflow enforces these rules by checking that the Git tag matches `package.
 ## macOS signing
 
 Unsigned/ad-hoc macOS builds download the DMG matching the current Mac architecture. A trusted Apple Developer ID certificate is required before macOS can use fully automatic in-app installation.
+
+## Complete the macOS packages for 9.1.11
+
+The published Windows 9.1.11 application contains newer video integration code than the current main branch. The `Build XuanNian 9.1.11 for macOS` workflow restores that exact application from the published portable package, checks both the download and ASAR SHA-256 values, and applies the three platform-specific Java/FFmpeg filename changes. It preserves the published JavaScript dependencies and the application identity.
+
+Run `.github/workflows/build-macos.yml` manually, or push changes to its packaging scripts on main. Each architecture runs on a matching Mac, bundles Java 17 and FFmpeg, and verifies the Java bridge, media tools, application startup, signature, runtime file hashes and DMG. Once both architectures pass, the workflow adds the missing Mac files and combined updater metadata to the existing 9.1.11 Release. It refuses to replace existing download assets.
+
+This recovery workflow is pinned to 9.1.11 and its verified source hashes. Future releases should commit the current application sources and use the complete tagged release process above.

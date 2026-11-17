@@ -1,0 +1,161 @@
+name: Build XuanNian 9.1.11 for macOS
+run-name: XuanNian 9.1.11 macOS packages
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/build-macos.yml
+      - scripts/prepare-macos-release.cjs
+      - scripts/prepare-macos-runtime.sh
+      - scripts/macos-after-sign.cjs
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-9.1.11
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build and verify macOS ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+          - arch: x64
+            runner: macos-15-intel
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+      VERSION: 9.1.11
+      ARCH: ${{ matrix.arch }}
+      WORK: build/macos-release
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Install build tools
+        run: npm ci
+      - name: Recover matching published application
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$WORK/download" "$WORK/extracted"
+          gh release download "v$VERSION" --repo "$GITHUB_REPOSITORY" \
+            --pattern "XuanNian-$VERSION-Portable.exe" --dir "$WORK/download"
+          echo "77ef758b5c3d8607c1bbcc642c827bdf6f5380c50e5f664bd3fa20c948d73e66  $WORK/download/XuanNian-$VERSION-Portable.exe" | shasum -a 256 -c -
+          sevenzip="$(command -v 7zz || command -v 7z)"
+          "$sevenzip" e "$WORK/download/XuanNian-$VERSION-Portable.exe" \
+            "-o$WORK/download" '*app-64.7z' -r -y
+          "$sevenzip" x "$WORK/download/app-64.7z" "-o$WORK/extracted" \
+            'resources/app.asar' 'resources/yunx/*' '-x!resources/yunx/runtime/runtime/*' -y
+      - name: Prepare native Java and media tools
+        run: bash scripts/prepare-macos-runtime.sh "$WORK/extracted/resources/yunx" "$WORK/resources" "$ARCH"
+      - name: Prepare application and macOS configuration
+        run: node scripts/prepare-macos-release.cjs "$WORK/extracted/resources/app.asar" "$WORK/app" "$VERSION" "$ARCH" "$WORK/resources"
+      - name: Create macOS icon
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p build/mac/icon.iconset
+          source="$WORK/app/src/xuannian-logo-256.png"
+          for size in 16 32 128 256 512; do
+            sips -z "$size" "$size" "$source" --out "build/mac/icon.iconset/icon_${size}x${size}.png"
+            double=$((size * 2))
+            sips -z "$double" "$double" "$source" --out "build/mac/icon.iconset/icon_${size}x${size}@2x.png"
+          done
+          iconutil -c icns build/mac/icon.iconset -o build/mac/icon.icns
+      - name: Build signed DMG and updater ZIP
+        run: npx electron-builder --mac dmg zip --${{ matrix.arch }} --publish never --config "$WORK/electron-builder.mac.json"
+      - name: Verify packaged application and disk image
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$WORK/dist-mac-$ARCH"
+          app="$(find "$out" -maxdepth 2 -name '*.app' -print -quit)"
+          test -n "$app"
+          node scripts/macos-after-sign.cjs "$app" "$VERSION" "$ARCH"
+          hdiutil verify "$out/XuanNian-$VERSION-$ARCH.dmg"
+          test -s "$out/XuanNian-$VERSION-$ARCH.zip"
+          test -s "$out/latest-mac.yml"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.arch }}
+          path: |
+            build/macos-release/dist-mac-${{ matrix.arch }}/XuanNian-*.dmg
+            build/macos-release/dist-mac-${{ matrix.arch }}/XuanNian-*.zip
+            build/macos-release/dist-mac-${{ matrix.arch }}/*.blockmap
+            build/macos-release/dist-mac-${{ matrix.arch }}/latest-mac.yml
+          if-no-files-found: error
+
+  publish:
+    name: Add verified Mac packages to 9.1.11
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: 9.1.11
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm ci --ignore-scripts
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: macos-*
+          path: macos-artifacts
+      - name: Merge and validate both updater architectures
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir release-mac
+          node <<'NODE'
+          const fs = require('node:fs');
+          const yaml = require('js-yaml');
+          const version = process.env.VERSION;
+          let combined;
+          for (const arch of ['x64', 'arm64']) {
+            const root = `macos-artifacts/macos-${arch}`;
+            const metadata = yaml.load(fs.readFileSync(`${root}/latest-mac.yml`, 'utf8'));
+            if (metadata.version !== version) throw Error('Incorrect updater version.');
+            if (!metadata.files?.some(file => file.url === `XuanNian-${version}-${arch}.zip`)) throw Error(`Missing ${arch} updater ZIP.`);
+            combined = combined ? {...combined, files: [...combined.files, ...metadata.files]} : metadata;
+            for (const extension of ['dmg', 'dmg.blockmap', 'zip', 'zip.blockmap']) {
+              const name = `XuanNian-${version}-${arch}.${extension}`;
+              if (!fs.statSync(`${root}/${name}`).size) throw Error(`Empty asset: ${name}`);
+              fs.copyFileSync(`${root}/${name}`, `release-mac/${name}`);
+            }
+          }
+          fs.writeFileSync('release-mac/latest-mac.yml', yaml.dump(combined));
+          NODE
+      - name: Publish missing assets without replacing existing downloads
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' > existing-assets.txt
+          while IFS= read -r asset; do
+            if test -f "release-mac/$asset"; then
+              echo "An asset already exists; refusing to replace it: $asset" >&2
+              exit 1
+            fi
+          done < existing-assets.txt
+          gh release upload "v$VERSION" release-mac/* --repo "$GITHUB_REPOSITORY"
+          gh release view "v$VERSION" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name'
