@@ -35,7 +35,7 @@ exports.default = async function afterSign(context) {
   const app = path.join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`);
   const root = path.join(app, 'Contents', 'Resources', 'yunx');
   fs.writeFileSync(path.join(root, 'runtime-manifest.json'), JSON.stringify(manifest(root, process.arch), null, 2) + '\n');
-  run('codesign', ['--force', '--sign', '-', app]);
+  run('codesign', ['--force', '--sign', '-', '--preserve-metadata=entitlements,requirements,flags,runtime', app]);
   run('codesign', ['--verify', '--deep', '--strict', app]);
 };
 
