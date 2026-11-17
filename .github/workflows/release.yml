@@ -46,6 +46,7 @@ jobs:
           node tests/favorites-archive.js
           npx electron tests/mac-window-controls-electron.js
           npx electron tests/music-embedded-search-probe.js
+          npx electron tests/music-reload-deadline-probe.js
           npx electron tests/media-progress-electron.js
       - name: Run performance regression checks
         run: npm run test:performance

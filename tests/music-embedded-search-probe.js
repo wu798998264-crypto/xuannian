@@ -23,15 +23,26 @@ async function until(read, label, timeout = 12000) {
   throw Error(`Timed out: ${label}`);
 }
 
-function fixture(query) {
+function fixture(query, managedVerified = false) {
+  const originalDialogs = '<script>window.__probeOriginalDialogs={alert:window.alert,confirm:window.confirm,prompt:window.prompt}</script>';
   const rows = (name, id) => `<a style="display:inline-block;width:28px;height:20px" href="/music/${id}">${name}</a><footer>Protected by Cloudflare · captcha help</footer>`;
-  if (query === '真人测试') return `<!doctype html><title>Security verification</title><body><p>请勾选完成安全验证，确认您是真人</p><input id="verify" type="checkbox" style="width:28px;height:28px"><script>
+  if (query === '托管核验') {
+    if (managedVerified) return `<!doctype html><title>歌曲结果</title><body>${originalDialogs}${rows('托管核验后歌曲', 93006)}<script>window.__resultsReadyAt=Date.now()</script></body>`;
+    return `<!doctype html><title>Just a moment...</title><body>${originalDialogs}<p>Performing security verification</p><div id="challenge-running"></div><button id="managedVerify" hidden style="width:180px;height:60px">完成本地核验</button><script>
+      setTimeout(()=>{managedVerify.hidden=false},9000);
+      managedVerify.onclick=async()=>{await fetch('/__probe/managed-verified',{method:'POST'});location.reload()};
+    </script></body>`;
+  }
+  if (query === '真人测试') return `<!doctype html><title>Security verification</title><body>${originalDialogs}<p>请勾选完成安全验证，确认您是真人</p><input id="verify" type="checkbox" style="width:28px;height:28px"><script>
     verify.onchange = () => { document.title = '歌曲结果'; document.body.innerHTML = ${JSON.stringify(rows('验证后歌曲', 93003))}; window.__resultsReadyAt = Date.now(); };
   </script></body>`;
-  if (query === '自动检查') return `<!doctype html><title>Just a moment...</title><body><p>Performing security verification</p><div id="challenge-running"></div><script>
+  if (query === '自动检查') return `<!doctype html><title>Just a moment...</title><body>${originalDialogs}<p>Performing security verification</p><div id="challenge-running"></div><script>
     setTimeout(() => { document.title = '歌曲结果'; document.body.innerHTML = ${JSON.stringify(rows('自动检查后歌曲', 93002))}; window.__resultsReadyAt = Date.now(); }, 900);
   </script></body>`;
-  return `<!doctype html><title>歌曲结果</title><body><article><a id="song" style="display:inline-block;width:28px;height:20px">${query}</a></article><footer>Protected by Cloudflare · captcha help</footer><script>
+  if (query === '延迟展开') return `<!doctype html><title>歌曲搜索中</title><body>${originalDialogs}<button id="finish" style="width:180px;height:60px">完成本地搜索</button><script>
+    finish.onclick = () => { document.title = '歌曲结果'; document.body.innerHTML = ${JSON.stringify(rows('展开后歌曲', 93005))}; window.__resultsReadyAt = Date.now(); };
+  </script></body>`;
+  return `<!doctype html><title>歌曲结果</title><body>${originalDialogs}<article><a id="song" style="display:inline-block;width:28px;height:20px">${query}</a></article><footer>Protected by Cloudflare · captcha help</footer><script>
     setTimeout(() => { song.setAttribute('href','/music/${query === '下一首' ? 93004 : 93001}'); window.__resultsReadyAt = Date.now(); }, 900);
   </script></body>`;
 }
@@ -43,9 +54,13 @@ async function run() {
   await main.webContents.executeJavaScript("localStorage.setItem('xuannian.onboarding.first-run.v1','seen')");
   const originalContents = main.webContents;
   assert.equal(require('electron').BrowserWindow.fromWebContents(originalContents), main, 'Native webContents owner must remain the production main window.');
+  main.show();
+  main.focus();
+  main.webContents.focus();
   const layoutChecks = [];
   for (const width of [620, 1180]) {
     main.setContentSize(width, 740);
+    await main.webContents.capturePage(undefined, { stayAwake: true });
     await until(async () => {
       const [contentWidth, contentHeight] = main.getContentSize();
       const bounds = main.applicationView.getBounds();
@@ -57,12 +72,21 @@ async function run() {
     assert.equal(main.webContents, originalContents);
   }
   const portalSession = session.fromPartition('persist:xuannian-media-portals');
+  let managedVerified = false;
   portalSession.protocol.handle('https', async request => {
     const url = new URL(request.url);
     if (!/^(www\.)?gequbao\.com$/.test(url.hostname)) return new Response('', { status: 404 });
+    if (url.pathname === '/__probe/managed-verified') {
+      managedVerified = true;
+      return new Response('ok');
+    }
     const query = decodeURIComponent(url.pathname.replace(/^\/s\//, ''));
     if (query === '下一首') await wait(1000);
-    return new Response(fixture(query), { headers: { 'content-type': 'text/html; charset=utf-8' } });
+    const managedChallenge = query === '托管核验' && !managedVerified;
+    return new Response(fixture(query, managedVerified), { status: managedChallenge ? 403 : 200, headers: {
+      'content-type': 'text/html; charset=utf-8',
+      ...(managedChallenge ? { 'cf-mitigated': 'challenge' } : {}),
+    } });
   });
   await main.webContents.executeJavaScript(`(async () => {
     await switchView('media', { skipCoach: true });
@@ -104,6 +128,9 @@ async function run() {
   const portal = () => webContents.getAllWebContents().find(contents => !contents.isDestroyed() && /gequbao\.com/.test(contents.getURL()));
   const synchronizationDelays = [];
   const recordSynchronization = async query => {
+    assert.equal(portal().debugger.isAttached(), false, `Music pages must not inherit the video response debugger: ${query}`);
+    const unchangedDialogs = await portal().executeJavaScript("['alert','confirm','prompt'].filter(name => window.__probeOriginalDialogs?.[name] === window[name])");
+    assert.deepEqual(unchangedDialogs, ['alert', 'confirm', 'prompt'], `Music search must preserve the site's original browser dialogs: ${query}`);
     const resultAt = await portal().executeJavaScript('window.__resultsReadyAt');
     const receivedAt = await main.webContents.executeJavaScript(`window.__probeMusicResults.findLast(event => event.ok && event.query === ${JSON.stringify(query)})?.at`);
     const delay = receivedAt - resultAt;
@@ -146,6 +173,48 @@ async function run() {
   assertHost('background');
   await recordSynchronization('自动检查');
 
+  await search('托管核验');
+  await until(() => portal()?.musicManagedChallenge, 'managed challenge response header');
+  assert.equal(portal().debugger.isAttached(), false, 'Managed challenge must not have a debugger attached.');
+  await until(async () => {
+    const current = await snapshot();
+    return current.events.some(event => event.securityCheckPending && event.automationMode === 'music-search');
+  }, 'managed challenge automatically offered inside the app', 10000);
+  await until(() => { try { assertHost('foreground'); return true; } catch { return false; } }, 'managed challenge automatically embedded above the application');
+  const managedCheckbox = await until(async () => portal().executeJavaScript(`(() => { const b=document.getElementById('managedVerify');if(!b||b.hidden)return null;const r=b.getBoundingClientRect();return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)} })()`), 'delayed local managed verification button');
+  // This is a controlled fixture button, never a real provider CAPTCHA.
+  portal().sendInputEvent({ type: 'mouseDown', ...managedCheckbox, button: 'left', clickCount: 1 });
+  portal().sendInputEvent({ type: 'mouseUp', ...managedCheckbox, button: 'left', clickCount: 1 });
+  const managed = await until(async () => { const current = await snapshot(); return current.status === 'ready' && current.labels.some(label => label.includes('托管核验后')) && current; }, 'successful result after the same URL changes from managed challenge to normal response');
+  assert.equal(portal().musicManagedChallenge, false);
+  await until(async () => {
+    const visibleView = main.contentView.children.find(child => child.webContents === portal());
+    return !await main.webContents.executeJavaScript('state.media.browserVisible') && !visibleView?.getVisible();
+  }, 'managed challenge automatically collapsed after results');
+  assert.deepEqual(BaseWindow.getAllWindows().map(window => window.id).filter(id => !windowsBefore.has(id)), [], 'Managed verification must not create another native window.');
+  await recordSynchronization('托管核验');
+
+  await search('延迟展开');
+  await until(() => portal()?.getURL().includes(encodeURIComponent('延迟展开')), 'delayed provider document');
+  await wait(3400);
+  await main.webContents.executeJavaScript("toggleMediaManualPortal('audio', { forceOpen: true })");
+  await until(() => { try { assertHost('foreground'); return true; } catch { return false; } }, 'manual provider expanded after first background wake');
+  // Sample across later wake deadlines; checking only after the burst misses a
+  // provider briefly moved underneath the opaque application web view.
+  const expandedUntil = Date.now() + 7000;
+  while (Date.now() < expandedUntil) {
+    assertHost('foreground');
+    const visibleView = main.contentView.children.find(child => child.webContents === portal());
+    const expectedBounds = await main.webContents.executeJavaScript(`(() => { const r = document.getElementById('mediaBrowserSurface').getBoundingClientRect(); return {x:Math.round(r.x),y:Math.round(r.y),width:Math.round(r.width),height:Math.round(r.height)}; })()`);
+    assert.deepEqual(visibleView.getBounds(), expectedBounds, 'Background work must preserve the visible provider content bounds.');
+    await wait(60);
+  }
+  const finishPoint = await portal().executeJavaScript(`(() => { const b = document.getElementById('finish').getBoundingClientRect(); return {x:Math.round(b.x+b.width/2),y:Math.round(b.y+b.height/2)}; })()`);
+  portal().sendInputEvent({ type: 'mouseDown', ...finishPoint, button: 'left', clickCount: 1 });
+  portal().sendInputEvent({ type: 'mouseUp', ...finishPoint, button: 'left', clickCount: 1 });
+  await until(async () => { const current = await snapshot(); return current.status === 'ready' && current.labels.some(label => label.includes('展开后')) && current; }, 'results after delayed manual provider interaction');
+  await recordSynchronization('延迟展开');
+
   await search('真人测试');
   await until(async () => (await snapshot()).events.some(event => event.verificationRequired && event.automationMode === 'music-search'), 'explicit manual verification event');
   await until(() => {
@@ -185,7 +254,7 @@ async function run() {
   assert.equal(main.webContents.isFocused(), true, 'Reopened main window must focus its application WebContents.');
   for (const keyCode of 'focus') main.webContents.sendInputEvent({ type: 'char', keyCode });
   await until(async () => await main.webContents.executeJavaScript("document.getElementById('mediaMusicInput').value") === 'focus', 'keyboard input after tray restoration');
-  console.log(`Embedded music search probe passed ${JSON.stringify({ platform: process.platform, shortTitle: first.count, changedQuery: next.count, automaticCheck: automatic.count, verified: verified.count, extraWindows: 0, synchronizationDelays, layoutChecks, windowControls: true })}`);
+  console.log(`Embedded music search probe passed ${JSON.stringify({ platform: process.platform, shortTitle: first.count, changedQuery: next.count, automaticCheck: automatic.count, managedChallenge: managed.count, verified: verified.count, extraWindows: 0, synchronizationDelays, layoutChecks, windowControls: true })}`);
   app.quit();
 }
 
@@ -196,6 +265,8 @@ run().catch(async error => {
     console.log(`music production failure snapshot ${JSON.stringify({
       mainId: main.id,
       nativeHandle: main.getNativeWindowHandle().toString('hex'),
+      contentSize: main.getContentSize(),
+      innerSize: await main.webContents.executeJavaScript('({width:innerWidth,height:innerHeight})').catch(() => null),
       children: main.contentView.children.map(child => ({ id: child.webContents?.id, url: child.webContents?.getURL?.(), visible: child.getVisible?.(), bounds: child.getBounds() })),
       ui: await main.webContents.executeJavaScript('({search:state.media.musicSearch,browser:state.media.browser,musicOperation:state.media.musicOperation,events:window.__probeMusicEvents})').catch(() => null),
     })}`);

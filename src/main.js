@@ -3,6 +3,7 @@ const { Notification, WebContentsView, nativeTheme } = require('electron');
 const { createApplicationWindow } = require('./application-window');
 const { attachEditableContextMenu } = require('./editable-context-menu');
 const { buildMusicPageSnapshotScript, isMusicSearchDocument } = require('./music-page');
+const { musicOperationDeadline, musicOperationTimeoutReason, executeMusicPageScript } = require('./music-operation');
 const MUSIC_PAGE_SNAPSHOT_SCRIPT = buildMusicPageSnapshotScript({ observe: true });
 const {
   quickWindowPlatformOptions,
@@ -3840,6 +3841,7 @@ function destroyMediaPortalView({ notify = true } = {}) {
   clearMediaPortalPendingDownload();
   clearMediaPortalPreviewCapture();
   clearMediaPortalVerificationMonitor();
+  mediaPortalInputState?.musicAbortController?.abort();
   mediaPortalInputState = null;
   mediaPortalRequestId += 1;
   const view = mediaPortalView;
@@ -3877,7 +3879,9 @@ function resetMediaPortalAutomation(kind = '') {
   const cancellable = targetKind === 'video'
     ? mode === 'video-parse'
     : mode === 'music-search' || mode === 'music-preview';
-  if (cancellable || (targetKind === 'video' && mediaPortalParsedVideo)) {
+  const verificationCancellable = targetKind === 'audio' && !!mediaPortalVerificationResume;
+  if (cancellable || verificationCancellable || (targetKind === 'video' && mediaPortalParsedVideo)) {
+    mediaPortalInputState?.musicAbortController?.abort();
     clearMediaPortalInputTimer();
     clearMediaPortalResultSyncTimer();
     clearMediaPortalMusicResultSyncTimer();
@@ -4011,16 +4015,22 @@ function startMediaPortalVideoResultSync(state, view = mediaPortalView) {
 function startMediaPortalMusicResultSync(state, view = mediaPortalView) {
   clearMediaPortalMusicResultSyncTimer();
   if (!view || view.webContents.isDestroyed() || !isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId)) return;
+  const generation = state.musicResultSyncGeneration = Number(state.musicResultSyncGeneration || 0) + 1;
   const poll = async () => {
     if (!view || view.webContents.isDestroyed() || !isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId)
-      || state.automationMode !== 'music-search' || state.completing) return;
+      || state.automationMode !== 'music-search' || state.completing || state.musicResultSyncGeneration !== generation) return;
     state.musicResultSyncPollCount = Number(state.musicResultSyncPollCount || 0) + 1;
     try {
-      const snapshot = await view.webContents.executeJavaScript(MUSIC_PAGE_SNAPSHOT_SCRIPT, true);
+      const snapshot = await executeMusicPageScript(view.webContents, MUSIC_PAGE_SNAPSHOT_SCRIPT, state.musicAbortController?.signal);
+      if (!isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId) || state.musicResultSyncGeneration !== generation) return;
       const results = Array.isArray(snapshot?.results) ? snapshot.results : [];
       if (results.length && isMusicSearchDocument(snapshot.url, state.portalUrl)) {
         runtimeLog(`music result sync hit request=${state.requestId} poll=${state.musicResultSyncPollCount} count=${results.length}`);
         await completeMediaPortalAutomation(state, { ok: true, results });
+        return;
+      }
+      if (snapshot?.requiresHuman) {
+        await completeMediaPortalAutomation(state, { ok: false, reason: 'human-verification' });
         return;
       }
       if (snapshot?.automaticCheck && !state.automaticSecurityCheck) {
@@ -4028,7 +4038,9 @@ function startMediaPortalMusicResultSync(state, view = mediaPortalView) {
         emitMediaPortalProgress(state, { message: '音乐站正在进行自动安全检查，完成后继续读取结果', reason: 'automatic-security-check' });
       } else if (!snapshot?.challenge) state.automaticSecurityCheck = false;
     } catch {}
-    mediaPortalMusicResultSyncTimer = setTimeout(poll, 350);
+    if (isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId) && state.musicResultSyncGeneration === generation) {
+      mediaPortalMusicResultSyncTimer = setTimeout(poll, 350);
+    }
   };
   mediaPortalMusicResultSyncTimer = setTimeout(poll, 180);
 }
@@ -4050,6 +4062,7 @@ function scheduleMediaPortalVisibilityNudge(state, view, {
   const wakeMax = musicSearch ? MEDIA_PORTAL_MUSIC_WAKE_MAX : MEDIA_PORTAL_VIDEO_WAKE_MAX;
   const wakeCount = Number(state?.visibilityNudgeCount || 0);
   if ((!musicSearch && !videoResult)
+    || mediaPortalRequestedVisible
     || mediaPortalVisibilityNudgeTimer
     || mediaPortalVisibilityRestoreTimer
     || wakeCount >= wakeMax) return;
@@ -4067,6 +4080,7 @@ function scheduleMediaPortalVisibilityNudge(state, view, {
   mediaPortalVisibilityNudgeTimer = setTimeout(async () => {
     mediaPortalVisibilityNudgeTimer = null;
     if (mediaPortalInputState !== state || state.requestId !== mediaPortalRequestId || !view || view.webContents.isDestroyed()) return;
+    if (mediaPortalRequestedVisible) return;
     state.visibilityNudgeCount = wakeCount + 1;
     const wakeKind = musicSearch ? 'music search' : 'video result';
     // Some provider pages only start their parser after receiving a real compositor frame.
@@ -4095,7 +4109,8 @@ function scheduleMediaPortalVisibilityNudge(state, view, {
       '})()',
     ].join('\n');
     try {
-      await view.webContents.executeJavaScript(visibilityScript, true);
+      if (musicSearch) await executeMusicPageScript(view.webContents, visibilityScript, state.musicAbortController?.signal);
+      else await view.webContents.executeJavaScript(visibilityScript, true);
     } catch {}
     try {
       await view.webContents.capturePage();
@@ -4123,6 +4138,11 @@ function rememberMediaPortalVerificationResume(state) {
     completing: false,
     automationRunning: false,
     automationRerunRequested: false,
+    musicAbortController: null,
+    musicDeadlineAt: 0,
+    musicDeadlineExpired: false,
+    musicSecurityCheckTimer: null,
+    musicSecurityCheckShown: false,
     retryCount: 0,
     visibilityRetryCount: 0,
     verificationStartedAt: Date.now(),
@@ -4136,6 +4156,7 @@ function resumeMediaPortalAfterVerification() {
   clearMediaPortalVerificationMonitor({ clearResume: false });
   cancelMediaPortalIdleDestroy();
   const poll = async () => {
+    if (mediaPortalVerificationResume !== resume || resume.requestId !== mediaPortalRequestId) return;
     if (!mediaPortalVerificationResume || !mediaPortalView || mediaPortalView.webContents.isDestroyed()) {
       clearMediaPortalVerificationMonitor();
       return;
@@ -4146,7 +4167,8 @@ function resumeMediaPortalAfterVerification() {
       return;
     }
     try {
-      const status = await mediaPortalView.webContents.executeJavaScript(MUSIC_PAGE_SNAPSHOT_SCRIPT, true);
+      const status = await executeMusicPageScript(mediaPortalView.webContents, MUSIC_PAGE_SNAPSHOT_SCRIPT);
+      if (mediaPortalVerificationResume !== resume || resume.requestId !== mediaPortalRequestId) return;
       if (!status?.challenge && status?.readyState !== 'loading') {
         const next = mediaPortalVerificationResume;
         clearMediaPortalVerificationMonitor();
@@ -4186,10 +4208,11 @@ function clearMediaPortalProgressTimer() {
 }
 
 function startMediaPortalMusicHeartbeat(state, view = mediaPortalView) {
+  if (state?.automationMode === 'music-search') return;
   if (!String(state?.automationMode || '').startsWith('music-') || !view || view.webContents.isDestroyed()) return;
   let capturing = false;
   const capture = () => {
-    if (!isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId) || view.webContents.isDestroyed() || capturing) return;
+    if (!isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId) || view.webContents.isDestroyed() || view.webContents.musicManagedChallenge || capturing) return;
     // Use Electron's capture visibility lifecycle for a tiny compositor frame.
     // The provider stays beneath the application; no native window is shown.
     capturing = true;
@@ -4265,10 +4288,22 @@ function emitMediaPortalProgress(state, extra = {}) {
 function startMediaPortalProgress(state) {
   clearMediaPortalProgressTimer();
   state.progressStartedAt = Date.now();
+  if (String(state.automationMode || '').startsWith('music-')) {
+    state.musicDeadlineAt ||= musicOperationDeadline(state.automationMode);
+    state.musicAbortController ||= new AbortController();
+  }
   emitMediaPortalProgress(state);
   mediaPortalProgressTimer = setInterval(() => {
     if (state.requestId !== mediaPortalRequestId) {
       clearMediaPortalProgressTimer();
+      return;
+    }
+    if (state.musicDeadlineAt && Date.now() >= state.musicDeadlineAt && !state.musicDeadlineExpired) {
+      state.musicDeadlineExpired = true;
+      state.musicAbortController?.abort();
+      clearMediaPortalInputTimer();
+      runtimeLog(`music operation total timeout request=${state.requestId} mode=${state.automationMode}`);
+      void completeMediaPortalAutomation(state, { ok: false, reason: musicOperationTimeoutReason(state) });
       return;
     }
     emitMediaPortalProgress(state);
@@ -4739,16 +4774,17 @@ async function completeMediaPortalAutomation(state, result = {}) {
   if (!isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId) || state.completing) return;
   if (state.providerRetryPending) return;
   const mode = state.automationMode;
-  if (mode === 'music-search') {
+  if (mode === 'music-search' && !state.musicDeadlineExpired) {
     // The page can finish rendering while an earlier extraction is timing out.
     // Read the current document once more before publishing a terminal failure.
     try {
-      const snapshot = await mediaPortalView?.webContents.executeJavaScript(MUSIC_PAGE_SNAPSHOT_SCRIPT, true);
+      const snapshot = await executeMusicPageScript(mediaPortalView.webContents, MUSIC_PAGE_SNAPSHOT_SCRIPT, state.musicAbortController?.signal);
       if (!isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId) || state.completing) return;
       if (snapshot?.results?.length && isMusicSearchDocument(snapshot.url, state.portalUrl)) result = { ok: true, results: snapshot.results };
       else if (result.ok && !isMusicSearchDocument(snapshot?.url, state.portalUrl)) return;
     } catch {}
   }
+  if (!isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId) || state.completing) return;
   clearMediaPortalResultSyncTimer();
   clearMediaPortalMusicResultSyncTimer();
   clearMediaPortalVisibilityNudgeTimer();
@@ -4852,7 +4888,7 @@ async function completeMediaPortalAutomation(state, result = {}) {
     state.completing = true;
     const results = sanitizeMusicResults(result.results);
     const searchSucceeded = !!result.ok && results.length > 0;
-    if (!searchSucceeded && String(result.reason || '') === 'search-timeout' && Number(state.visibilityRetryCount || 0) < 2) {
+    if (!searchSucceeded && !state.musicDeadlineExpired && String(result.reason || '') === 'search-timeout' && Number(state.visibilityRetryCount || 0) < 2) {
       state.completing = false;
       state.visibilityRetryCount = Number(state.visibilityRetryCount || 0) + 1;
       state.visibilityNudgeCount = 0;
@@ -4860,17 +4896,18 @@ async function completeMediaPortalAutomation(state, result = {}) {
       runtimeLog(`music search extraction retry ${state.visibilityRetryCount}/2`);
       emitMediaPortalProgress(state, { percent: 72, message: '正在激活后台页面并重新读取音乐结果' });
       try {
-        await mediaPortalView?.webContents.executeJavaScript(`(() => {
+        await executeMusicPageScript(mediaPortalView.webContents, `(() => {
           window.dispatchEvent(new Event('focus'));
           window.dispatchEvent(new Event('resize'));
           document.dispatchEvent(new Event('visibilitychange'));
           document.querySelector('main,body')?.getBoundingClientRect();
           return document.visibilityState;
-        })()`, true);
+        })()`, state.musicAbortController?.signal);
       } catch {}
       scheduleMediaPortalInput();
       return;
     }
+    state.musicAbortController?.abort();
     mediaPortalInputState = null;
     sendMediaPortalEvent('media:musicResults', {
       requestId: state.requestId,
@@ -4889,6 +4926,8 @@ async function completeMediaPortalAutomation(state, result = {}) {
       ...(searchSucceeded ? { verificationPending: false, verificationRequired: false, verificationCompleted: true } : {}),
     });
   } else if (mode === 'music-preview') {
+    state.completing = true;
+    state.musicAbortController?.abort();
     mediaPortalInputState = null;
     const previewUrl = sanitizeRemoteMediaUrl(result.previewUrl);
     const previewSucceeded = !!result.ok && !!previewUrl;
@@ -4906,6 +4945,8 @@ async function completeMediaPortalAutomation(state, result = {}) {
       autoActionMissing: !previewSucceeded,
     });
   } else if (mode === 'music-download') {
+    state.completing = true;
+    state.musicAbortController?.abort();
     mediaPortalInputState = null;
     const href = sanitizeRemoteMediaUrl(result.href);
     if (!result.ok) {
@@ -4952,13 +4993,24 @@ function scheduleMediaPortalInput() {
     state.automationRunning = true;
     state.automationRerunRequested = false;
     keepMediaPortalWorkerVisible(view);
+    if (String(state.automationMode || '').startsWith('music-') && view.webContents.isLoading()) {
+      state.automationRunning = false;
+      scheduleMediaPortalInput();
+      return;
+    }
     if (state.automationMode === 'music-search' && !isMusicSearchDocument(view.webContents.getURL(), state.portalUrl)) {
       state.automationRunning = false;
       if (!view.webContents.isLoading()) loadMediaPortalPage(view, state, state.portalUrl, { reason: 'music-search-document' });
       return;
     }
+    if (state.automationMode === 'music-search') {
+      // The search URL already contains the query. Read the site normally;
+      // parser input automation would modify the security-check document too.
+      state.automationRunning = false;
+      startMediaPortalMusicResultSync(state, view);
+      return;
+    }
     scheduleMediaPortalVisibilityNudge(state, view);
-    if (state.automationMode === 'music-search') startMediaPortalMusicResultSync(state, view);
     const script = buildPortalScript({
       mode: state.automationMode,
       phase: state.phase || '',
@@ -4971,7 +5023,9 @@ function scheduleMediaPortalInput() {
         : (state.automationMode === 'music-download' ? 55000 : (state.automationMode === 'music-search' && state.visibilityRetryCount ? 15000 : 30000)),
     }, scoreMediaDownloadQualityLabel);
     try {
-      const result = await view.webContents.executeJavaScript(script, true);
+      const result = String(state.automationMode || '').startsWith('music-')
+        ? await executeMusicPageScript(view.webContents, script, state.musicAbortController?.signal)
+        : await view.webContents.executeJavaScript(script, true);
       if (!isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId)) return;
       if (result?.continueAutomation) {
         if (result.nativeSubmitRequired) {
@@ -5040,6 +5094,11 @@ function scheduleMediaPortalInput() {
       await completeMediaPortalAutomation(state, result || {});
     } catch (error) {
       if (!isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId)) return;
+      if (error?.code === 'music-page-loading' || error?.code === 'music-page-navigation') {
+        state.automationRerunRequested = true;
+        return;
+      }
+      if (error?.code === 'music-operation-cancelled') return;
       state.retryCount = Number(state.retryCount || 0) + 1;
       if (state.retryCount <= 3) {
         if (state.automationMode === 'video-parse' && state.phase !== 'result' && view.webContents.getURL() !== state.portalUrl) {
@@ -5727,6 +5786,13 @@ function attachMediaPortalViewToMain(view = mediaPortalView) {
 
 function attachMediaPortalViewToMainBackground(view = mediaPortalView) {
   if (!view || view.webContents.isDestroyed() || !mainWindow || mainWindow.isDestroyed()) return false;
+  // A queued background wake must not cover a provider the user has just opened.
+  if (mediaPortalRequestedVisible && mediaPortalLastVisibleBounds) {
+    if (!attachMediaPortalViewToMain(view)) return false;
+    view.setBounds(mediaPortalLastVisibleBounds);
+    view.setVisible(true);
+    return true;
+  }
   if (mediaPortalViewHost !== 'main-background') {
     try { mainWindow.contentView.removeChildView(view); } catch {}
     try { mainWindow.contentView.addChildView(view, 0); } catch { return false; }
@@ -5745,6 +5811,7 @@ function attachMediaPortalViewToMainBackground(view = mediaPortalView) {
 
 function activateMediaPortalInBackground(view = mediaPortalView, durationMs = MEDIA_PORTAL_VIDEO_WAKE_VISIBLE_MS, label = 'portal') {
   if (!view || view.webContents.isDestroyed()) return false;
+  if (mediaPortalRequestedVisible) return attachMediaPortalViewToMainBackground(view);
   const restoreMainFocus = !!mainWindow?.isFocused?.();
   if (!attachMediaPortalViewToMainBackground(view)) return false;
   view.webContents.setAudioMuted(true);
@@ -5883,6 +5950,21 @@ function inspectSeekinProviderResponse(view, protocolRequestId) {
   void readResponse();
 }
 
+function configureMediaPortalResponseObserver(view, url) {
+  const contents = view.webContents;
+  const needsResponseBody = /^https:\/\/(?:www\.)?seekin\.ai(?:\/|$)/i.test(String(url || ''));
+  try {
+    if (!needsResponseBody) {
+      if (contents.debugger.isAttached()) contents.debugger.detach();
+    } else if (!contents.debugger.isAttached()) {
+      contents.debugger.attach('1.3');
+      contents.debugger.sendCommand('Network.enable').catch(() => {});
+    }
+  } catch (error) {
+    runtimeLog(`seekin response observer unavailable ${error?.message || error}`);
+  }
+}
+
 function ensureMediaPortalView() {
   cancelMediaPortalIdleDestroy();
   if (mediaPortalView && !mediaPortalView.webContents.isDestroyed()) return mediaPortalView;
@@ -5903,6 +5985,25 @@ function ensureMediaPortalView() {
   attachMediaPortalViewToMainBackground(view);
   view.setVisible(false);
   configureMediaDownloadSession(view.webContents.session);
+  view.webContents.session.webRequest.onResponseStarted(details => {
+    if (details.webContentsId !== view.webContents.id || details.resourceType !== 'mainFrame') return;
+    const mitigation = Object.entries(details.responseHeaders || {}).find(([name]) => name.toLowerCase() === 'cf-mitigated')?.[1];
+    view.webContents.musicManagedChallenge = [].concat(mitigation || []).some(value => String(value).toLowerCase() === 'challenge');
+    const state = mediaPortalInputState;
+    if (view.webContents.musicManagedChallenge && String(state?.automationMode || '').startsWith('music-')) {
+      state.automaticSecurityCheck = true;
+      emitMediaPortalProgress(state, { message: '音乐站正在进行自动安全检查，完成后继续读取结果', reason: 'automatic-security-check' });
+      if (!state.musicSecurityCheckTimer) {
+        state.musicSecurityCheckTimer = setTimeout(() => {
+          if (!isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId)
+            || view.webContents.isDestroyed() || !view.webContents.musicManagedChallenge || state.musicSecurityCheckShown) return;
+          state.musicSecurityCheckShown = true;
+          notifyMediaBrowserState({ requestId: state.requestId, automationMode: state.automationMode, securityCheckPending: true });
+        }, 8000);
+        state.musicAbortController?.signal.addEventListener('abort', () => clearTimeout(state.musicSecurityCheckTimer), { once: true });
+      }
+    }
+  });
   if (process.env.XUANNIAN_DEBUG_LOG) {
     view.webContents.session.webRequest.onCompleted((details) => {
       if (/gequbao\.com/i.test(String(details.url || '')) && details.resourceType === 'mainFrame') {
@@ -5921,17 +6022,13 @@ function ensureMediaPortalView() {
       }
     });
   }
-  try {
-    view.webContents.debugger.attach('1.3');
-    view.webContents.debugger.sendCommand('Network.enable').catch(() => {});
-    view.webContents.debugger.on('message', (_event, method, params) => {
-      const responseUrl = String(params?.response?.url || '');
-      if (method !== 'Network.responseReceived' || !/api\.seekin\.ai\/ikool\/media\/download/i.test(responseUrl)) return;
-      inspectSeekinProviderResponse(view, params.requestId);
-    });
-  } catch (error) {
-    runtimeLog(`seekin response observer unavailable ${error?.message || error}`);
-  }
+  // Only Seekin requires response bodies. Keep music pages in a normal browser
+  // context so their own safety checks can finish without a debugger attached.
+  view.webContents.debugger.on('message', (_event, method, params) => {
+    const responseUrl = String(params?.response?.url || '');
+    if (method !== 'Network.responseReceived' || !/api\.seekin\.ai\/ikool\/media\/download/i.test(responseUrl)) return;
+    inspectSeekinProviderResponse(view, params.requestId);
+  });
   view.webContents.setWindowOpenHandler(({ url }) => {
     const disposition = classifyMediaPortalPopup(url, view.webContents.getURL());
     if (disposition === 'download') {
@@ -6024,6 +6121,7 @@ function setMediaPortalBounds(bounds = {}, visible = false, mode = 'browser') {
   const width = Math.max(0, Math.min(maxWidth - x, Math.round(Number(bounds.width || 0))));
   const height = Math.max(0, Math.min(maxHeight - y, Math.round(Number(bounds.height || 0))));
   const shouldShow = !!visible && width >= 120 && height >= 80;
+  const wasRequestedVisible = mediaPortalRequestedVisible;
   mediaPortalRequestedVisible = shouldShow;
   if (width >= 120 && height >= 80) {
     mediaPortalLastVisibleBounds = { x, y, width, height };
@@ -6043,6 +6141,7 @@ function setMediaPortalBounds(bounds = {}, visible = false, mode = 'browser') {
     attachMediaPortalViewToMain(view);
     if (mediaPortalLastVisibleBounds) view.setBounds(mediaPortalLastVisibleBounds);
     view.setVisible(true);
+    if (!wasRequestedVisible && mainWindow?.isFocused()) view.webContents.focus();
   } else if (keepWorkerActive) keepMediaPortalWorkerVisible(view);
   else hideMediaPortalView(view);
   view.webContents.setAudioMuted(!shouldShow);
@@ -6107,6 +6206,7 @@ function handleMediaPortalLoadError(view, state, value, error, reason = 'open') 
 
 function loadMediaPortalPage(view, state, value, { reload = false, reason = 'open' } = {}) {
   if (!view || view.webContents.isDestroyed() || !isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId)) return false;
+  configureMediaPortalResponseObserver(view, value);
   let loadPromise = null;
   try {
     if (reload && view.webContents.getURL() === value) {
@@ -6155,6 +6255,8 @@ function openMediaPortal(url, downloadTarget = 'download', sourceText = '', auto
   }
   const view = ensureMediaPortalView();
   if (!view) return false;
+  configureMediaPortalResponseObserver(view, value);
+  mediaPortalInputState?.musicAbortController?.abort();
   failMediaPortalPendingTask(view.webContents, 'cancelled');
   if (automationMode) clearMediaPortalVerificationMonitor();
   if (automationMode === 'music-search') mediaPortalRequestedVisible = false;

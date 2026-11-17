@@ -11,6 +11,7 @@ function readMusicPage() {
   };
   const unique = new Map();
   for (const element of document.querySelectorAll('a[href*="/music/"],[data-href*="/music/"],[data-url*="/music/"]')) {
+    if (element.closest('#guess-section,#guess-musics-list,.guess-music-section,.guess-song-card')) continue;
     if (!visible(element)) continue;
     const raw = element.getAttribute('href') || element.getAttribute('data-href') || element.getAttribute('data-url');
     let url;
@@ -19,8 +20,9 @@ function readMusicPage() {
       || !/^\/music\/\d+(?:\/|$)/i.test(url.pathname) || url.username || url.password) continue;
     const row = element.closest('tr,li,article,.row,.item,[class*="song"],[class*="music"],[class*="result"]') || element.parentElement;
     const clean = label => label.replace(/(?:播放\s*&?\s*下载|播放|下载)/gi, ' ').replace(/\s+/g, ' ').trim();
+    const titleLabel = clean(String(element.getAttribute('title') || ''));
     const ownLabel = clean(text(element));
-    const label = (ownLabel || clean(text(row))).slice(0, 180);
+    const label = (titleLabel || ownLabel || clean(text(row))).slice(0, 180);
     if (!label) continue;
     const prior = unique.get(url.href);
     if (!prior || prior.label.length < label.length) unique.set(url.href, { url: url.href, label });

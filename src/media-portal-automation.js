@@ -254,7 +254,7 @@ function buildPortalScript({ mode, value = '', phase = '', timeoutMs = 30000, ca
       try { window.confirm = () => false; } catch {}
       try { window.prompt = () => null; } catch {}
     };
-    installPopupGuards();
+    if (!mode.startsWith('music-')) installPopupGuards();
     const readMusicPage = (${readMusicPage.toString()});
     const humanVerificationRequired = () => {
       return readMusicPage().requiresHuman;

@@ -131,6 +131,31 @@ async function run() {
   assert.equal(shortSearch.ok, true);
   assertSingleResult(shortSearch);
 
+  // Real provider markup: recommendation cards use the same /music/ URLs as
+  // search rows, including duplicates with a numbered label.
+  const recommendations = createPage({ body: '唯一 邓紫棋 搜索结果 共7首 猜你想找' });
+  const searchBody = recommendations.element({ tag: 'div', attributes: { class: 'card-body' } });
+  const searchRows = recommendations.element({ tag: 'div', attributes: { class: 'card-text' }, parent: searchBody });
+  for (let index = 0; index < 7; index += 1) {
+    const row = recommendations.element({ tag: 'div', text: `歌曲${index} - 歌手${index} 播放&下载 额外行信息`, attributes: { class: 'row no-gutters py-2d5 border-top align-items-center' }, parent: searchRows });
+    const attributes = { href: `/music/${35660 + index}`, title: `歌曲${index} - 歌手${index}` };
+    recommendations.element({ text: `歌曲${index}\n-\n歌手${index}`, attributes: { ...attributes, class: 'hover-zoom d-block text-decoration-none' }, parent: row });
+    recommendations.element({ text: '播放&下载', attributes, parent: row });
+  }
+  const guessSection = recommendations.element({ tag: 'div', attributes: { id: 'guess-section', class: 'card mb-3 guess-music-section is-visible' } });
+  const guessBody = recommendations.element({ tag: 'div', attributes: { class: 'card-body' }, parent: guessSection });
+  const guessList = recommendations.element({ tag: 'div', attributes: { id: 'guess-musics-list', class: 'guess-song-grid' }, parent: guessBody });
+  for (let index = 0; index < 5; index += 1) {
+    recommendations.element({ text: `0${index + 1} 推荐歌曲 推荐歌手`, attributes: { href: `/music/${35662 + index * 10}`, class: 'guess-song-card' }, parent: guessList });
+  }
+  const mainResults = recommendations.read().results;
+  assert.equal(mainResults.length, 7, 'Recommendations must neither add rows nor replace an existing result label.');
+  assert.deepEqual(Array.from(mainResults, result => [result.title, result.artist]), Array.from({ length: 7 }, (_, index) => [`歌曲${index}`, `歌手${index}`]));
+  const recommendationOnly = createPage({ body: '猜你想找' });
+  const recommendationRoot = recommendationOnly.element({ tag: 'div', attributes: { id: 'guess-section' } });
+  recommendationOnly.addResult({ label: '01 唯一 G.E.M. 邓紫棋', parent: recommendationRoot });
+  assert.equal(recommendationOnly.read().results.length, 0, 'A recommendation-only page must not complete an empty search.');
+
   const hiddenCaptcha = createPage({ body: '搜索结果 Cloudflare captcha' });
   hiddenCaptcha.addResult();
   const hiddenParent = hiddenCaptcha.element({ tag: 'div', attributes: { hidden: '' } });
@@ -202,7 +227,7 @@ async function run() {
   assert.equal(isMusicSearchDocument('not a URL', current), false);
   assert.equal(isMusicSearchDocument('https://www.gequbao.com/s/%ZZ', current), false);
 
-  console.log('music search sync tests passed: short results, challenge distinction, attribute updates, and stale document rejection');
+  console.log('music search sync tests passed: main results exclude recommendations, short results, challenge distinction, attribute updates, and stale document rejection');
 }
 
 run().catch(error => {
