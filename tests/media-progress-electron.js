@@ -58,14 +58,17 @@ async function geometry(stage, determinate) {
 async function run() {
   await app.whenReady();
   fs.mkdirSync(snapshots, { recursive: true });
-  window = new BrowserWindow({ show: false, width: 1280, height: 820, webPreferences: { backgroundThrottling: false } });
+  // Seed file-origin storage before index.html starts its asynchronous init and
+  // first-run timer. Marking it after loadFile races with the guide on slow Macs.
+  const preload=path.join(directory,'isolate-onboarding.cjs');
+  fs.writeFileSync(preload,'localStorage.setItem("xuannian.onboarding.first-run.v1","seen");localStorage.setItem("xuannian.quick-guide.v4","seen");');
+  window = new BrowserWindow({ show: false, width: 1280, height: 820, webPreferences: { backgroundThrottling: false, contextIsolation: true, preload } });
   await window.loadFile(path.resolve(__dirname, '..', 'index.html'));
   console.log('media progress UI loaded');
   window.showInactive();
   await new Promise(resolve => setTimeout(resolve, 150));
   await evaluate(`(async()=>{
-    localStorage.setItem('xuannian.onboarding.first-run.v1','seen');
-    document.querySelector('#coachBackdrop')?.remove();
+    if(localStorage.getItem('xuannian.onboarding.first-run.v1')!=='seen')throw Error('First-run guide was not isolated before application init');
     window.videoReply={ok:true,jobId:'progress-video',parseMs:25,parsed:{title:'跨平台进度布局测试',options:[{id:'folder',kind:'folder',label:'子目录'},{id:'video',kind:'video',label:'测试视频',quality:'1080P',formats:['source']}]}};
     window.pending={};window.bytesKnown=false;
     api.yunxInspect=async()=>({ok:true,share:null});api.yunxStop=async()=>({ok:true});
@@ -122,7 +125,10 @@ async function run() {
   await waitFor("document.querySelector('.yunx-panel progress').hidden");
 
   const music=await evaluate(`(async()=>{
+    if(document.querySelector('#modalBackdrop').classList.contains('show'))throw Error('Unexpected dialog before music test: '+document.querySelector('#modalBox').textContent);
     setMediaKind('audio',{showPortal:true});window.openRequests=[];let resumes=0;
+    const originalConfirm=showConfirmModal;let musicConfirmCalls=0;
+    showConfirmModal=(...args)=>{musicConfirmCalls++;return originalConfirm(...args);};
     api.getMediaMusicSearchUrl=async keyword=>'https://www.gequbao.com/s/'+encodeURIComponent(keyword);
     api.openMediaPortal=async(url,target,keyword)=>new Promise(resolve=>window.openRequests.push({keyword,resolve}));
     api.resumeMediaPortalAfterVerification=async()=>{resumes++;return {ok:true};};
@@ -140,7 +146,7 @@ async function run() {
     const lateFailurePreserved=state.media.musicSearch.status==='ready'&&state.media.musicSearch.results.length===1;
     const normalHidden=!state.media.browserVisible&&document.querySelector('#mediaBrowserShell').hidden;
     await offerMediaManualPortal('audio','load-error','https://www.gequbao.com/');
-    const noErrorPopup=!document.querySelector('#modalBackdrop').classList.contains('show')&&!state.media.browserVisible;
+    const noErrorPopup=musicConfirmCalls===0&&!document.querySelector('#modalBackdrop').classList.contains('show')&&!state.media.browserVisible;
     state.media.browser={...state.media.browser,ready:true,url:'https://www.gequbao.com/s/test'};
     await toggleMediaManualPortal('audio');const eyeOpened=state.media.browserVisible&&!document.querySelector('#mediaBrowserShell').hidden;
     await toggleMediaManualPortal('audio');const eyeClosed=!state.media.browserVisible&&document.querySelector('#mediaBrowserShell').hidden;
@@ -149,6 +155,7 @@ async function run() {
     const verificationEmbedded=state.media.browserVisible&&!document.querySelector('#mediaBrowserShell').hidden&&!document.querySelector('#modalBackdrop').classList.contains('show');
     applyMediaBrowserState({verificationRequired:false,verificationPending:false,verificationCompleted:true,requestId:102});
     const verificationClosed=!state.media.browserVisible;
+    showConfirmModal=originalConfirm;
     return {rejectedOld,rejectedOldRequest,displayedImmediately,lateFailurePreserved,normalHidden,noErrorPopup,eyeOpened,eyeClosed,verificationEmbedded,verificationClosed,resumes,requestId:state.media.musicSearch.requestId};
   })()`);
   assert.deepStrictEqual(music,{rejectedOld:true,rejectedOldRequest:true,displayedImmediately:true,lateFailurePreserved:true,normalHidden:true,noErrorPopup:true,eyeOpened:true,eyeClosed:true,verificationEmbedded:true,verificationClosed:true,resumes:1,requestId:102});
