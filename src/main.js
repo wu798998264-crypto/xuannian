@@ -1,6 +1,11 @@
 ﻿const { app, BrowserWindow, ipcMain, dialog, globalShortcut, clipboard, desktopCapturer, screen, Menu, nativeImage, shell } = require('electron');
 const { BaseWindow, Notification, WebContentsView, nativeTheme } = require('electron');
 const { attachEditableContextMenu } = require('./editable-context-menu');
+const {
+  quickWindowPlatformOptions,
+  configureQuickWindowPlatform,
+  showQuickWindowPlatform,
+} = require('./quick-window-policy');
 const fs = require('fs');
 const path = require('path');
 const { pathToFileURL } = require('url');
@@ -25,6 +30,7 @@ const {
   remapConflictingProjectIds,
   favoriteContentCounts,
 } = require('./favorites-backup');
+const { createZipFromDirectory, extractZipToDirectory } = require('./favorites-archive');
 const { FileSearchService, fileTypeForPath } = require('./file-search');
 const {
   copyMediaToFavorites,
@@ -1054,6 +1060,7 @@ function sleep(ms) {
 }
 
 function readForegroundWindowHandleAsync() {
+  if (process.platform !== 'win32') return Promise.resolve('');
   return new Promise((resolve) => {
     const helper = clipboardHelperPath();
     if (process.platform === 'win32' && fs.existsSync(helper)) {
@@ -2117,6 +2124,7 @@ function startQuickOutsideCloseWatcher() {
 
 function createQuickWindow() {
   quickWindow = new BrowserWindow({
+    ...quickWindowPlatformOptions(),
     width: 460,
     height: 560,
     minWidth: 460,
@@ -2141,6 +2149,7 @@ function createQuickWindow() {
       backgroundThrottling: true,
     },
   });
+  configureQuickWindowPlatform(quickWindow);
   quickWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   attachPageDiagnostics(quickWindow, 'quick');
   quickWindow.webContents.on('will-navigate', (event, url) => {
@@ -2218,9 +2227,7 @@ function showQuickWindow(targetHwnd = '') {
   const x = Math.min(Math.max(point.x - Math.round(width / 2), bounds.x + 8), bounds.x + bounds.width - width - 8);
   const y = Math.min(Math.max(point.y - 80, bounds.y + 8), bounds.y + bounds.height - height - 8);
   quickWindow.setBounds({ x, y, width, height });
-  if (!quickWindow.isVisible()) quickWindow.show();
-  else quickWindow.show();
-  quickWindow.focus();
+  showQuickWindowPlatform(quickWindow);
   sendQuickWindow('quick:hotkey', hotkeyParts());
   if (quickWindow.webContents.isLoading()) {
     quickWindow.webContents.once('did-finish-load', () => {
@@ -2235,7 +2242,7 @@ function showQuickWindow(targetHwnd = '') {
     quickWindowDataDirty = false;
   }
   if (quickWindow && !quickWindow.isDestroyed() && quickWindow.isVisible()) {
-    quickWindow.focus();
+    if (process.platform !== 'darwin') quickWindow.focus();
     setTimeout(startQuickOutsideCloseWatcher, 360);
   }
 }
@@ -2721,8 +2728,7 @@ function sanitizeMediaDownloadHistory(items = []) {
       percent: 100,
       updatedAt: Math.max(0, Number(item.updatedAt || 0)),
     }))
-    .sort((left, right) => right.updatedAt - left.updatedAt)
-    .slice(0, 10);
+    .sort((left, right) => right.updatedAt - left.updatedAt);
 }
 
 function mediaDownloadHistoryFile() {
@@ -4505,7 +4511,7 @@ async function prepareAlternateMediaPortalPreview(state) {
       },
     });
     previewWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
-    previewWindow.webContents.session.setPermissionRequestHandler((_webContents, _permission, callback) => callback(false));
+    previewWindow.webContents.session.setPermissionRequestHandler((contents, permission, callback) => callback(permission === 'fullscreen' && contents === mainWindow?.webContents));
     previewWindow.webContents.session.on('will-download', (event, item) => {
       event.preventDefault();
       try { item.cancel(); } catch {}
@@ -7240,35 +7246,6 @@ function exportFileNameStamp() {
     pad(now.getMinutes()),
     pad(now.getSeconds()),
   ].join('');
-}
-
-function createZipFromDirectory(sourceDir, zipPath) {
-  if (fs.existsSync(zipPath)) fs.rmSync(zipPath, { force: true });
-  if (process.platform === 'win32') {
-    execFileSync('tar.exe', ['-a', '-c', '-f', zipPath, '-C', sourceDir, '.'], {
-      windowsHide: true,
-      timeout: 120000,
-    });
-    return;
-  }
-  execFileSync('zip', ['-qry', zipPath, '.'], {
-    cwd: sourceDir,
-    timeout: 120000,
-  });
-}
-
-function extractZipToDirectory(zipPath, targetDir) {
-  fs.mkdirSync(targetDir, { recursive: true });
-  if (process.platform === 'win32') {
-    execFileSync('tar.exe', ['-xf', zipPath, '-C', targetDir], {
-      windowsHide: true,
-      timeout: 120000,
-    });
-    return;
-  }
-  execFileSync('unzip', ['-q', zipPath, '-d', targetDir], {
-    timeout: 120000,
-  });
 }
 
 function findExportedDataFile(rootDir) {
@@ -10054,4 +10031,27 @@ ipcMain.handle('screenshot:capture', async (event, options = {}) => {
 ipcMain.handle('screenshot:warmup', () => {
   warmUpScreenCapturer();
   return true;
+});
+
+// Shared background parser; resources resolve inside this installed product.
+const yunxRoot = path.join(__dirname, '..', 'integration');
+const yunxResources = app.isPackaged ? process.resourcesPath : path.join(__dirname, '..', 'build', 'media-resources');
+process.env.SHENSI_YUNX_ROOT = path.join(yunxResources, 'yunx', 'runtime');
+process.env.SHENSI_YUNX_CLASSES = path.join(yunxResources, 'yunx', 'classes');
+process.env.SHENSI_FFMPEG_PATH ||= path.join(yunxResources, 'ffmpeg', process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg');
+process.env.SHENSI_FFPROBE_PATH ||= path.join(yunxResources, 'ffmpeg', process.platform === 'win32' ? 'ffprobe.exe' : 'ffprobe');
+require('./yunx-hooks.cjs').install({
+  app, ipcMain, owner: () => mainWindow,
+  parserModule: pathToFileURL(path.join(yunxRoot, 'apps/desktop/yunx-video-parser.mjs')).href,
+  shareModule: pathToFileURL(path.join(yunxRoot, 'packages/ui/share-link.js')).href,
+  directory: (favorite, kind) => {
+    const dirs = mediaDirectories();
+    return mediaCollectionDirectory(favorite ? dirs.favoritePath : dirs.downloadPath, ['image','audio','video'].includes(kind) ? kind : 'video', '');
+  },
+  completed: task => {
+    const record = {id:'yunx-'+crypto.randomUUID(),name:task.name,path:task.path,location:task.favorite?'favorites':'downloads',status:'completed',receivedBytes:task.size,totalBytes:task.size,percent:100,updatedAt:Date.now()};
+    rememberCompletedMediaDownload(record);
+    notifyMediaDownloadProgress(record);
+    notifyMediaDownloadsChanged({status:'completed',path:task.path,favorite:task.favorite});
+  }
 });

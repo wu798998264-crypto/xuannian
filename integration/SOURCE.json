@@ -1,0 +1,65 @@
+{
+  "date": "2026-11-15",
+  "source": "shensi-notes",
+  "files": [
+    {
+      "path": "apps/desktop/parser-browser.mjs",
+      "size": 6871,
+      "sha256": "dafd4963ff70e03ddc780a4f784333287850e28f1a2f6ae7c8a2a27294a46870"
+    },
+    {
+      "path": "apps/desktop/parser-xhs.mjs",
+      "size": 1715,
+      "sha256": "91db8501d33444bd7f6d0af5f04623cf1ccbfafab3a31ba127a9b536a41babd6"
+    },
+    {
+      "path": "apps/desktop/video-transfer.mjs",
+      "size": 10276,
+      "sha256": "53a3ce326e00fa5e181a57ed69e0dceaa7d732c44d72161480dfd93ec9f435fe"
+    },
+    {
+      "path": "apps/desktop/yunx-engine.mjs",
+      "size": 2926,
+      "sha256": "952d6a2b3c1d6ba54d15ef8c01231f232ba8eaeb5c0cc7696f814bf65c2cd14e"
+    },
+    {
+      "path": "apps/desktop/yunx-hls.mjs",
+      "size": 4486,
+      "sha256": "c0255a9ed0fb6b3e5fd6c9655fef1980dde47d9c6ee4e274b3a26e1017535637"
+    },
+    {
+      "path": "apps/desktop/yunx-video-parser.mjs",
+      "size": 12501,
+      "sha256": "77fadfb29403e1fe2938bc74445119c3c0ae7560f60230f4d97db72df232e9f8"
+    },
+    {
+      "path": "package.json",
+      "size": 32,
+      "sha256": "d218e29ec01186542b0d85bdc6691d12514e4cdd0ba3b9cd81f253250c8d1e34"
+    },
+    {
+      "path": "packages/core/src/parser-media-receipts.mjs",
+      "size": 724,
+      "sha256": "a8a270fa0cbd7b5eb024c508f5789322ab25c4d9f2122353360be2ef716d1032"
+    },
+    {
+      "path": "packages/official/legacy/video-portal-automation.cjs",
+      "size": 40496,
+      "sha256": "afcb92e4bc0350fc6a082c73caa1b8d9c4760baee07036e9d8285df3a1da3558"
+    },
+    {
+      "path": "packages/ui/share-link.js",
+      "size": 2549,
+      "sha256": "3bd784d4aa67f2c4f5c86dec38494c8402d82784ebb31b4d7dbc3c5b0c47db3e"
+    },
+    {
+      "path": "SOURCE.json",
+      "size": 1893,
+      "sha256": "dd992d2c02c72e4e3067d53502f58c1162f6d7ae273be4dad8cdf68d244c0480"
+    }
+  ],
+  "containsUserData": false,
+  "integrationChanges": [
+    "Platform-specific Java executable name for Windows and macOS (XuanNian 9.2.0)."
+  ]
+}

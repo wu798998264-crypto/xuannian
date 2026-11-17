@@ -1,6 +1,6 @@
 {
   "name": "xuannian",
-  "version": "9.1.8",
+  "version": "9.2.0",
   "description": "玄念本地剪切板、收藏、置顶便签与全盘查找工具",
   "main": "src/main.js",
   "scripts": {
@@ -37,7 +37,8 @@
       "!src/native/*.cs",
       "!src/native/*.exe",
       "!src/xuannian-logo.png",
-      "package.json"
+      "package.json",
+      "integration/**/*"
     ],
     "extraResources": [
       {
@@ -55,6 +56,13 @@
       {
         "from": "vendor/everything/windows",
         "to": "search-engine/windows"
+      },
+      {
+        "from": "build/media-resources",
+        "to": ".",
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "win": {
@@ -88,6 +96,7 @@
     "electron-builder": "^26.15.3"
   },
   "dependencies": {
-    "electron-updater": "^6.8.9"
+    "electron-updater": "^6.8.9",
+    "undici": "7.30.0"
   }
 }

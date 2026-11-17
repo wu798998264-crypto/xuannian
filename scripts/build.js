@@ -48,6 +48,7 @@ function run(command, args, options = {}) {
 
 const skipHelperBuild = process.env.XUANNIAN_SKIP_HELPER_BUILD === '1';
 const missingHelpers = nativeHelpers.filter(({ output }) => !fs.existsSync(output));
+run(process.execPath, [path.join(__dirname, 'prepare-media-resources.cjs')]);
 if (skipHelperBuild && missingHelpers.length) {
   throw new Error(`Native helper is required but missing: ${missingHelpers.map(({ output }) => output).join(', ')}`);
 }

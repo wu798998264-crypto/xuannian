@@ -39,10 +39,12 @@ The workflow enforces these rules by checking that the Git tag matches `package.
 
 Unsigned/ad-hoc macOS builds download the DMG matching the current Mac architecture. A trusted Apple Developer ID certificate is required before macOS can use fully automatic in-app installation.
 
-## Complete the macOS packages for 9.1.11
+## macOS packaging and native checks
 
-The published Windows 9.1.11 application contains newer video integration code than the current main branch. The `Build XuanNian 9.1.11 for macOS` workflow restores that exact application from the published portable package, checks both the download and ASAR SHA-256 values, and applies the three platform-specific Java/FFmpeg filename changes. It preserves the published JavaScript dependencies and the application identity.
+The initial macOS 9.1.11 recovery restored the application from the published Windows portable package, checked both download and ASAR SHA-256 values, and applied the platform-specific Java/FFmpeg filenames. Version 9.2.0 restores those application sources to this repository and resumes the complete tagged release process above.
 
-Run `.github/workflows/build-macos.yml` manually, or push changes to its packaging scripts on main. Each architecture runs on a matching Mac, bundles Java 17 and FFmpeg, and verifies the Java bridge, media tools, application startup, signature, runtime file hashes and DMG. Once both architectures pass, the workflow adds the missing Mac files and combined updater metadata to the existing 9.1.11 Release. It refuses to replace existing download assets.
+The release workflow calls `.github/workflows/build-macos.yml`. Each architecture runs on a matching Mac, bundles native Java 17 and FFmpeg, and verifies favorites archives, window controls, the quick panel, Java bridge, media tools, application startup, signature, runtime file hashes and DMG. After both architectures pass, their update metadata and binaries become one `release-macos` artifact for the complete release publisher. Manually running the Mac workflow produces verified artifacts without publishing a separate release.
 
-This recovery workflow is pinned to 9.1.11 and its verified source hashes. Future releases should commit the current application sources and use the complete tagged release process above.
+Media runtimes are prepared from the verified 9.1.11 distribution, with native Java and FFmpeg replacements on Mac. Keep the pinned download digest when changing application code; update it only when deliberately replacing the bundled third-party runtime source.
+
+For a local Windows build, `npm run dist:all` prepares and verifies the media resources before packaging. GitHub CLI authentication and 7-Zip are required for the first preparation; later builds verify and reuse the local cache. `build/media-resources` and download/staging folders are generated build output and must not be committed.

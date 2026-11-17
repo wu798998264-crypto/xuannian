@@ -7,6 +7,9 @@ tutorial-output/
 
 build/mac/
 build/electron-builder.mac.generated.json
+build/media-resources/
+build/media-resources-stage-*/
+build/media-resource-downloads/
 
 src/native/*.exe
 

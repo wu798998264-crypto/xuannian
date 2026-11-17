@@ -2,8 +2,9 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8" />
+  <script>if(window.nativeAPI?.platform==='darwin') document.documentElement.classList.add('platform-mac');</script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>玄念9.1.8</title>
+  <title>玄念9.2.0</title>
   <link rel="icon" href="src/xuannian-logo-256.png" />
   <link rel="stylesheet" href="src/media-library.css" />
   <style>
@@ -147,6 +148,8 @@
     body.dark .window-btn.active{background:#efefef;color:#1f1f1f}
     body.dark .window-btn:hover{background:#3a3a3a}
     .window-btn svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+    .platform-mac #windowMinBtn,.platform-mac #windowMaxBtn,.platform-mac #windowCloseBtn{display:none!important}
+    .platform-mac .drag-strip{right:46px}
     .media-download-bubble{position:relative;flex:none;z-index:40;-webkit-app-region:no-drag}
     .media-download-toggle{position:relative;width:40px;height:40px;display:grid;place-items:center;border:1px solid var(--line);border-radius:50%;background:var(--panel);color:var(--muted);box-shadow:0 4px 14px rgba(0,0,0,.1)}
     .media-download-toggle:hover,.media-download-bubble.open .media-download-toggle{color:var(--text);background:var(--panel-soft)}
@@ -1851,7 +1854,7 @@ function createBrowserFallbackAPI(){
     async deleteInspiration(id){ const data=read(); data.inspirations=data.inspirations.filter(x=>x.id!==id); write(data); return data.inspirations; },
     async getSettings(){ return read().settings; },
     async saveSettings(settings){ const data=read(); data.settings={...data.settings,...settings}; write(data); return data.settings; },
-    async getUpdateState(){ return {status:'current',revision:0,currentVersion:'9.1.8',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false,repositoryUrl:'https://github.com/wu798998264-crypto/xuannian'}; },
+    async getUpdateState(){ return {status:'current',revision:0,currentVersion:'9.2.0',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false,repositoryUrl:'https://github.com/wu798998264-crypto/xuannian'}; },
     async checkForUpdates(){ return this.getUpdateState(); },
     async downloadUpdate(){ return this.getUpdateState(); },
     async installUpdate(){ return false; },
@@ -1918,6 +1921,14 @@ function createUnifiedAPI(nativeApi, fallback){
     initializeFileSearch: ()=> nativeApi.initializeFileSearch ? nativeApi.initializeFileSearch() : fallback.initializeFileSearch(),
     searchFiles: (query,options)=> nativeApi.searchFiles ? nativeApi.searchFiles(query,options) : fallback.searchFiles(query,options),
     cancelFileSearch: ()=> nativeApi.cancelFileSearch ? nativeApi.cancelFileSearch() : fallback.cancelFileSearch(),
+    yunxInspect: body => nativeApi.yunxInspect(body),
+    yunxParse: body => nativeApi.yunxParse(body),
+    yunxBrowse: body => nativeApi.yunxBrowse(body),
+    yunxDownload: body => nativeApi.yunxDownload(body),
+    yunxPreview: body => nativeApi.yunxPreview(body),
+    yunxStatus: body => nativeApi.yunxStatus(body),
+    yunxStop: body => nativeApi.yunxStop(body),
+    yunxAccount: body => nativeApi.yunxAccount(body),
     resolveMediaVideoProvider: (value)=> nativeApi.resolveMediaVideoProvider ? nativeApi.resolveMediaVideoProvider(value) : fallback.resolveMediaVideoProvider(value),
     getMediaMusicSearchUrl: (keyword)=> nativeApi.getMediaMusicSearchUrl ? nativeApi.getMediaMusicSearchUrl(keyword) : fallback.getMediaMusicSearchUrl(keyword),
     getMediaConfig: ()=> nativeApi.getMediaConfig ? nativeApi.getMediaConfig() : fallback.getMediaConfig(),
@@ -3808,8 +3819,7 @@ function normalizeMediaDownloadHistory(items=[]){
       percent:100,
       updatedAt:Number(item.updatedAt||0),
     }))
-    .sort((left,right)=>right.updatedAt-left.updatedAt)
-    .slice(0,10);
+    .sort((left,right)=>right.updatedAt-left.updatedAt);
 }
 
 async function openAllMediaDownloads(){
@@ -3869,7 +3879,6 @@ function updateMediaDownloadTask(task){
     state.media.downloadTasks
       .filter(item=>item.status==='completed')
       .sort((left,right)=>Number(right.updatedAt||0)-Number(left.updatedAt||0))
-      .slice(0,10)
       .map(item=>item.id)
   );
   state.media.downloadTasks=state.media.downloadTasks.filter(item=>item.status!=='completed'||retainedCompletedIds.has(item.id));
@@ -8419,7 +8428,7 @@ function showUpdateDialog(){
   showModal(`
     <div data-update-dialog>
       <div class="modal-header"><h3>软件更新</h3><button class="modal-close" id="closeModal">×</button></div>
-      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '9.1.8')}</b><span>${hasNewerUpdateVersion(update)?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
+      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '9.2.0')}</b><span>${hasNewerUpdateVersion(update)?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
       <div class="modal-message">${escapeHtml(updateStatusText())}</div>
       <p class="update-network-tip">提示：开启 VPN 后再检测更新，结果会更加准确。</p>
       ${busy||downloaded?`<div class="update-progress"><span style="width:${downloaded?100:progress}%"></span></div>`:''}
@@ -9128,4 +9137,5 @@ async function captureClipboardNow(showToast){
 init();
 </script>
 </body>
+<script src="src/yunx-ui.js"></script>
 </html>

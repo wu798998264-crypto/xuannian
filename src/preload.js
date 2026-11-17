@@ -80,6 +80,7 @@ function recordFromNoteBackup(note, settings = {}) {
 }
 
 contextBridge.exposeInMainWorld('nativeAPI', {
+  platform: process.platform,
   async getRecords() {
     return (await load()).records;
   },
@@ -348,6 +349,14 @@ contextBridge.exposeInMainWorld('nativeAPI', {
   async cancelFileSearch() {
     return ipcRenderer.invoke('search:cancel');
   },
+  yunxInspect: body => ipcRenderer.invoke('yunx:inspect', body || {}),
+  yunxParse: body => ipcRenderer.invoke('yunx:parse', body || {}),
+  yunxBrowse: body => ipcRenderer.invoke('yunx:browse', body || {}),
+  yunxDownload: body => ipcRenderer.invoke('yunx:download', body || {}),
+  yunxPreview: body => ipcRenderer.invoke('yunx:preview', body || {}),
+  yunxStatus: body => ipcRenderer.invoke('yunx:status', body || {}),
+  yunxStop: body => ipcRenderer.invoke('yunx:stop', body || {}),
+  yunxAccount: body => ipcRenderer.invoke('yunx:account', body || {}),
   async resolveMediaVideoProvider(value) {
     return ipcRenderer.invoke('media:resolveVideoProvider', value || '');
   },

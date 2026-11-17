@@ -13,7 +13,7 @@ jobs:
     runs-on: windows-latest
     env:
       XUANNIAN_BUILD_OUTPUT: dist-win
-      XUANNIAN_SKIP_HELPER_BUILD: "1"
+      XUANNIAN_SKIP_HELPER_BUILD: "0"
       CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
       CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
     steps:
@@ -37,6 +37,14 @@ jobs:
           }
       - name: Install dependencies
         run: npm ci
+      - name: Prepare bundled media resources
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/prepare-media-resources.cjs
+      - name: Verify shared backup archives and window controls
+        run: |
+          node tests/favorites-archive.js
+          npx electron tests/mac-window-controls-electron.js
       - name: Run performance regression checks
         run: npm run test:performance
       - name: Run Electron runtime endurance probe
@@ -91,109 +99,8 @@ jobs:
 
   build-macos:
     name: Build macOS Intel and Apple silicon packages
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: npm
-      - name: Verify release version
-        shell: bash
-        run: |
-          set -euo pipefail
-          version="$(node -p "require('./package.json').version")"
-          if [[ ! "${version}" =~ ^[0-9]+\.[0-9]\.[0-9]$ ]]; then
-            echo "package.json version must use x.y.z with one-digit minor and patch numbers (0-9), received: ${version}" >&2
-            exit 1
-          fi
-          if [[ "${GITHUB_REF_TYPE}" != "tag" ]]; then
-            echo 'Production releases must run from a vX.Y.Z Git tag.' >&2
-            exit 1
-          fi
-          if [[ "${GITHUB_REF_NAME}" != "v${version}" ]]; then
-            echo "Tag ${GITHUB_REF_NAME} does not match package version v${version}" >&2
-            exit 1
-          fi
-      - name: Install dependencies
-        run: npm ci
-      - name: Run performance regression checks
-        run: npm run test:performance
-      - name: Create macOS icon
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p build/mac/icon.iconset
-          sips -z 16 16 src/xuannian-logo-256.png --out build/mac/icon.iconset/icon_16x16.png
-          sips -z 32 32 src/xuannian-logo-256.png --out build/mac/icon.iconset/icon_16x16@2x.png
-          sips -z 32 32 src/xuannian-logo-256.png --out build/mac/icon.iconset/icon_32x32.png
-          sips -z 64 64 src/xuannian-logo-256.png --out build/mac/icon.iconset/icon_32x32@2x.png
-          sips -z 128 128 src/xuannian-logo-256.png --out build/mac/icon.iconset/icon_128x128.png
-          sips -z 256 256 src/xuannian-logo-256.png --out build/mac/icon.iconset/icon_128x128@2x.png
-          sips -z 256 256 src/xuannian-logo-256.png --out build/mac/icon.iconset/icon_256x256.png
-          sips -z 512 512 src/xuannian-logo-256.png --out build/mac/icon.iconset/icon_256x256@2x.png
-          sips -z 512 512 src/xuannian-logo-256.png --out build/mac/icon.iconset/icon_512x512.png
-          sips -z 1024 1024 src/xuannian-logo-256.png --out build/mac/icon.iconset/icon_512x512@2x.png
-          iconutil -c icns build/mac/icon.iconset -o build/mac/icon.icns
-      - name: Create macOS builder config
-        shell: bash
-        run: |
-          set -euo pipefail
-          node <<'NODE'
-          const fs = require('fs');
-          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-          const build = JSON.parse(JSON.stringify(pkg.build || {}));
-          build.directories = { ...(build.directories || {}), output: 'dist-mac' };
-          build.files = [
-            'index.html', 'quick.html', 'sticky.html', 'screenshot-select.html',
-            'src/**/*', '!src/native/*.cs', '!src/native/*.exe', '!src/xuannian-logo.png', 'package.json',
-          ];
-          delete build.asarUnpack;
-          delete build.extraResources;
-          delete build.win;
-          delete build.nsis;
-          delete build.portable;
-          build.mac = {
-            icon: 'build/mac/icon.icns',
-            category: 'public.app-category.productivity',
-            identity: '-',
-            hardenedRuntime: false,
-            gatekeeperAssess: false,
-            target: ['dmg', 'zip'],
-            artifactName: 'XuanNian-${version}-${arch}.${ext}',
-          };
-          build.dmg = { artifactName: 'XuanNian-${version}-${arch}.dmg' };
-          fs.writeFileSync('build/electron-builder.mac.generated.json', JSON.stringify(build, null, 2));
-          NODE
-      - name: Build macOS packages
-        run: npx electron-builder --mac dmg zip --x64 --arm64 --publish never --config build/electron-builder.mac.generated.json
-      - name: Verify macOS packages and update metadata
-        shell: bash
-        run: |
-          set -euo pipefail
-          version="$(node -p "require('./package.json').version")"
-          test -f dist-mac/latest-mac.yml
-          test -n "$(find dist-mac -maxdepth 1 -name 'XuanNian-*-x64.dmg' -print -quit)"
-          test -n "$(find dist-mac -maxdepth 1 -name 'XuanNian-*-arm64.dmg' -print -quit)"
-          test -n "$(find dist-mac -maxdepth 1 -name 'XuanNian-*-x64.zip' -print -quit)"
-          test -n "$(find dist-mac -maxdepth 1 -name 'XuanNian-*-arm64.zip' -print -quit)"
-          grep -Eq "^version:[[:space:]]+${version}[[:space:]]*$" dist-mac/latest-mac.yml
-          grep -Fq "XuanNian-${version}-x64.zip" dist-mac/latest-mac.yml
-          grep -Fq "XuanNian-${version}-arm64.zip" dist-mac/latest-mac.yml
-          if grep -Eqi '\.exe([[:space:]]|$)' dist-mac/latest-mac.yml; then
-            echo 'latest-mac.yml must never contain Windows executables.' >&2
-            exit 1
-          fi
-          for dmg in dist-mac/*.dmg; do hdiutil verify "$dmg"; done
-      - uses: actions/upload-artifact@v4
-        with:
-          name: release-macos
-          path: |
-            dist-mac/XuanNian-*.dmg
-            dist-mac/XuanNian-*.zip
-            dist-mac/latest-mac.yml
-            dist-mac/*.blockmap
-          if-no-files-found: error
+    uses: ./.github/workflows/build-macos.yml
+    secrets: inherit
 
   publish:
     name: Validate and publish complete GitHub Release
@@ -263,95 +170,8 @@ jobs:
         env:
           VERSION: ${{ steps.meta.outputs.version }}
         run: |
-          cat > release-notes.md <<EOF
-          # 玄念 ${VERSION}
-
-          ## 普通用户下载（只需选择一个）
-
-          | 你的设备 | 下载入口 |
-          | --- | --- |
-          | Windows，正常安装使用 | [Windows 安装版（推荐）](https://github.com/${GITHUB_REPOSITORY}/releases/download/v${VERSION}/XuanNian-${VERSION}-Setup.exe) |
-          | Windows，不希望安装 | [Windows 便携版](https://github.com/${GITHUB_REPOSITORY}/releases/download/v${VERSION}/XuanNian-${VERSION}-Portable.exe) |
-          | Apple silicon Mac（M1/M2/M3/M4） | [macOS Apple silicon 版](https://github.com/${GITHUB_REPOSITORY}/releases/download/v${VERSION}/XuanNian-${VERSION}-arm64.dmg) |
-          | Intel Mac | [macOS Intel 版](https://github.com/${GITHUB_REPOSITORY}/releases/download/v${VERSION}/XuanNian-${VERSION}-x64.dmg) |
-
-          > 普通用户不需要下载 Assets 列表中的 \`latest.yml\`、\`latest-mac.yml\`、\`zip\` 或 \`blockmap\` 文件。它们是玄念自动更新功能使用的技术文件。
-
-          ## 本次更新
-
-          - 修复音乐首次搜索和视频自动解析必须打开原站后才继续运行的问题：第三方页面在自动任务期间使用位于玄念界面下层的完整 1280×900 真实渲染视口，结果页、异步请求和倒计时无需用户手动切换页面唤醒。
-          - 自动任务增加约 0.8 秒一次的小范围合成心跳，仅在搜索或解析进行中启用，完成、失败、取消或页面销毁后立即停止；主窗口最小化时自动切换到独立后台宿主，不遮挡界面、不抢占日常操作。
-          - 歌曲宝普通安全检查会在后台持续运行；只有 Cloudflare 明确要求真人操作时才打开验证页，用户完成验证后自动返回并继续原搜索，不绕过验证码或真人验证。
-          - 新增首次音乐搜索与首次视频解析真实站点回归检查；视频冷启动连续测试均自动生成预览并取得全部可用清晰度，无需打开原站或重载页面。
-          - 新建便签顶部除分类下拉框和右侧操作按钮外，整条空白区域均可直接按住拖动窗口，扩大拖拽命中范围，同时保持分类选择、附件和关闭按钮正常点击。
-          - “新建收藏”和“编辑收藏”改为铺满主导航右侧的整个工作区；标题、正文、附件与保存操作会随窗口尺寸自适应，小窗口下可滚动查看，不再局限于居中的小弹窗。
-          - 下载记录标题右侧新增“查看全部已下载”，点击会关闭下载气泡并直接进入媒体库“已下载”页面，查看磁盘中全部仍存在的下载文件；气泡仍只保留最近 10 条完成记录。
-          - 歌词文件改用独立的文本歌词图标和配色，不再与普通音乐共用音符图标。
-          - 修复部分电脑没有 `.lrc` 文件关联而无法打开歌词的问题：Windows 自动使用记事本，macOS 自动使用 TextEdit；双击、打开按钮和下载记录均可直接查看歌词文本。
-          - 歌词下载接入统一下载任务：右上角下载面板会显示准备、传输、完成或失败状态，完成记录保留歌词文件名、大小和本地路径。
-          - 下载的 `.lrc` 歌词自动进入音乐“已下载”列表，命名为“歌名 - 歌手歌词.lrc”，与 MP3、FLAC 等音乐文件按下载时间统一倒序排列，不按格式分组。
-          - 歌词行支持复制、拖拽、双击打开、打开所在文件夹、单项删除和批量删除；收藏按钮及右键收藏项会隐藏，底层文件操作也会拒绝将歌词转存到媒体收藏目录。
-          - 音乐搜索结果新增右键操作，可直接选择“播放、下载、下载并收藏、下载歌词”；右键与可见按钮共用同一套处理流程。
-          - 每条音乐搜索结果在下载按钮前新增小字“下载歌词”按钮，歌词按“歌名 - 歌手歌词.lrc”保存到媒体库临时存储路径的音乐目录；无歌词或网络失败时会给出明确提示，不生成空文件。
-          - “下载并收藏”改为紧凑的书签图标，保留原有收藏分类选择与下载行为，并补充悬停说明和无障碍名称。
-          - 下载记录面板新增一键清空：确认后只移除全部已完成记录，保留磁盘文件以及正在进行、暂停或等待重试的任务。
-          - 修复音乐搜索结果列表顶部保留旧版间距而出现整行空白的问题，结果现在从内容区顶部紧凑排列。
-          - 视频解析现在明确显示“后台搜索已提交”，缩短下载站无响应时的等待周期并自动恢复；临时预览优先选择 96 MB 内的小体积画质，超限时跳过预览而不影响正式下载。
-          - 临时视频预览支持真实网络中断，取消、超时或超过体积上限后不再继续后台下载大文件，降低长时间运行时的带宽、磁盘和内存占用。
-          - 在玄念内置哔哩哔哩页面完成会员登录后，会自动检测有效会话、收起原站、返回视频操作页面，并自动重新解析刚才的链接，无需再手动点击眼睛或“重新解析”。
-          - 收藏分类栏右侧分隔线支持左右拖拽调整宽度；宽度设有安全边界并自动保存，重启玄念后继续沿用，双击分隔线可恢复默认宽度。
-          - 修复哔哩哔哩会员视频只下载约一分钟的问题：玄念现在会读取专用媒体会话中的登录状态，并同时核对原片时长、实际下发时长、`is_preview` 试看标记和 DRM 标记。
-          - 哔哩哔哩只返回试看片段时不再将其误报为全集，也不会开放错误的下载按钮；玄念会明确提示在内置页面重新登录会员，登录状态会保存在同一持久会话中。
-          - 视频链接框和音乐搜索框右端新增一键清空按钮；清空时会同步移除旧预览、旧搜索结果和未完成解析，但不会中断已经开始的真实下载任务。
-          - 修复原生视频全屏按钮无响应：玄念主界面与嵌入式视频预览现可正确获得全屏权限，进入和退出全屏均恢复正常。
-          - 视频预览、信息行、清晰度选择和下载按钮会随玄念窗口可用高度自适应收缩；在最小窗口下仍完整可见且互不遮挡。
-          - 移除“已下载音乐”列表中无实际作用的逐行播放按钮，保留双击打开、收藏、打开所在文件夹和删除操作。
-          - 视频预览统一改用浏览器原生播放控件，原生支持播放、暂停、拖动进度和全屏；嵌入式预览进入全屏后会扩展到整个玄念窗口。
-          - 下载中的视频或音乐可以暂停和继续；暂停后可直接删除任务，玄念会同时取消传输并清理未完成文件。
-          - 视频解析结果新增清晰度选择。下载和“下载并收藏”会严格从所选档位开始，失败时只向更低档位降级。
-          - 哔哩哔哩番剧与普通视频会读取当前会话实际获准下载的 MP4 清晰度；只展示真实返回的档位，不把接口宣传但当前未授权的画质误报为可下载。
-          - 修复部分视频和较长视频必须先打开原站再切回玄念才能完成解析的问题：后台下载页保持完整渲染视口并分阶段唤醒，首次等待结束后继续读取当前结果页，不再过早刷新掉已经生成或即将生成的结果。
-          - 玄念会完整保存下载站实际返回的媒体文件，不再把短于原视频的公开片段或试看片段误当成完整源；付费、会员或受限内容仍需通过平台授权方式观看或下载。
-          - 修复哔哩哔哩番剧 `bangumi/ep` 链接解析成功但无法下载的问题：识别 B 站 CDN 的 `.m4s` 分离视频轨，并自动改取包含 H.264 画面和 AAC 声音的公开可播放 MP4；下载真正开始后才显示成功。
-          - 音乐搜索出的每个版本都可独立试听；当前试听项使用原生音频控件，支持播放、暂停和拖动进度条定位。
-          - 抖音、TikTok、哔哩哔哩、小红书、快手、YouTube、Instagram、Twitter/X 和 Facebook 统一只使用 Seekin 全平台下载器（https://www.seekin.ai/zh/downloader/），不再自动切换任何备用下载站。
-          - Seekin 内部的解析、临时预览、画质优先级、下载进度和下载并收藏规则保持不变；解析失败或下载未启动时仍可打开当前 Seekin 页面手动处理。
-          - 修复下载页宣传卡片被误判成视频结果的问题；只有真实画质项、媒体地址或下载触发才算解析成功。
-          - 原站眼睛按钮始终固定显示在界面右侧，可随时打开当前 Seekin 下载页面。
-          - 修复歌曲宝后台搜索长时间不出结果的问题：搜索期间使用完整的界外渲染视口，结果无需点击眼睛即可及时加载。
-          - 修复 Seekin 网页已完成解析但玄念误报失败的问题，支持识别 144p、Video (.MP4) 和普通 MP4 结果卡。
-          - 点击结果后可接管无扩展名或错误文件名的真实视频响应，并依据 URL 与 MIME 类型修正为可用视频文件。
-          - 解析后自动保存最低可用画质作为一天内的临时预览；正式下载优先尝试更高清版本，全部失败时自动将预览保存到下载或收藏目录并写入下载记录。
-          - 同一视频链接在 24 小时内再次解析会直接复用有效预览，避免下载站清空或限制重复请求导致第二次没有预览。
-          - 修复小红书结果已在 Seekin 后台出现但前台误报失败的问题：识别 `*.xhscdn.com` 媒体地址并使用小红书 CDN 要求的来源信息，在 Electron 网络栈不可用时通过 Node HTTP 流式保存真实 MP4；临时预览和正式下载均可落盘。
-          - 修复下载和“下载并收藏”按钮被隐藏网页层或旧页面透明新手提示遮挡的问题；完整可见按钮区域单击一次即可启动，连续点击不会重复创建任务。
-          - 下载记录会显示已知文件大小，“等待重试”项目支持直接删除；收藏分类选择器底部新增“新建分类”。
-          - 视频下载不再显示或调用“备用站解析”，仅保留 Seekin 通用站。
-          - 歌曲宝要求真人验证时显示专用确认提示；用户完成验证后自动恢复原搜索、试听或下载任务并返回玄念页面。
-          - 解析进度位于媒体内容区，实时显示当前 Seekin 页面的处理状态。
-          - Seekin 要求真人验证、观看广告或扫码时会明确提示；玄念不会后台播放广告、代点广告、代扫码或绕过真人验证。
-          - 修复歌曲宝普通音质下载：等待站点倒计时后自动识别音质弹窗，并选择“低品质 MP3”备用线路完成实际下载。
-          - 普通音质音乐从点击下载开始即进入右上角下载记录，完整显示“准备中、下载中、已完成或失败”，真实文件传输会复用同一条任务，不会产生重复记录。
-          - 高清音质仍优先打开阿里云盘或夸克客户端，并使用系统文件索引低负荷检测任意本地磁盘中的下载结果；完成后自动导入媒体库。
-          - 夸克或阿里云盘下载会从客户端启动时显示等待任务；外部客户端不提供实时字节进度，因此玄念只显示等待状态，检测到本地音频文件后自动改为完成并写入最近下载记录。
-          - “高清音质下载并收藏”会先选择收藏夹，检测到云盘客户端下载完成后自动备份到对应收藏路径。
-          - 外部云盘客户端不提供真实字节进度时显示“等待云盘客户端下载”，不再显示伪造百分比。
-          - 新增下载音质弹窗、统一备用站、外部下载导入、解析失败状态和整站超时回归检查。
-          - 剪切板批量删除新增“全选 / 取消全选”，仅作用于当前搜索与类型筛选结果；批量状态在切换玄念其他功能后仍会保留，直到确认或取消。
-          - 媒体库“已下载”和“收藏”新增批量删除、右键批量删除、全选、取消与确认操作；视频和音乐分别保存选择状态，虚拟列表滚动或切换页面不会丢失选择。
-          - 媒体批量删除通过一次受管目录校验后移入系统回收站，不会操作媒体库路径之外的文件；收藏顺序与正在播放状态会同步清理。
-          - 媒体库收藏分类右键菜单新增“打开文件夹”，可直接打开该分类对应的本地路径。
-          - 删除媒体收藏分类时，其中的媒体、非媒体文件和子文件夹会完整移出原分类，普通文件回到未分类，子文件夹保留原有结构；不再因说明文件或嵌套目录而阻止删除，也不会直接删除其中内容。
-          - 修复更新弹窗已经显示发现新版本、底部按钮却仍显示“检查更新”的状态不一致问题；检测到更高版本后会直接显示“下载更新”。
-          - 更新状态增加顺序校验，较早返回的网络检测结果不会再覆盖较新的“发现新版本”状态。
-          - 修复视频自动解析偶尔必须打开原站或手动点击解析才会真正启动的问题：后台网页改为可激活的屏幕外渲染宿主，在导航、可信提交和结果读取阶段自动激活，随后恢复玄念主窗口焦点。
-          - 首次音乐搜索采用同一套分阶段后台激活机制；歌曲宝首次安全验证会自动保持渲染并轮询验证状态，验证结束立即继续读取结果，无需手动点击小眼睛唤醒页面。
-          - 新增正式程序路径的首次视频解析回归测试，并强化真实站点测试，让屏幕外宿主在每条任务前重新激活，防止后续版本退回不可聚焦的隐藏网页实现。
-          - 更新不修改收藏、剪切板、便签、灵感、附件或自定义存储路径。
-
-          媒体下载网站仅在隔离的嵌入式浏览视图中打开，玄念不调用第三方私有解析接口。请只下载你拥有权利或已获授权的公开内容。更新沿用稳定的应用标识与数据目录，不会删除剪切板记录、收藏及转存附件。
-
-          EOF
+          test -s "docs/release-notes/v${VERSION}.md"
+          cp "docs/release-notes/v${VERSION}.md" release-notes.md
       - name: Upload as draft, verify, then publish atomically
         shell: bash
         env:
