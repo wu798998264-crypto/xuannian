@@ -156,8 +156,8 @@ async function run() {
   assert(metrics.iterations >= minimumIterations, `endurance loop completed too few iterations: ${metrics.iterations} < ${minimumIterations}`);
   assert(metrics.maxRows <= 96, `media virtual DOM exceeded 96 total rows: ${metrics.maxRows}`);
   assert(metrics.maxDomNodes < 3200, `media endurance DOM grew without bound: ${metrics.maxDomNodes}`);
-  assert(metrics.completedTasks <= 10, `completed download history exceeded ten records: ${metrics.completedTasks}`);
-  assert(metrics.downloadTasks <= 18, `download task state grew without bound: ${metrics.downloadTasks}`);
+  assert.strictEqual(metrics.completedTasks, Math.ceil(metrics.iterations / 7), 'every completed task must remain in history');
+  assert.strictEqual(metrics.downloadTasks, metrics.completedTasks + 8, 'task state must contain all history and only the eight active tasks');
   assert(heapGrowth < 96 * 1024 * 1024, `renderer heap grew by ${heapGrowth} bytes`);
   window.destroy();
 }

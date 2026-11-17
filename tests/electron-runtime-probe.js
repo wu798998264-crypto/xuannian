@@ -1225,6 +1225,9 @@ async function run() {
       const externalUrls=[];
       const downloadedVideos=[];
       const downloadedVideoQualities=[];
+      const yunxParses=[];
+      const yunxPreviews=[];
+      const yunxDownloads=[];
       const downloadedSongs=[];
       const downloadedLyrics=[];
       const previewedSongs=[];
@@ -1247,6 +1250,18 @@ async function run() {
       const movedFavorites=[];
       const deletedFavorites=[];
       const syntheticDownloads=Array.from({length:5000},(_,index)=>({path:'C:/Downloads/archive/video-'+index+'.mp4',directory:'C:/Downloads/archive',name:'video-'+index+'.mp4',kind:'video',size:4096+index,modifiedAt:index,favorite:false,location:'downloads',collection:'项目视频'}));
+      api.yunxInspect=async()=>({ok:true,share:null});
+      api.yunxStop=async()=>({ok:true});
+      api.yunxStatus=async()=>({ok:true,busy:false});
+      api.yunxParse=async body=>{
+        yunxParses.push(body);
+        return {ok:true,jobId:'runtime-video-'+yunxParses.length,parseMs:125,parsed:{title:'测试视频',options:[
+          {id:'video-low',label:'测试视频',kind:'video',quality:'720P',formats:['source']},
+          {id:'video-high',label:'测试视频',kind:'video',quality:'1080P',formats:['source']},
+        ]}};
+      };
+      api.yunxPreview=async body=>{yunxPreviews.push(body);return {ok:true,url:'data:video/mp4;base64,AAAA',kind:'video',name:'runtime.mp4',size:100};};
+      api.yunxDownload=async body=>{yunxDownloads.push(body);return {ok:true,name:'runtime.mp4',path:'C:/Downloads/runtime.mp4'};};
       api.resolveMediaVideoProvider=async value=>resolveMediaVideoProviderFallback(value);
       api.openMediaPortal=async(url,target,sourceText,autoSubmit,collection,qualityPreference,automationMode,originalSourceText)=>{ openedPortals.push(url); portalTargets.push(target); portalInputs.push({sourceText,autoSubmit,collection,qualityPreference,automationMode,originalSourceText}); return true; };
       api.resetMediaPortal=async kind=>{ resetMediaPortals.push(kind); return {ok:true,requestId:900+resetMediaPortals.length}; };
@@ -1261,7 +1276,7 @@ async function run() {
       api.openPath=async filePath=>{ openedDownloadHistory.push(filePath); return true; };
       api.showFileContextMenu=async filePath=>{ downloadHistoryContextMenus.push(filePath); return true; };
       api.deleteMediaDownloadHistoryItem=async taskId=>{ deletedDownloadHistory.push(taskId); return {ok:true}; };
-      api.clearMediaDownloadHistory=async()=>{ clearedDownloadHistory+=1; return {ok:true,cleared:9}; };
+      api.clearMediaDownloadHistory=async()=>{ clearedDownloadHistory+=1; return {ok:true,cleared:11}; };
       api.cancelMediaDownloadTask=async taskId=>{ cancelledDownloadTasks.push(taskId); return {ok:true,cancelled:true}; };
       api.setMediaDownloadTaskPaused=async(taskId,paused)=>{ pausedDownloadTasks.push({taskId,paused}); return {ok:true,paused}; };
       api.getLocalMediaPlaybackUrl=async filePath=>{ localPlaybackRequests.push(filePath); return 'file:///C:/Downloads/music.flac'; };
@@ -1303,55 +1318,39 @@ async function run() {
       const tiktokProvider=resolveMediaVideoProviderFallback('https://www.tiktok.com/@runtime/video/1');
       videoInput.value='8.55 Fcn:/ 测试抖音文案 #测试话题 https://v.douyin.com/runtime 复制此链接，打开抖音搜索，直接观看视频！';
       await parseMediaVideo(false);
-      state.media.videoParse={status:'ready',sourceUrl:'https://v.douyin.com/runtime',previewUrl:'https://cdn.example.com/runtime.mp4',title:'测试视频',qualityLabel:'1080P 无水印下载',downloadReady:true,error:''};
-      state.media.videoParse.qualityOptions=[
-        {label:'1080P - 80 MB',href:'https://cdn.example.com/runtime-1080.mp4'},
-        {label:'720P - 40 MB',href:'https://cdn.example.com/runtime-720.mp4'},
-      ];
-      state.media.videoParse.mediaActions=[
-        {id:'video',label:'视频',kind:'video',href:'https://cdn.example.com/runtime.mp4',candidateIndex:0},
-        {id:'backup',label:'备用下载',kind:'video',href:'https://cdn.example.com/runtime-backup.mp4',candidateIndex:1},
-        {id:'audio',label:'音频',kind:'audio',href:'https://cdn.example.com/runtime.mp3',candidateIndex:2},
-        {id:'image',label:'封面图片',kind:'image',href:'https://cdn.example.com/runtime.jpg',candidateIndex:3},
-      ];
-      state.media.videoParse.selectedActionId='video';
-      state.media.videoParse.selectedQualityIndex=0;
-      renderMediaPortalWorkspace();
-      const videoPreview=document.querySelector('#mediaVideoPreview');
-      Object.defineProperty(videoPreview,'duration',{configurable:true,get:()=>435.259});
-      videoPreview.dispatchEvent(new Event('loadedmetadata'));
-      const qualitySelect=document.querySelector('#mediaVideoQualitySelect');
-      qualitySelect.value='video';
+      const waitForYunx=async predicate=>{
+        const deadline=Date.now()+3000;
+        while(!predicate()&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,10));
+        if(!predicate())throw Error('Current video interface did not finish its operation');
+      };
+      const videoPanel=document.querySelector('.yunx-panel');
+      await waitForYunx(()=>!!videoPanel.querySelector('[data-yunx-preview] video'));
+      const qualitySelect=videoPanel.querySelector('[data-yunx-selection]');
+      qualitySelect.value='video-high';
       qualitySelect.dispatchEvent(new Event('change',{bubbles:true}));
+      await waitForYunx(()=>yunxPreviews.length===2&&!videoPanel.querySelector('[data-yunx-download]').disabled);
+      const videoPreview=videoPanel.querySelector('[data-yunx-preview] video');
+      Object.defineProperty(videoPreview,'duration',{configurable:true,get:()=>435.259});
+      Object.defineProperty(videoPreview,'videoWidth',{configurable:true,get:()=>1920});
+      Object.defineProperty(videoPreview,'videoHeight',{configurable:true,get:()=>1080});
+      videoPreview.dispatchEvent(new Event('loadedmetadata'));
       const videoProgressUi={
         controls:videoPreview.controls,
         controlsAttribute:videoPreview.hasAttribute('controls'),
-        customProgressPresent:!!document.querySelector('#mediaVideoProgress,#mediaVideoSeek,#mediaVideoPlay,#mediaVideoFullscreen'),
-        sourceDurationEndsWith:document.querySelector('#mediaVideoSourceDuration').textContent.endsWith('07:15'),
-        longDurationFormat:formatMediaVideoTime(7200.9),
+        customProgressPresent:!!videoPanel.querySelector('#mediaVideoProgress,#mediaVideoSeek,#mediaVideoPlay,#mediaVideoFullscreen'),
+        sourceDuration:videoPanel.querySelector('[data-yunx-duration]').textContent,
+        resolution:videoPanel.querySelector('[data-yunx-quality]').textContent,
       };
       const videoUi={
-        previewSrc:document.querySelector('#mediaVideoPreview').src,
-        actions:[document.querySelector('#mediaDownloadVideo').textContent.trim(),document.querySelector('#mediaDownloadFavoriteVideo').textContent.trim()],
-        topActions:!!document.querySelector('#mediaOpenVideoPortal, #mediaFavoriteVideoPortal'),
-        fallbackHidden:document.querySelector('#mediaVideoFallback').hidden,
-        qualityChoiceHidden:document.querySelector('#mediaVideoQualityChoice').hidden,
-        choiceLabelHidden:document.querySelector('#mediaVideoChoiceLabel').hidden,
+        previewSrc:videoPreview.src,
+        actions:[...videoPanel.querySelectorAll('[data-yunx-actions] button')].map(button=>button.textContent.trim()),
+        separatePreviewButton:!!videoPanel.querySelector('button[data-yunx-preview]'),
+        legacyHidden:getComputedStyle(document.querySelector('[data-yunx-replaced]')).display==='none',
         qualityOptions:[...qualitySelect.options].map(option=>option.textContent.trim()),
         selectedActionId:qualitySelect.value,
+        previewRequests:yunxPreviews.map(body=>body.optionId),
       };
-      const readyVideoParse={...state.media.videoParse};
-      state.media.videoParse={
-        ...readyVideoParse,
-        status:'error',
-        error:'parse-timeout',
-        portalIndex:Math.max(0,mediaPortalRoutes(state.media.videoProvider).length-1),
-      };
-      renderMediaPortalWorkspace();
-      videoUi.exhaustedFallbackHidden=document.querySelector('#mediaVideoFallback').hidden;
-      state.media.videoParse=readyVideoParse;
-      renderMediaPortalWorkspace();
-      const videoDownloadButton=document.querySelector('#mediaDownloadVideo');
+      const videoDownloadButton=videoPanel.querySelector('[data-yunx-download]');
       const videoDownloadRect=videoDownloadButton.getBoundingClientRect();
       const videoButtonHitElements=[
         document.elementFromPoint(videoDownloadRect.left+6,videoDownloadRect.top+videoDownloadRect.height/2),
@@ -1360,21 +1359,11 @@ async function run() {
         document.elementFromPoint(videoDownloadRect.right-6,videoDownloadRect.top+videoDownloadRect.height/2),
         document.elementFromPoint(videoDownloadRect.left+videoDownloadRect.width/2,videoDownloadRect.bottom-6),
       ];
-      const videoButtonHitTargets=videoButtonHitElements.map(element=>element?.closest?.('#mediaDownloadVideo')===videoDownloadButton);
-      videoDownloadButton.dispatchEvent(new PointerEvent('pointerdown',{bubbles:true,cancelable:true,button:0,pointerType:'mouse'}));
-      videoDownloadButton.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,button:0,detail:1}));
-      await new Promise(resolve=>setTimeout(resolve,20));
-      state.media.videoParse={...state.media.videoParse,embeddedPreview:true,previewUrl:''};
-      const favoriteBoundsStart=browserBoundsRequests.length;
-      const favoriteVideoPromise=downloadParsedVideo(true);
-      await new Promise(resolve=>setTimeout(resolve,20));
-      document.querySelector('#mediaCollectionPicker').value='项目收藏';
-      document.querySelector('#confirmModal').click();
-      await favoriteVideoPromise;
-      await new Promise(resolve=>setTimeout(resolve,20));
-      const favoritePreviewModal={
-        requests:browserBoundsRequests.slice(favoriteBoundsStart),
-      };
+      const videoButtonHitTargets=videoButtonHitElements.map(element=>element?.closest?.('[data-yunx-download]')===videoDownloadButton);
+      videoDownloadButton.click();
+      await waitForYunx(()=>yunxDownloads.length===1&&!videoDownloadButton.disabled);
+      videoPanel.querySelector('[data-yunx-favorite]').click();
+      await waitForYunx(()=>yunxDownloads.length===2&&!videoDownloadButton.disabled);
       const createCollectionPromise=showMediaCollectionPicker('video');
       await new Promise(resolve=>setTimeout(resolve,20));
       const pickerCreateVisible=!!document.querySelector('#createMediaCollectionFromPicker');
@@ -1678,34 +1667,11 @@ async function run() {
         musicResults:state.media.musicSearch.results.length,
         resetKinds:[...resetMediaPortals],
       };
-      const autoLoginPortalStart=openedPortals.length;
-      const autoLoginTargetStart=portalTargets.length;
-      const autoLoginInputStart=portalInputs.length;
-      setMediaKind('video');
-      setMediaTab('portal');
-      videoInput.value='https://www.bilibili.com/video/BV1autologin';
-      const autoLoginProvider=resolveMediaVideoProviderFallback(videoInput.value);
-      state.media.videoProvider=autoLoginProvider;
-      state.media.videoParse={status:'error',requestId:31,sourceUrl:autoLoginProvider.sourceUrl,previewUrl:'',embeddedPreview:false,title:'',qualityLabel:'',qualityOptions:[],selectedQualityIndex:0,downloadReady:false,error:'bilibili-login-required',portalIndex:0,portalUrl:autoLoginProvider.portalUrl};
-      state.media.manualPortal={available:true,kind:'video',url:autoLoginProvider.sourceUrl,reason:'bilibili-login-required',prompting:false};
-      state.media.browserVisible=true;
-      startBilibiliLoginMonitor(autoLoginProvider.sourceUrl,0);
-      await new Promise(resolve=>setTimeout(resolve,650));
-      const bilibiliAutoReturn={
-        checks:bilibiliSessionChecks,
-        browserVisible:state.media.browserVisible,
-        parseStatus:state.media.videoParse.status,
-        manualAvailable:state.media.manualPortal.available,
-        retryPortalCount:openedPortals.length-autoLoginPortalStart,
-      };
-      openedPortals.length=autoLoginPortalStart;
-      portalTargets.length=autoLoginTargetStart;
-      portalInputs.length=autoLoginInputStart;
       return {
         openedPortals,portalTargets,portalInputs,externalUrls,copiedText,copiedFiles,draggedFiles,contextMenus,favoriteCollections,movedFavorites,deletedFavorites,
-        downloadedVideos,downloadedVideoQualities,downloadedSongs,downloadedLyrics,previewedSongs,highQualityRequests,openedDownloadHistory,downloadHistoryContextMenus,deletedDownloadHistory,cancelledDownloadTasks,pausedDownloadTasks,createdMediaCollections,localPlaybackRequests,nativeMediaBridgeAvailableBeforeStub,videoUi,videoProgressUi,favoritePreviewModal,videoButtonHitTargets,pickerCreateVisible,createdCollectionChoice,musicUi,backgroundPortal,browserTogglePersistence,downloadedMusicControls,manualPortalInitiallyVisible,
+        downloadedVideos,downloadedVideoQualities,yunxParses,yunxDownloads,downloadedSongs,downloadedLyrics,previewedSongs,highQualityRequests,openedDownloadHistory,downloadHistoryContextMenus,deletedDownloadHistory,cancelledDownloadTasks,pausedDownloadTasks,createdMediaCollections,localPlaybackRequests,nativeMediaBridgeAvailableBeforeStub,videoUi,videoProgressUi,videoButtonHitTargets,pickerCreateVisible,createdCollectionChoice,musicUi,backgroundPortal,browserTogglePersistence,downloadedMusicControls,manualPortalInitiallyVisible,
         providerRouting:{douyinProvider,tiktokProvider,dailyFallback,failureClassification},
-        verificationFlow,musicDownloadStates,pausedTask,interruptedTask,mediaInputClear,bilibiliAutoReturn,
+        verificationFlow,musicDownloadStates,pausedTask,interruptedTask,mediaInputClear,
         activeView:document.querySelector('.view.active')?.id||'',
         activeNav:document.querySelector('.nav-btn.active')?.dataset.view||'',
         rows:document.querySelectorAll('#mediaDownloadsList [data-media-row]').length,
@@ -1727,28 +1693,32 @@ async function run() {
     })()
   `, true);
   console.log(`media library runtime metrics ${JSON.stringify(mediaLibraryMetrics)}`);
-  assert.deepStrictEqual(mediaLibraryMetrics.openedPortals, ['https://dlpanda.com/zh-CN','https://www.seekin.ai/zh/downloader/','https://www.gequbao.com/s/%E6%B5%8B%E8%AF%95%E6%AD%8C%E6%9B%B2%20%E6%B5%8B%E8%AF%95%E6%AD%8C%E6%89%8B']);
-  assert.deepStrictEqual(mediaLibraryMetrics.portalTargets, ['download','download','download']);
-  assert.deepStrictEqual(mediaLibraryMetrics.portalInputs.map((item) => item.autoSubmit), [true,true,false]);
-  assert.deepStrictEqual(mediaLibraryMetrics.portalInputs.map((item) => item.collection), ['', '', '']);
-  assert.deepStrictEqual(mediaLibraryMetrics.portalInputs.map((item) => item.qualityPreference || ''), ['highest','highest','']);
-  assert.deepStrictEqual(mediaLibraryMetrics.portalInputs.map((item) => item.automationMode || ''), ['video-parse','video-parse','music-search']);
-  assert.strictEqual(mediaLibraryMetrics.portalInputs[0].originalSourceText, '8.55 Fcn:/ 测试抖音文案 #测试话题 https://v.douyin.com/runtime 复制此链接，打开抖音搜索，直接观看视频！');
+  assert.deepStrictEqual(mediaLibraryMetrics.openedPortals, ['https://www.gequbao.com/s/%E6%B5%8B%E8%AF%95%E6%AD%8C%E6%9B%B2%20%E6%B5%8B%E8%AF%95%E6%AD%8C%E6%89%8B']);
+  assert.deepStrictEqual(mediaLibraryMetrics.portalTargets, ['download']);
+  assert.deepStrictEqual(mediaLibraryMetrics.portalInputs.map((item) => item.autoSubmit), [false]);
+  assert.deepStrictEqual(mediaLibraryMetrics.portalInputs.map((item) => item.automationMode), ['music-search']);
+  assert.deepStrictEqual(mediaLibraryMetrics.yunxParses.map(body=>body.source), [
+    '8.55 Fcn:/ 测试抖音文案 #测试话题 https://v.douyin.com/runtime 复制此链接，打开抖音搜索，直接观看视频！',
+    'https://www.bilibili.com/video/BV1runtime',
+  ]);
   assert.deepStrictEqual(mediaLibraryMetrics.externalUrls, []);
   assert.deepStrictEqual(mediaLibraryMetrics.copiedText, []);
   assert.deepStrictEqual(mediaLibraryMetrics.highQualityRequests, []);
-  assert.deepStrictEqual(mediaLibraryMetrics.downloadedVideos, [{target:'download',collection:''},{target:'favorite',collection:'项目收藏'}]);
-  assert.deepStrictEqual(mediaLibraryMetrics.downloadedVideoQualities, ['video','video'], 'selected Douyin media action must reach both download actions');
+  assert.deepStrictEqual(mediaLibraryMetrics.downloadedVideos, [], 'retired video portal download bridge must not be invoked');
+  assert.deepStrictEqual(mediaLibraryMetrics.downloadedVideoQualities, []);
+  assert.deepStrictEqual(mediaLibraryMetrics.yunxDownloads.map(body=>({optionId:body.optionId,favorite:body.favorite,audioOnly:body.audioOnly})), [
+    {optionId:'video-high',favorite:false,audioOnly:false},
+    {optionId:'video-high',favorite:true,audioOnly:false},
+  ], 'selected video quality must reach both current download actions');
   assert.deepStrictEqual(mediaLibraryMetrics.videoButtonHitTargets, [true,true,true,true,true], 'the full visible video download button must be clickable');
-  assert.strictEqual(mediaLibraryMetrics.favoritePreviewModal.requests[0]?.visible, false, 'embedded preview must hide before the favorite picker opens');
   assert.strictEqual(mediaLibraryMetrics.pickerCreateVisible, true);
   assert.strictEqual(mediaLibraryMetrics.createdCollectionChoice, '新建视频分类');
   assert.deepStrictEqual(mediaLibraryMetrics.createdMediaCollections, [{location:'favorites',kind:'video',name:'新建视频分类'}]);
   assert.deepStrictEqual(mediaLibraryMetrics.downloadedSongs, [{url:'https://www.gequbao.com/music/101',target:'download',collection:'',preferredName:'测试歌曲 - 测试歌手'}]);
   assert.deepStrictEqual(mediaLibraryMetrics.downloadedLyrics, [{url:'https://www.gequbao.com/music/101',preferredName:'测试歌曲 - 测试歌手'}]);
   assert.strictEqual(mediaLibraryMetrics.nativeMediaBridgeAvailableBeforeStub, false, 'renderer must not expose the retired high-quality music bridge');
-  assert.deepStrictEqual(mediaLibraryMetrics.videoUi, {previewSrc:'https://cdn.example.com/runtime.mp4',actions:['下载','收藏'],topActions:false,fallbackHidden:true,qualityChoiceHidden:false,choiceLabelHidden:true,qualityOptions:['视频','备用下载','音频','封面图片'],selectedActionId:'video',exhaustedFallbackHidden:true});
-  assert.deepStrictEqual(mediaLibraryMetrics.videoProgressUi, {controls:true,controlsAttribute:true,customProgressPresent:false,sourceDurationEndsWith:true,longDurationFormat:'02:00:00'});
+  assert.deepStrictEqual(mediaLibraryMetrics.videoUi, {previewSrc:'data:video/mp4;base64,AAAA',actions:['下载','收藏'],separatePreviewButton:false,legacyHidden:true,qualityOptions:['720P','1080P'],selectedActionId:'video-high',previewRequests:['video-low','video-high']});
+  assert.deepStrictEqual(mediaLibraryMetrics.videoProgressUi, {controls:true,controlsAttribute:true,customProgressPresent:false,sourceDuration:'7:15',resolution:'1920 × 1080'});
   assert.deepStrictEqual(mediaLibraryMetrics.musicUi, {rows:2,actions:['lyrics:下载歌词','download:下载','favorite:下载并收藏','lyrics:下载歌词','download:下载','favorite:下载并收藏'],formatChoices:[],previewButtons:2,favoriteIconButtons:2,activeAudioControls:true,topFormatControls:false});
   assert.deepStrictEqual(mediaLibraryMetrics.mediaInputClear, {
     videoClearVisibleBefore:true,
@@ -1761,13 +1731,6 @@ async function run() {
     musicStatus:'idle',
     musicResults:0,
     resetKinds:['video','audio'],
-  });
-  assert.deepStrictEqual(mediaLibraryMetrics.bilibiliAutoReturn, {
-    checks:1,
-    browserVisible:false,
-    parseStatus:'parsing',
-    manualAvailable:false,
-    retryPortalCount:1,
   });
   assert.deepStrictEqual(mediaLibraryMetrics.previewedSongs, ['https://www.gequbao.com/music/102','https://www.gequbao.com/music/101']);
   assert.deepStrictEqual(mediaLibraryMetrics.backgroundPortal, {browserHidden:true,directVisible:true});
@@ -1838,11 +1801,11 @@ async function run() {
   assert.deepStrictEqual(mediaLibraryMetrics.pausedDownloadTasks, [{taskId:'runtime-pause-delete',paused:true}]);
   assert.deepStrictEqual(mediaLibraryMetrics.interruptedTask, {status:'等待重试 · 4.00 KB',hasDelete:true,removed:true});
   assert.deepStrictEqual(mediaLibraryMetrics.cancelledDownloadTasks, ['runtime-pause-delete','runtime-interrupted']);
-  assert.strictEqual(mediaLibraryMetrics.completedHistory.count, 10);
-  assert.strictEqual(mediaLibraryMetrics.completedHistory.rendered, 11, 'active task plus ten completed records should be visible');
-  assert.strictEqual(mediaLibraryMetrics.completedHistory.deleteButtons, 10, 'every completed download record with a file must expose a delete button');
-  assert.strictEqual(mediaLibraryMetrics.completedHistory.names.includes('completed-0.mp4'), false);
-  assert.strictEqual(mediaLibraryMetrics.completedHistory.names.includes('completed-1.mp4'), false);
+  assert.strictEqual(mediaLibraryMetrics.completedHistory.count, 12, 'completed history must retain all records');
+  assert.strictEqual(mediaLibraryMetrics.completedHistory.rendered, 13, 'active task plus all twelve completed records should be visible');
+  assert.strictEqual(mediaLibraryMetrics.completedHistory.deleteButtons, 12, 'every completed download record with a file must expose a delete button');
+  assert.strictEqual(mediaLibraryMetrics.completedHistory.names.includes('completed-0.mp4'), true);
+  assert.strictEqual(mediaLibraryMetrics.completedHistory.names.includes('completed-1.mp4'), true);
   assert.strictEqual(mediaLibraryMetrics.completedHistory.names[0], '测试歌曲歌词.lrc');
   assert(mediaLibraryMetrics.completedHistory.summary.includes('1 项进行中'));
   assert.deepStrictEqual(mediaLibraryMetrics.completedHistoryActions, {
@@ -1865,7 +1828,7 @@ async function run() {
     clearButtonVisibleBefore:true,
     clearButtonHiddenAfter:true,
     confirmTitle:'清除下载记录',
-    confirmMessage:'确定清除最近 9 条已完成的下载记录吗？已经下载到磁盘的文件会保留，正在进行、暂停或等待重试的任务不会受到影响。',
+    confirmMessage:'确定清除最近 11 条已完成的下载记录吗？已经下载到磁盘的文件会保留，正在进行、暂停或等待重试的任务不会受到影响。',
   });
   assert.deepStrictEqual(mediaLibraryMetrics.bubbleVisibility, {portal:true,downloads:true,favorites:true});
   assert.deepStrictEqual(mediaLibraryMetrics.mediaLayout, {
@@ -1876,7 +1839,7 @@ async function run() {
     favoriteCountAfterSearch:true,
   });
   assert.strictEqual(mediaLibraryMetrics.bubblePanel, '');
-  assert(mediaLibraryMetrics.provider.includes('哔哩哔哩'));
+  assert.strictEqual(mediaLibraryMetrics.provider, '解析');
   window.setSize(560, 560);
   await new Promise((resolve) => setTimeout(resolve, 120));
   const compactMediaLayout = await window.webContents.executeJavaScript(`
@@ -1884,18 +1847,19 @@ async function run() {
       await switchView('media',{skipCoach:true});
       setMediaKind('video',{showPortal:true});
       state.media.browserVisible=false;
-      state.media.videoParse={
-        status:'ready',sourceUrl:'https://v.douyin.com/compact',previewUrl:'',title:'小窗口布局测试',qualityLabel:'1080P',downloadReady:true,error:'',embeddedPreview:false,
-        qualityOptions:[{label:'1080P',href:'https://cdn.example.com/compact-1080.mp4'},{label:'720P',href:'https://cdn.example.com/compact-720.mp4'}],selectedQualityIndex:0
-      };
+      document.querySelector('#mediaVideoInput').value='https://v.douyin.com/compact';
+      await parseMediaVideo();
+      const deadline=Date.now()+3000;
+      while(!document.querySelector('.yunx-panel [data-yunx-preview] video')&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,10));
       renderMediaPortalWorkspace();
       renderMediaBrowserState();
       await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
-      const shell=document.querySelector('#mediaDirectShell').getBoundingClientRect();
-      const result=document.querySelector('#mediaVideoResult').getBoundingClientRect();
-      const frame=document.querySelector('.media-video-frame').getBoundingClientRect();
-      const meta=document.querySelector('.media-video-meta').getBoundingClientRect();
-      const actions=document.querySelector('.media-video-actions').getBoundingClientRect();
+      const panel=document.querySelector('.yunx-panel');
+      const shell=panel.getBoundingClientRect();
+      const result=shell;
+      const frame=panel.querySelector('.media-video-frame').getBoundingClientRect();
+      const meta=panel.querySelector('.media-video-meta').getBoundingClientRect();
+      const actions=panel.querySelector('.media-video-actions').getBoundingClientRect();
       return {
         viewport:{width:innerWidth,height:innerHeight},
         shellVisible:shell.width>0&&shell.height>0&&shell.bottom<=innerHeight+1,
