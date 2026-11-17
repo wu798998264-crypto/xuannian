@@ -2,7 +2,8 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { app, BrowserWindow, webContents } = require('electron');
+const { app, BaseWindow, webContents } = require('electron');
+const { buildMusicPageSnapshotScript } = require('../src/music-page');
 
 const tempAppData = fs.mkdtempSync(path.join(os.tmpdir(), 'xuannian-first-music-'));
 let probeSucceeded = false;
@@ -19,7 +20,7 @@ function wait(ms) {
 async function findMainWindow(timeoutMs = 30000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const candidate = BrowserWindow.getAllWindows()
+    const candidate = BaseWindow.getAllWindows()
       .filter((window) => !window.isDestroyed())
       .sort((left, right) => {
         const leftBounds = left.getBounds();
@@ -44,7 +45,7 @@ async function run() {
     await switchView('media', { skipCoach: true });
     setMediaKind('audio', { showPortal: true });
     const input = document.querySelector('#mediaMusicInput');
-    input.value = '唯一 邓紫棋';
+    input.value = ${JSON.stringify(process.env.XUANNIAN_MUSIC_PROBE_QUERY || '唯一 邓紫棋')};
     await searchMediaMusic();
     return true;
   })()`, true);
@@ -80,10 +81,9 @@ async function run() {
           type: element.type || '',
         })).filter(item => item.text).slice(0, 80),
       }))()`, true);
-      const screenshotPath = path.join(tempAppData, 'first-music-provider.png');
-      const image = await portal.capturePage();
-      fs.writeFileSync(screenshotPath, image.toPNG());
-      console.log(`first music provider debug ${JSON.stringify({ ...page, screenshotPath })}`);
+      const providerState = await portal.executeJavaScript(buildMusicPageSnapshotScript(), true);
+      const rendering = await portal.executeJavaScript(`({visibility:document.visibilityState,readyState:document.readyState,lastMutation:window.__xuannianLastMusicMutationAt || 0})`, true);
+      console.log(`first music provider debug ${JSON.stringify({ ...page, providerState, rendering })}`);
     }
   }
   assert.strictEqual(snapshot?.status, 'ready', `first music search failed: ${JSON.stringify(snapshot)}`);

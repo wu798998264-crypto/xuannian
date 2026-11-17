@@ -1,3 +1,5 @@
+const { readMusicPage } = require('./music-page');
+
 function safeJson(value) {
   return JSON.stringify(value == null ? '' : value);
 }
@@ -253,9 +255,9 @@ function buildPortalScript({ mode, value = '', phase = '', timeoutMs = 30000, ca
       try { window.prompt = () => null; } catch {}
     };
     installPopupGuards();
+    const readMusicPage = (${readMusicPage.toString()});
     const humanVerificationRequired = () => {
-      const value = String(document.body?.innerText || '').slice(0, 5000);
-      return /安全验证|验证您是真人|请验证您是真人|verify you are human|security verification|captcha|cloudflare/i.test(value);
+      return readMusicPage().requiresHuman;
     };
     const providerFailureReason = () => {
       const value = [...document.querySelectorAll('[role="alert"],[role="dialog"],.error,.alert,.toast,.modal,[class*="error-"],[class*="-error"],[class*="modal"],[class*="popup"]')]
@@ -466,22 +468,7 @@ function buildPortalScript({ mode, value = '', phase = '', timeoutMs = 30000, ca
       return cleanVideoTitle(heading || document.title);
     };
     const parseMusicResults = () => {
-      const unique = new Map();
-      for (const link of document.querySelectorAll('a[href*="/music/"]')) {
-        if (!visible(link)) continue;
-        const url = httpUrl(link.href || link.getAttribute('href'));
-        if (!/^https?:\\/\\/(?:www\\.)?gequbao\\.com\\/music\\/\\d+(?:[/?#]|$)/i.test(url)) continue;
-        const ownLabel = text(link).replace(/(?:播放\\s*&?\\s*下载|播放|下载)$/i, '').trim();
-        const rowLabel = text(link.closest('tr,li,article,.row,.item') || link.parentElement).replace(/(?:播放\\s*&?\\s*下载|播放|下载)/gi, ' ').replace(/\\s+/g, ' ').trim();
-        const label = ownLabel.length > 1 ? ownLabel : rowLabel;
-        if (!label || /^(?:播放|下载|播放\\s*&?\\s*下载)$/i.test(label)) continue;
-        const previous = unique.get(url);
-        if (!previous || label.length > previous.label.length) unique.set(url, { url, label: label.slice(0, 180) });
-      }
-      return [...unique.values()].slice(0, 60).map((item, index) => {
-        const parts = item.label.split(/\\s+-\\s+/);
-        return { id: String(index + 1), url: item.url, title: (parts.shift() || item.label).trim(), artist: parts.join(' - ').trim(), label: item.label };
-      });
+      return readMusicPage().results;
     };
     const musicDownloadCandidates = () => [...document.querySelectorAll('button,a,[role="button"]')]
       .filter(visible)
@@ -634,9 +621,9 @@ function buildPortalScript({ mode, value = '', phase = '', timeoutMs = 30000, ca
       if (Date.now() < deadline) pause(attemptVideoResult, 260); else resolve({ ok: false, stage: 'result', reason: 'parse-timeout' });
     };
     const attemptMusicSearch = () => {
-      if (humanVerificationRequired()) { resolve({ ok: false, stage: 'results', reason: 'human-verification', results: [] }); return; }
       const results = parseMusicResults();
       if (results.length) { resolve({ ok: true, stage: 'results', results }); return; }
+      if (humanVerificationRequired()) { resolve({ ok: false, stage: 'results', reason: 'human-verification', results: [] }); return; }
       if (Date.now() < deadline) pause(attemptMusicSearch, 240); else resolve({ ok: false, stage: 'results', reason: 'search-timeout', results: [] });
     };
     const attemptMusicPreview = () => {

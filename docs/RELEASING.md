@@ -45,6 +45,8 @@ The initial macOS 9.1.11 recovery restored the application from the published Wi
 
 The release workflow calls `.github/workflows/build-macos.yml`. Each architecture runs on a matching Mac, bundles native Java 17 and FFmpeg, and verifies favorites archives, window controls, the quick panel, Java bridge, media tools, application startup, signature, runtime file hashes and DMG. After both architectures pass, their update metadata and binaries become one `release-macos` artifact for the complete release publisher. Manually running the Mac workflow produces verified artifacts without publishing a separate release.
 
+Starting with 9.2.1, Windows and both Mac runners also exercise music search through the production main process with controlled provider pages: late DOM results, short song titles, query changes, automatic checks and user-operated embedded verification. The test requires no extra native browser windows and checks result synchronization and main-view resizing. A separate renderer test checks full-width parsing/download progress and music request ordering at desktop and compact window sizes.
+
 Media runtimes are prepared from the verified 9.1.11 distribution, with native Java and FFmpeg replacements on Mac. Keep the pinned download digest when changing application code; update it only when deliberately replacing the bundled third-party runtime source.
 
 For a local Windows build, `npm run dist:all` prepares and verifies the media resources before packaging. GitHub CLI authentication and 7-Zip are required for the first preparation; later builds verify and reuse the local cache. `build/media-resources` and download/staging folders are generated build output and must not be committed.

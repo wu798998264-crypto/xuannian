@@ -2,7 +2,7 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { app, BrowserWindow, webContents } = require('electron');
+const { app, BaseWindow, webContents } = require('electron');
 
 const tempAppData = fs.mkdtempSync(path.join(os.tmpdir(), 'xuannian-first-video-'));
 let probeSucceeded = false;
@@ -25,7 +25,7 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 async function findMainWindow(timeoutMs = 30000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const candidate = BrowserWindow.getAllWindows()
+    const candidate = BaseWindow.getAllWindows()
       .filter((window) => !window.isDestroyed())
       .sort((left, right) => {
         const leftBounds = left.getBounds();

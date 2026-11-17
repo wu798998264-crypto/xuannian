@@ -1,6 +1,9 @@
-﻿const { app, BrowserWindow, ipcMain, dialog, globalShortcut, clipboard, desktopCapturer, screen, Menu, nativeImage, shell } = require('electron');
-const { BaseWindow, Notification, WebContentsView, nativeTheme } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, globalShortcut, clipboard, desktopCapturer, screen, Menu, nativeImage, shell } = require('electron');
+const { Notification, WebContentsView, nativeTheme } = require('electron');
+const { createApplicationWindow } = require('./application-window');
 const { attachEditableContextMenu } = require('./editable-context-menu');
+const { buildMusicPageSnapshotScript, isMusicSearchDocument } = require('./music-page');
+const MUSIC_PAGE_SNAPSHOT_SCRIPT = buildMusicPageSnapshotScript({ observe: true });
 const {
   quickWindowPlatformOptions,
   configureQuickWindowPlatform,
@@ -182,12 +185,12 @@ let videoThumbnailWindowReady = null;
 let videoThumbnailIdleTimer = null;
 let videoThumbnailActive = 0;
 let mediaPortalView = null;
-let mediaPortalWorkerWindow = null;
 let mediaPortalViewHost = '';
 let mediaPortalRequestedVisible = false;
 let mediaPortalInputTimer = null;
 let mediaPortalResultSyncTimer = null;
 let mediaPortalMusicResultSyncTimer = null;
+let mediaPortalMusicHeartbeatTimer = null;
 let mediaPortalVisibilityNudgeTimer = null;
 let mediaPortalVisibilityRestoreTimer = null;
 let mediaPortalIdleTimer = null;
@@ -342,12 +345,12 @@ function appHtmlPath(fileName) {
 function loadAppHtml(win, fileName, options = {}) {
   const target = appHtmlPath(fileName);
   runtimeLog(`load ${fileName}: ${target}`);
-  return win.loadFile(target, options).catch((error) => {
+  return win.webContents.loadFile(target, options).catch((error) => {
     runtimeLog(`load ${fileName} failed: ${error?.message || error}`);
     const fallback = path.join(app.getAppPath(), fileName);
     if (fallback !== target) {
       runtimeLog(`retry ${fileName}: ${fallback}`);
-      return win.loadFile(fallback, options).catch((retryError) => {
+      return win.webContents.loadFile(fallback, options).catch((retryError) => {
         runtimeLog(`retry ${fileName} failed: ${retryError?.message || retryError}`);
       });
     }
@@ -781,8 +784,14 @@ function showMainWindow() {
   mainWindow.show();
   mainWindow.focus();
   if (!mainWindow.webContents.isDestroyed()) {
+    mainWindow.webContents.focus();
     mainWindow.webContents.send('native-data-refresh');
   }
+}
+
+function applicationWindowForWebContents(contents) {
+  if (mainWindow && !mainWindow.isDestroyed() && contents === mainWindow.webContents) return mainWindow;
+  return BrowserWindow.fromWebContents(contents);
 }
 
 function showSettingsWindow() {
@@ -2637,7 +2646,7 @@ function showStickyNoteWindow(options = {}) {
 }
 
 function focusStickyWindowByWebContents(webContents) {
-  const win = BrowserWindow.fromWebContents(webContents);
+  const win = applicationWindowForWebContents(webContents);
   if (!win || win.isDestroyed() || !stickyWindows.has(win)) return false;
   win.setAlwaysOnTop(true);
   win.moveTop();
@@ -2646,7 +2655,7 @@ function focusStickyWindowByWebContents(webContents) {
 }
 
 function createWindow() {
-  mainWindow = new BrowserWindow({
+  mainWindow = createApplicationWindow({
     width: 1180,
     height: 780,
     minWidth: MAIN_WINDOW_MIN_WIDTH,
@@ -2668,6 +2677,14 @@ function createWindow() {
       backgroundThrottling: true,
     },
   });
+  const layoutApplicationView = () => {
+    if (mainWindow.isDestroyed()) return;
+    if (mediaPortalViewHost === 'main-background' && mediaPortalView && !mediaPortalView.webContents.isDestroyed()) {
+      attachMediaPortalViewToMainBackground(mediaPortalView);
+    }
+  };
+  layoutApplicationView();
+  mainWindow.on('resize', layoutApplicationView);
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   attachPageDiagnostics(mainWindow, 'main');
   mainWindow.webContents.on('will-navigate', (event, url) => {
@@ -3827,8 +3844,6 @@ function destroyMediaPortalView({ notify = true } = {}) {
   mediaPortalRequestId += 1;
   const view = mediaPortalView;
   mediaPortalView = null;
-  const workerWindow = mediaPortalWorkerWindow;
-  mediaPortalWorkerWindow = null;
   mediaPortalViewHost = '';
   mediaPortalRequestedVisible = false;
   mediaPortalHtmlFullscreen = false;
@@ -3836,14 +3851,10 @@ function destroyMediaPortalView({ notify = true } = {}) {
   mediaPortalPresentationMode = 'browser';
   if (view) {
     try { mainWindow?.contentView?.removeChildView(view); } catch {}
-    try { workerWindow?.contentView?.removeChildView(view); } catch {}
     try {
       if (!view.webContents.isDestroyed()) view.webContents.close();
     } catch {}
   }
-  try {
-    if (workerWindow && !workerWindow.isDestroyed()) workerWindow.destroy();
-  } catch {}
   if (notify) notifyMediaBrowserState({ destroyed: true });
 }
 
@@ -3997,50 +4008,6 @@ function startMediaPortalVideoResultSync(state, view = mediaPortalView) {
   mediaPortalResultSyncTimer = setTimeout(poll, 650);
 }
 
-function mediaPortalMusicResultBridgeScript() {
-  // Keep a small, page-local snapshot. The provider adds search rows dynamically and
-  // repeated long-running extraction scripts can miss the exact render frame.
-  return `(() => {
-    const bridgeKey = '__xuannianMusicResultBridgeV2';
-    const resultKey = '__xuannianMusicResultsV2';
-    const collect = () => {
-      if (!/(?:^|\\.)gequbao\\.com$/i.test(String(location.hostname || ''))) return [];
-      const text = (element) => String(element?.innerText || element?.textContent || '').replace(/\\s+/g, ' ').trim();
-      const unique = new Map();
-      const targets = document.querySelectorAll('a[href*="/music/"],[data-href*="/music/"],[data-url*="/music/"]');
-      for (const element of targets) {
-        const rawUrl = element.href || element.getAttribute('data-href') || element.getAttribute('data-url') || element.getAttribute('href');
-        let url = '';
-        try { url = new URL(String(rawUrl || ''), location.href).href; } catch { continue; }
-        if (!/^https?:\\/\\/(?:www\\.)?gequbao\\.com\\/music\\/\\d+(?:[/?#]|$)/i.test(url)) continue;
-        const ownLabel = text(element).replace(/(?:播放\\s*&?\\s*下载|播放|下载)$/i, '').trim();
-        const row = element.closest('tr,li,article,.row,.item,[class*="song"],[class*="music"],[class*="result"]') || element.parentElement;
-        const rowLabel = text(row).replace(/(?:播放\\s*&?\\s*下载|播放|下载)/gi, ' ').replace(/\\s+/g, ' ').trim();
-        const label = (ownLabel.length > 1 ? ownLabel : rowLabel).slice(0, 180);
-        if (!label || /^(?:播放|下载|播放\\s*&?\\s*下载)$/i.test(label)) continue;
-        const previous = unique.get(url);
-        if (!previous || label.length > previous.label.length) unique.set(url, { url, label });
-      }
-      return [...unique.values()].slice(0, 60).map((item, index) => {
-        const parts = item.label.split(/\\s+-\\s+/);
-        return { id: String(index + 1), url: item.url, title: (parts.shift() || item.label).trim(), artist: parts.join(' - ').trim(), label: item.label };
-      });
-    };
-    const publish = () => {
-      window[resultKey] = { href: location.href, updatedAt: Date.now(), results: collect() };
-      return window[resultKey];
-    };
-    if (!window[bridgeKey]) {
-      window[bridgeKey] = true;
-      const observer = new MutationObserver(() => publish());
-      observer.observe(document.documentElement || document, { childList: true, subtree: true, characterData: true });
-      window.addEventListener('pageshow', publish, { passive: true });
-      window.addEventListener('popstate', publish, { passive: true });
-    }
-    return publish();
-  })()`;
-}
-
 function startMediaPortalMusicResultSync(state, view = mediaPortalView) {
   clearMediaPortalMusicResultSyncTimer();
   if (!view || view.webContents.isDestroyed() || !isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId)) return;
@@ -4049,33 +4016,18 @@ function startMediaPortalMusicResultSync(state, view = mediaPortalView) {
       || state.automationMode !== 'music-search' || state.completing) return;
     state.musicResultSyncPollCount = Number(state.musicResultSyncPollCount || 0) + 1;
     try {
-      const snapshot = await view.webContents.executeJavaScript(mediaPortalMusicResultBridgeScript(), true);
+      const snapshot = await view.webContents.executeJavaScript(MUSIC_PAGE_SNAPSHOT_SCRIPT, true);
       const results = Array.isArray(snapshot?.results) ? snapshot.results : [];
-      if (results.length) {
+      if (results.length && isMusicSearchDocument(snapshot.url, state.portalUrl)) {
         runtimeLog(`music result sync hit request=${state.requestId} poll=${state.musicResultSyncPollCount} count=${results.length}`);
         await completeMediaPortalAutomation(state, { ok: true, results });
         return;
       }
+      if (snapshot?.automaticCheck && !state.automaticSecurityCheck) {
+        state.automaticSecurityCheck = true;
+        emitMediaPortalProgress(state, { message: '音乐站正在进行自动安全检查，完成后继续读取结果', reason: 'automatic-security-check' });
+      } else if (!snapshot?.challenge) state.automaticSecurityCheck = false;
     } catch {}
-    if (Number(state.musicResultSyncPollCount || 0) === 5 || Number(state.musicResultSyncPollCount || 0) === 10) {
-      // Some first-load pages only flush search rows after a compositor frame.
-      // Wake the embedded portal briefly, then return to the native result view.
-      activateMediaPortalInContentRegion(view, 260, 'music result sync');
-    }
-    if (Number(state.musicResultSyncPollCount || 0) === 6 || Number(state.musicResultSyncPollCount || 0) === 11) {
-      try {
-        const result = await view.webContents.executeJavaScript(buildPortalScript({
-          mode: 'music-search',
-          value: state.value || '',
-          timeoutMs: 1200,
-        }, scoreMediaDownloadQualityLabel), true);
-        if (result?.ok && Array.isArray(result.results) && result.results.length) {
-          runtimeLog(`music result sync fallback hit request=${state.requestId} poll=${state.musicResultSyncPollCount} count=${result.results.length}`);
-          await completeMediaPortalAutomation(state, result);
-          return;
-        }
-      } catch {}
-    }
     mediaPortalMusicResultSyncTimer = setTimeout(poll, 350);
   };
   mediaPortalMusicResultSyncTimer = setTimeout(poll, 180);
@@ -4168,6 +4120,9 @@ function rememberMediaPortalVerificationResume(state) {
   if (!String(state?.automationMode || '').startsWith('music-')) return;
   mediaPortalVerificationResume = {
     ...state,
+    completing: false,
+    automationRunning: false,
+    automationRerunRequested: false,
     retryCount: 0,
     visibilityRetryCount: 0,
     verificationStartedAt: Date.now(),
@@ -4191,15 +4146,7 @@ function resumeMediaPortalAfterVerification() {
       return;
     }
     try {
-      const verificationScript = [
-        '(() => {',
-        'const body = String(document.body?.innerText || "").slice(0, 12000);',
-        'const challenge = /安全验证|验证您是真人|请验证您是真人|verify you are human|security verification|captcha|cloudflare/i.test(body)',
-        '  || !!document.querySelector("iframe[src*=captcha],iframe[src*=challenge],iframe[src*=turnstile],[class*=captcha],[id*=captcha]");',
-        'return { challenge, readyState: document.readyState };',
-        '})()',
-      ].join('\n');
-      const status = await mediaPortalView.webContents.executeJavaScript(verificationScript, true);
+      const status = await mediaPortalView.webContents.executeJavaScript(MUSIC_PAGE_SNAPSHOT_SCRIPT, true);
       if (!status?.challenge && status?.readyState !== 'loading') {
         const next = mediaPortalVerificationResume;
         clearMediaPortalVerificationMonitor();
@@ -4209,16 +4156,19 @@ function resumeMediaPortalAfterVerification() {
           retryCount: 0,
           visibilityRetryCount: 0,
         };
+        mediaPortalRequestedVisible = false;
         keepMediaPortalWorkerVisible(mediaPortalView);
         startMediaPortalProgress(mediaPortalInputState);
-        notifyMediaBrowserState({ opening: true, verificationPending: false, verificationCompleted: true });
-        scheduleMediaPortalInput();
+        notifyMediaBrowserState({ opening: true, requestId: next.requestId, automationMode: next.automationMode, verificationPending: false, verificationRequired: false, verificationCompleted: true });
+        if (next.automationMode === 'music-search' && status.results?.length && isMusicSearchDocument(status.url, next.portalUrl)) {
+          await completeMediaPortalAutomation(mediaPortalInputState, { ok: true, results: status.results });
+        } else scheduleMediaPortalInput();
         return;
       }
     } catch {}
     mediaPortalVerificationTimer = setTimeout(poll, 700);
   };
-  notifyMediaBrowserState({ verificationPending: true, verificationCompleted: false });
+  notifyMediaBrowserState({ requestId: resume.requestId, automationMode: resume.automationMode, verificationPending: true, verificationRequired: true, verificationCompleted: false });
   mediaPortalVerificationTimer = setTimeout(poll, 500);
   return true;
 }
@@ -4231,6 +4181,30 @@ function sendMediaPortalEvent(channel, payload = {}) {
 function clearMediaPortalProgressTimer() {
   clearInterval(mediaPortalProgressTimer);
   mediaPortalProgressTimer = null;
+  clearInterval(mediaPortalMusicHeartbeatTimer);
+  mediaPortalMusicHeartbeatTimer = null;
+}
+
+function startMediaPortalMusicHeartbeat(state, view = mediaPortalView) {
+  if (!String(state?.automationMode || '').startsWith('music-') || !view || view.webContents.isDestroyed()) return;
+  let capturing = false;
+  const capture = () => {
+    if (!isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId) || view.webContents.isDestroyed() || capturing) return;
+    // Use Electron's capture visibility lifecycle for a tiny compositor frame.
+    // The provider stays beneath the application; no native window is shown.
+    capturing = true;
+    view.webContents.setBackgroundThrottling(false);
+    view.webContents.capturePage({ x: 0, y: 0, width: 4, height: 4 }, { stayHidden: false, stayAwake: true })
+      .catch(error => {
+        if (!state.captureFailureLogged) {
+          state.captureFailureLogged = true;
+          runtimeLog(`music compositor capture unavailable: ${error?.message || error}`);
+        }
+      })
+      .finally(() => { capturing = false; });
+  };
+  mediaPortalMusicHeartbeatTimer = setInterval(capture, 800);
+  capture();
 }
 
 function mediaPortalProgressPayload(state, extra = {}) {
@@ -4255,7 +4229,9 @@ function mediaPortalProgressPayload(state, extra = {}) {
     kind = 'audio';
     operation = 'search';
     percent = Math.min(94, 6 + Math.round((elapsedMs / 30000) * 88));
-    message = '正在读取歌曲名称、歌手和可下载版本';
+    message = state?.automaticSecurityCheck
+      ? '音乐站正在进行自动安全检查，完成后继续读取结果'
+      : '正在读取歌曲名称、歌手和可下载版本';
   } else if (mode === 'music-preview') {
     kind = 'audio';
     operation = 'preview';
@@ -4297,6 +4273,7 @@ function startMediaPortalProgress(state) {
     }
     emitMediaPortalProgress(state);
   }, 500);
+  startMediaPortalMusicHeartbeat(state);
 }
 
 function finishMediaPortalProgress(state, ok, reason = '', message = '') {
@@ -4759,20 +4736,30 @@ function recoverMediaPortalVideoAutomation(state, result = {}) {
 }
 
 async function completeMediaPortalAutomation(state, result = {}) {
-  if (state.requestId !== mediaPortalRequestId) return;
+  if (!isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId) || state.completing) return;
   if (state.providerRetryPending) return;
+  const mode = state.automationMode;
+  if (mode === 'music-search') {
+    // The page can finish rendering while an earlier extraction is timing out.
+    // Read the current document once more before publishing a terminal failure.
+    try {
+      const snapshot = await mediaPortalView?.webContents.executeJavaScript(MUSIC_PAGE_SNAPSHOT_SCRIPT, true);
+      if (!isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId) || state.completing) return;
+      if (snapshot?.results?.length && isMusicSearchDocument(snapshot.url, state.portalUrl)) result = { ok: true, results: snapshot.results };
+      else if (result.ok && !isMusicSearchDocument(snapshot?.url, state.portalUrl)) return;
+    } catch {}
+  }
   clearMediaPortalResultSyncTimer();
   clearMediaPortalMusicResultSyncTimer();
   clearMediaPortalVisibilityNudgeTimer();
   const view = mediaPortalView;
-  const mode = state.automationMode;
   const humanVerification = String(result.reason || '') === 'human-verification'
     && String(mode || '').startsWith('music-');
   if (humanVerification) {
     // CAPTCHA cannot and must not be automated. Ask once, keep the exact portal session,
     // and resume the original request automatically after the user completes verification.
     rememberMediaPortalVerificationResume(state);
-    notifyMediaBrowserState({ verificationPending: true, opening: false });
+    notifyMediaBrowserState({ requestId: state.requestId, automationMode: mode, verificationPending: true, verificationRequired: true, failureReason: 'human-verification', opening: false });
   }
   if (mode === 'video-parse') {
     if (!result.ok && continueMediaPortalVideoResultWait(state, result)) return;
@@ -4894,9 +4881,12 @@ async function completeMediaPortalAutomation(state, result = {}) {
     });
     finishMediaPortalProgress(state, searchSucceeded, String(result.reason || ''));
     notifyMediaBrowserState({
+      requestId: state.requestId,
+      automationMode: mode,
       opening: false,
       musicResultsReady: results.length > 0,
       autoActionMissing: results.length === 0,
+      ...(searchSucceeded ? { verificationPending: false, verificationRequired: false, verificationCompleted: true } : {}),
     });
   } else if (mode === 'music-preview') {
     mediaPortalInputState = null;
@@ -4939,8 +4929,11 @@ async function completeMediaPortalAutomation(state, result = {}) {
     });
   }
   if (!activeMediaPortalDownloads && !mediaPortalInputState) {
-    if (mediaPortalView && !mediaPortalView.webContents.isDestroyed()) hideMediaPortalView(mediaPortalView);
-    scheduleMediaPortalIdleDestroy();
+    if (humanVerification) resumeMediaPortalAfterVerification();
+    else {
+      if (mediaPortalView && !mediaPortalView.webContents.isDestroyed()) hideMediaPortalView(mediaPortalView);
+      scheduleMediaPortalIdleDestroy();
+    }
   }
 }
 
@@ -4959,6 +4952,11 @@ function scheduleMediaPortalInput() {
     state.automationRunning = true;
     state.automationRerunRequested = false;
     keepMediaPortalWorkerVisible(view);
+    if (state.automationMode === 'music-search' && !isMusicSearchDocument(view.webContents.getURL(), state.portalUrl)) {
+      state.automationRunning = false;
+      if (!view.webContents.isLoading()) loadMediaPortalPage(view, state, state.portalUrl, { reason: 'music-search-document' });
+      return;
+    }
     scheduleMediaPortalVisibilityNudge(state, view);
     if (state.automationMode === 'music-search') startMediaPortalMusicResultSync(state, view);
     const script = buildPortalScript({
@@ -5711,55 +5709,18 @@ async function openHighQualityMusic(query = '', downloadTarget = 'download', col
   }
 }
 
-function ensureMediaPortalWorkerWindow() {
-  if (mediaPortalWorkerWindow && !mediaPortalWorkerWindow.isDestroyed()) return mediaPortalWorkerWindow;
-  const displays = screen.getAllDisplays();
-  const left = displays.length ? Math.min(...displays.map((display) => Number(display.bounds?.x || 0))) : 0;
-  const top = displays.length ? Math.min(...displays.map((display) => Number(display.bounds?.y || 0))) : 0;
-  const workerWindow = new BaseWindow({
-    show: false,
-    x: left - MEDIA_PORTAL_WORKER_WIDTH - 128,
-    y: top - MEDIA_PORTAL_WORKER_HEIGHT - 128,
-    width: MEDIA_PORTAL_WORKER_WIDTH,
-    height: MEDIA_PORTAL_WORKER_HEIGHT,
-    frame: false,
-    focusable: false,
-    skipTaskbar: true,
-    backgroundColor: '#ffffff',
-  });
-  mediaPortalWorkerWindow = workerWindow;
-  workerWindow.on('closed', () => {
-    if (mediaPortalWorkerWindow === workerWindow) mediaPortalWorkerWindow = null;
-    if (mediaPortalViewHost === 'worker') mediaPortalViewHost = '';
-  });
-  return workerWindow;
-}
-
 function attachMediaPortalViewToWorker(view = mediaPortalView) {
-  if (!view || view.webContents.isDestroyed()) return false;
-  const workerWindow = ensureMediaPortalWorkerWindow();
-  if (!workerWindow) return false;
-  if (mediaPortalViewHost !== 'worker') {
-    try { mainWindow?.contentView?.removeChildView(view); } catch {}
-    try { workerWindow.contentView.addChildView(view); } catch {}
-    mediaPortalViewHost = 'worker';
-  }
-  view.setBounds({ x: 0, y: 0, width: MEDIA_PORTAL_WORKER_WIDTH, height: MEDIA_PORTAL_WORKER_HEIGHT });
-  view.setVisible(true);
-  if (!workerWindow.isVisible()) workerWindow.showInactive();
-  return true;
+  // A separate offscreen native window can be clamped back onto a Mac display.
+  // Keep the real provider viewport beneath the application's opaque web view.
+  return attachMediaPortalViewToMainBackground(view);
 }
 
 function attachMediaPortalViewToMain(view = mediaPortalView) {
   if (!view || view.webContents.isDestroyed() || !mainWindow || mainWindow.isDestroyed()) return false;
   if (mediaPortalViewHost !== 'main') {
-    try { mediaPortalWorkerWindow?.contentView?.removeChildView(view); } catch {}
     try { mainWindow.contentView.removeChildView(view); } catch {}
     try { mainWindow.contentView.addChildView(view); } catch {}
     mediaPortalViewHost = 'main';
-  }
-  if (mediaPortalWorkerWindow && !mediaPortalWorkerWindow.isDestroyed() && mediaPortalWorkerWindow.isVisible()) {
-    mediaPortalWorkerWindow.hide();
   }
   return true;
 }
@@ -5767,20 +5728,16 @@ function attachMediaPortalViewToMain(view = mediaPortalView) {
 function attachMediaPortalViewToMainBackground(view = mediaPortalView) {
   if (!view || view.webContents.isDestroyed() || !mainWindow || mainWindow.isDestroyed()) return false;
   if (mediaPortalViewHost !== 'main-background') {
-    try { mediaPortalWorkerWindow?.contentView?.removeChildView(view); } catch {}
     try { mainWindow.contentView.removeChildView(view); } catch {}
     try { mainWindow.contentView.addChildView(view, 0); } catch { return false; }
     mediaPortalViewHost = 'main-background';
-  }
-  if (mediaPortalWorkerWindow && !mediaPortalWorkerWindow.isDestroyed() && mediaPortalWorkerWindow.isVisible()) {
-    mediaPortalWorkerWindow.hide();
   }
   const content = mainWindow.getContentBounds();
   view.setBounds({
     x: 0,
     y: 0,
-    width: Math.max(1, Number(content?.width || MEDIA_PORTAL_WORKER_WIDTH)),
-    height: Math.max(1, Number(content?.height || MEDIA_PORTAL_WORKER_HEIGHT)),
+    width: Math.max(MEDIA_PORTAL_WORKER_WIDTH, Number(content?.width || 0)),
+    height: Math.max(MEDIA_PORTAL_WORKER_HEIGHT, Number(content?.height || 0)),
   });
   view.setVisible(true);
   return true;
@@ -5791,7 +5748,9 @@ function activateMediaPortalInBackground(view = mediaPortalView, durationMs = ME
   const restoreMainFocus = !!mainWindow?.isFocused?.();
   if (!attachMediaPortalViewToMainBackground(view)) return false;
   view.webContents.setAudioMuted(true);
-  try { view.webContents.focus(); } catch {}
+  if (!String(mediaPortalInputState?.automationMode || '').startsWith('music-')) {
+    try { view.webContents.focus(); } catch {}
+  }
   runtimeLog(`${label} compositor wake`);
   setTimeout(() => {
     if (view !== mediaPortalView || view.webContents.isDestroyed() || mediaPortalRequestedVisible) return;
@@ -5805,6 +5764,9 @@ function activateMediaPortalInBackground(view = mediaPortalView, durationMs = ME
 
 function activateMediaPortalInContentRegion(view = mediaPortalView, durationMs = MEDIA_PORTAL_VIDEO_WAKE_VISIBLE_MS, label = 'portal') {
   if (!view || view.webContents.isDestroyed() || !mainWindow || mainWindow.isDestroyed()) return false;
+  if (!mediaPortalRequestedVisible && String(mediaPortalInputState?.automationMode || '').startsWith('music-')) {
+    return activateMediaPortalInBackground(view, durationMs, label);
+  }
   const bounds = mediaPortalLastVisibleBounds;
   if (!bounds || bounds.width < 120 || bounds.height < 80) {
     // Do not fall back to a full-window flash before the renderer has supplied the media frame.
@@ -5857,9 +5819,6 @@ async function dispatchTrustedMediaPortalDownloadClick(view, fallbackPoint = {})
 function hideMediaPortalView(view = mediaPortalView) {
   if (!view || view.webContents.isDestroyed()) return;
   view.setVisible(false);
-  if (mediaPortalViewHost === 'worker' && mediaPortalWorkerWindow && !mediaPortalWorkerWindow.isDestroyed()) {
-    mediaPortalWorkerWindow.hide();
-  }
 }
 
 function inspectSeekinProviderResponse(view, protocolRequestId) {
@@ -5941,17 +5900,22 @@ function ensureMediaPortalView() {
   mediaPortalView = view;
   view.setBounds({ x: 0, y: 0, width: 1280, height: 900 });
   view.setVisible(false);
-  const workerWindow = ensureMediaPortalWorkerWindow();
-  workerWindow.contentView.addChildView(view);
-  mediaPortalViewHost = 'worker';
+  attachMediaPortalViewToMainBackground(view);
+  view.setVisible(false);
   configureMediaDownloadSession(view.webContents.session);
   if (process.env.XUANNIAN_DEBUG_LOG) {
     view.webContents.session.webRequest.onCompleted((details) => {
+      if (/gequbao\.com/i.test(String(details.url || '')) && details.resourceType === 'mainFrame') {
+        runtimeLog(`music document response ${details.statusCode} ${String(details.url || '').slice(0, 300)}`);
+      }
       if (/seekin\.ai/i.test(String(details.url || '')) && ['POST', 'GET'].includes(String(details.method || ''))) {
         runtimeLog(`seekin request completed ${details.method} ${details.statusCode} ${String(details.url || '').slice(0, 260)}`);
       }
     });
     view.webContents.session.webRequest.onErrorOccurred((details) => {
+      if (/gequbao\.com/i.test(String(details.url || '')) && details.resourceType === 'mainFrame') {
+        runtimeLog(`music document network failure ${details.error} ${String(details.url || '').slice(0, 300)}`);
+      }
       if (/seekin\.ai/i.test(String(details.url || ''))) {
         runtimeLog(`seekin request failed ${details.error} ${String(details.url || '').slice(0, 260)}`);
       }
@@ -6193,6 +6157,7 @@ function openMediaPortal(url, downloadTarget = 'download', sourceText = '', auto
   if (!view) return false;
   failMediaPortalPendingTask(view.webContents, 'cancelled');
   if (automationMode) clearMediaPortalVerificationMonitor();
+  if (automationMode === 'music-search') mediaPortalRequestedVisible = false;
   mediaPortalRequestId += 1;
   const previousParsedVideo = normalizedAutomationMode === 'video-parse'
     && mediaPortalParsedVideo?.sourceUrl === automationValue
@@ -6306,6 +6271,8 @@ function openMediaPortal(url, downloadTarget = 'download', sourceText = '', auto
   }
   notifyMediaBrowserState({
     requestId: mediaPortalRequestId,
+    automationMode: normalizedAutomationMode,
+    sourceText: automationValue,
     destroyed: false,
     opening: true,
     autoFilled: false,
@@ -9259,7 +9226,7 @@ ipcMain.handle('sticky:closeAll', () => {
 
 ipcMain.handle('sticky:registerSaved', (event, noteId) => {
   const id = String(noteId || '');
-  const win = BrowserWindow.fromWebContents(event.sender);
+  const win = applicationWindowForWebContents(event.sender);
   if (!id || !win || win.isDestroyed() || !stickyWindows.has(win)) return false;
   const existing = stickyNoteWindows.get(id);
   if (existing && existing !== win && !existing.isDestroyed()) {
@@ -9274,7 +9241,7 @@ ipcMain.handle('sticky:registerSaved', (event, noteId) => {
 ipcMain.handle('sticky:focusTop', (event) => focusStickyWindowByWebContents(event.sender));
 
 ipcMain.handle('sticky:pointerStatus', (event) => {
-  const win = BrowserWindow.fromWebContents(event.sender);
+  const win = applicationWindowForWebContents(event.sender);
   if (!win || win.isDestroyed() || !stickyWindows.has(win)) {
     return { insideWindow: false, x: -1, y: -1 };
   }
@@ -9294,7 +9261,7 @@ ipcMain.handle('sticky:pointerStatus', (event) => {
 });
 
 ipcMain.handle('sticky:setAspectRatio', (event, ratio = 0) => {
-  const win = BrowserWindow.fromWebContents(event.sender);
+  const win = applicationWindowForWebContents(event.sender);
   if (!win || win.isDestroyed() || !stickyWindows.has(win)) return false;
   const value = normalizeStickyImageLayout(ratio);
   if (value) stickyAspectRatios.set(event.sender.id, value);
@@ -9303,7 +9270,7 @@ ipcMain.handle('sticky:setAspectRatio', (event, ratio = 0) => {
 });
 
 ipcMain.handle('sticky:fitImageLayout', (event, layout) => {
-  const win = BrowserWindow.fromWebContents(event.sender);
+  const win = applicationWindowForWebContents(event.sender);
   if (!win || win.isDestroyed() || !stickyWindows.has(win)) return false;
   const value = normalizeStickyImageLayout(layout);
   if (!value) return false;
@@ -9312,7 +9279,7 @@ ipcMain.handle('sticky:fitImageLayout', (event, layout) => {
 });
 
 ipcMain.handle('sticky:expandVertical', (event) => {
-  const win = BrowserWindow.fromWebContents(event.sender);
+  const win = applicationWindowForWebContents(event.sender);
   if (!win || win.isDestroyed() || !stickyWindows.has(win)) return false;
   const current = win.getBounds();
   const area = screen.getDisplayMatching(current).workArea;
@@ -9334,7 +9301,7 @@ ipcMain.handle('sticky:expandVertical', (event) => {
 });
 
 ipcMain.handle('sticky:collapseVertical', (event, layout) => {
-  const win = BrowserWindow.fromWebContents(event.sender);
+  const win = applicationWindowForWebContents(event.sender);
   if (!win || win.isDestroyed() || !stickyWindows.has(win)) return false;
   const current = win.getBounds();
   const area = screen.getDisplayMatching(current).workArea;
@@ -9361,13 +9328,13 @@ ipcMain.handle('sticky:collapseVertical', (event, layout) => {
 });
 
 ipcMain.handle('sticky:close', (event) => {
-  const win = BrowserWindow.fromWebContents(event.sender);
+  const win = applicationWindowForWebContents(event.sender);
   if (win && !win.isDestroyed()) win.close();
   return true;
 });
 
 ipcMain.handle('sticky:resizeStart', (event, edge, point) => {
-  const win = BrowserWindow.fromWebContents(event.sender);
+  const win = applicationWindowForWebContents(event.sender);
   if (!win || win.isDestroyed() || !stickyWindows.has(win)) return false;
   if (!RESIZE_EDGES.has(edge)) return false;
   if (!Number.isFinite(point?.x) || !Number.isFinite(point?.y)) return false;
@@ -9384,7 +9351,7 @@ ipcMain.handle('sticky:resizeStart', (event, edge, point) => {
 });
 
 ipcMain.handle('sticky:moveStart', (event, point) => {
-  const win = BrowserWindow.fromWebContents(event.sender);
+  const win = applicationWindowForWebContents(event.sender);
   if (!win || win.isDestroyed() || !stickyWindows.has(win)) return false;
   if (!Number.isFinite(point?.x) || !Number.isFinite(point?.y)) return false;
   const sessionId = event.sender.id;
@@ -9407,7 +9374,7 @@ ipcMain.handle('sticky:moveStart', (event, point) => {
 
 ipcMain.on('sticky:moveMove', (event, point) => {
   const session = stickyMoveSessions.get(event.sender.id);
-  const win = BrowserWindow.fromWebContents(event.sender);
+  const win = applicationWindowForWebContents(event.sender);
   if (!session || !win || win.isDestroyed() || !stickyWindows.has(win)) return;
   if (!Number.isFinite(point?.x) || !Number.isFinite(point?.y)) return;
   const now = Date.now();
@@ -9437,7 +9404,7 @@ ipcMain.on('sticky:moveEnd', (event) => {
 
 ipcMain.on('sticky:resizeMove', (event, point) => {
   const session = stickyResizeSessions.get(event.sender.id);
-  const win = BrowserWindow.fromWebContents(event.sender);
+  const win = applicationWindowForWebContents(event.sender);
   if (!session || !win || win.isDestroyed() || !stickyWindows.has(win)) return;
   if (!Number.isFinite(point?.x) || !Number.isFinite(point?.y)) return;
   const now = Date.now();
@@ -9479,13 +9446,13 @@ ipcMain.handle('dialog:selectMediaFolder', async (_event, kind = 'download', cur
 });
 
 ipcMain.handle('data:exportPackage', async (event) => {
-  const result = await exportUserDataPackage(BrowserWindow.fromWebContents(event.sender));
+  const result = await exportUserDataPackage(applicationWindowForWebContents(event.sender));
   if (result?.ok && result.filePath) shell.showItemInFolder(result.filePath);
   return result;
 });
 
 ipcMain.handle('data:importPackage', async (event) => {
-  return importUserDataPackage(BrowserWindow.fromWebContents(event.sender));
+  return importUserDataPackage(applicationWindowForWebContents(event.sender));
 });
 
 ipcMain.handle('data:revealFolder', () => {
@@ -9498,7 +9465,7 @@ ipcMain.handle('data:revealFolder', () => {
 });
 
 ipcMain.handle('dialog:pickInspirationFiles', (event) => {
-  return selectInspirationFiles(BrowserWindow.fromWebContents(event.sender));
+  return selectInspirationFiles(applicationWindowForWebContents(event.sender));
 });
 
 function openLyricsInTextEditor(filePath) {
@@ -9586,7 +9553,7 @@ ipcMain.handle('file:showContextMenu', (event, filePath) => {
   } catch {
     return false;
   }
-  const owner = BrowserWindow.fromWebContents(event.sender);
+  const owner = applicationWindowForWebContents(event.sender);
   const menu = Menu.buildFromTemplate([
     {
       label: directory ? '打开文件夹' : '打开文件',
@@ -9602,7 +9569,7 @@ ipcMain.handle('file:showContextMenu', (event, filePath) => {
 });
 
 ipcMain.handle('ui:showItemContextMenu', (event, kind, options = {}) => {
-  const owner = BrowserWindow.fromWebContents(event.sender);
+  const owner = applicationWindowForWebContents(event.sender);
   const items = [];
   const action = (id, label, extra = {}) => ({ id, label, ...extra });
   if (kind === 'clipboard') {
@@ -10025,7 +9992,7 @@ ipcMain.handle('screenshot:capture', async (event, options = {}) => {
     triggerWechatScreenshot();
     return { delegatedToWechat: true };
   }
-  return captureScreenshotToClipboard(options, BrowserWindow.fromWebContents(event.sender));
+  return captureScreenshotToClipboard(options, applicationWindowForWebContents(event.sender));
 });
 
 ipcMain.handle('screenshot:warmup', () => {

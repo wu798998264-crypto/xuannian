@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <script>if(window.nativeAPI?.platform==='darwin') document.documentElement.classList.add('platform-mac');</script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>玄念9.2.0</title>
+  <title>玄念9.2.1</title>
   <link rel="icon" href="src/xuannian-logo-256.png" />
   <link rel="stylesheet" href="src/media-library.css" />
   <style>
@@ -1854,7 +1854,7 @@ function createBrowserFallbackAPI(){
     async deleteInspiration(id){ const data=read(); data.inspirations=data.inspirations.filter(x=>x.id!==id); write(data); return data.inspirations; },
     async getSettings(){ return read().settings; },
     async saveSettings(settings){ const data=read(); data.settings={...data.settings,...settings}; write(data); return data.settings; },
-    async getUpdateState(){ return {status:'current',revision:0,currentVersion:'9.2.0',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false,repositoryUrl:'https://github.com/wu798998264-crypto/xuannian'}; },
+    async getUpdateState(){ return {status:'current',revision:0,currentVersion:'9.2.1',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false,repositoryUrl:'https://github.com/wu798998264-crypto/xuannian'}; },
     async checkForUpdates(){ return this.getUpdateState(); },
     async downloadUpdate(){ return this.getUpdateState(); },
     async installUpdate(){ return false; },
@@ -2146,14 +2146,7 @@ async function init(){
     };
     renderMediaAutomationProgress();
   });
-  window.nativeAPI?.onMediaBrowserState?.((payload)=>{
-    state.media.browser={...state.media.browser,...payload};
-    if(payload?.verificationCompleted) state.media.browserVisible=false;
-    renderMediaBrowserState();
-    if(payload?.autoActionMissing&&payload?.automationStage==='music-download'){
-      void offerMediaManualPortal('audio',String(payload?.failureReason||'download-timeout'),String(payload?.url||state.media.browser.url||''));
-    }
-  });
+  window.nativeAPI?.onMediaBrowserState?.(applyMediaBrowserState);
   window.nativeAPI?.onMediaVideoParsed?.((payload)=>{
     const activeRequestId=Number(state.media.videoParse.requestId||0);
     if(activeRequestId&&payload?.requestId&&Number(payload.requestId)!==activeRequestId) return;
@@ -2191,26 +2184,7 @@ async function init(){
       }
     }else handleMediaVideoParseFailure(String(payload?.reason||'automation-error'));
   });
-  window.nativeAPI?.onMediaMusicResults?.((payload)=>{
-    const activeRequestId=Number(state.media.musicSearch.requestId||0);
-    if(activeRequestId&&payload?.requestId&&Number(payload.requestId)!==activeRequestId) return;
-    state.media.musicSearch={
-      status:payload?.ok?'ready':'error',
-      requestId:Number(payload?.requestId||activeRequestId||0),
-      query:String(payload?.query||''),
-      results:Array.isArray(payload?.results)?payload.results:[],
-      error:String(payload?.reason||''),
-    };
-    state.media.musicPreview={status:'idle',requestId:0,index:-1,resultUrl:'',previewUrl:'',error:''};
-    renderMediaPortalWorkspace();
-    renderMediaBrowserState();
-    if(payload?.ok){
-      clearMediaManualPortal('audio');
-    }else{
-      toast(mediaPortalFailureMessage(payload?.reason,'audio'));
-      void offerMediaManualPortal('audio',String(payload?.reason||'search-timeout'),String(state.media.browser.url||'https://www.gequbao.com/'));
-    }
-  });
+  window.nativeAPI?.onMediaMusicResults?.(applyMediaMusicResults);
   window.nativeAPI?.onMediaMusicPreviewReady?.((payload)=>{
     const activeRequestId=Number(state.media.musicPreview.requestId||0);
     if(activeRequestId&&payload?.requestId&&Number(payload.requestId)!==activeRequestId) return;
@@ -4014,6 +3988,70 @@ function mediaPortalFailureMessage(reason='',kind='video'){
   return MEDIA_PORTAL_CONTENT_FAILURES.has(String(reason||''))?message+'。请检查原视频状态':message+'。请重新解析或切换备用站';
 }
 
+function musicSearchPayloadIsCurrent(payload={}){
+  const current=state.media.musicSearch||{};
+  const requestId=Number(payload.requestId||0),activeId=Number(current.requestId||0);
+  if(activeId<0) return false;
+  if(payload.query&&String(payload.query).trim()!==String(current.query||'').trim()) return false;
+  if(activeId>0&&requestId>0) return requestId===activeId;
+  if(requestId>0&&requestId<=Number(current.requestFloor||0)) return false;
+  return !!String(current.query||'').trim();
+}
+
+function applyMediaMusicResults(payload={}){
+  if(!musicSearchPayloadIsCurrent(payload)) return;
+  const current=state.media.musicSearch||{};
+  // A late timeout or empty partial snapshot must not erase an accepted list.
+  const results=Array.isArray(payload.results)?payload.results:[];
+  const ready=!!payload.ok&&results.length>0;
+  if(current.status==='ready'&&current.results?.length&&!ready) return;
+  state.media.musicRequestWatermark=Math.max(Number(state.media.musicRequestWatermark||0),Number(payload.requestId||0));
+  state.media.musicSearch={...current,status:ready?'ready':'error',requestId:Number(payload.requestId||current.requestId||0),query:String(payload.query||current.query||''),results,error:String(payload.reason||'')};
+  state.media.musicPreview={status:'idle',requestId:0,index:-1,resultUrl:'',previewUrl:'',error:''};
+  renderMediaPortalWorkspace();
+  if(ready) clearMediaManualPortal('audio');
+  else{
+    renderMediaBrowserState();
+    toast(mediaPortalFailureMessage(payload.reason,'audio'));
+    void offerMediaManualPortal('audio',String(payload.reason||'search-timeout'),String(state.media.browser.url||'https://www.gequbao.com/'));
+  }
+}
+
+function applyMediaBrowserState(payload={}){
+  const verification=!!payload.verificationRequired||!!payload.verificationPending;
+  if((verification||payload.verificationCompleted)&&payload.requestId){
+    const stage=String(payload.automationStage||payload.automationMode||'');
+    const operation=state.media.musicOperation;
+    const id=Number(payload.requestId);
+    const previewId=Number(state.media.musicPreview.requestId||0);
+    if(stage==='music-preview'||stage==='music-download'){
+      if(!operation||operation.mode!==stage) return;
+      if(operation.requestId>0&&operation.requestId!==id) return;
+      if(!operation.requestId){
+        if(id<=Number(operation.requestFloor||0)) return;
+        try{
+          const actual=new URL(payload.url||state.media.browser.url),expected=new URL(operation.url);
+          if(actual.hostname.replace(/^www\./,'')!==expected.hostname.replace(/^www\./,'')||actual.pathname.replace(/\/+$/,'')!==expected.pathname.replace(/\/+$/,'')) return;
+        }catch{return;}
+        operation.requestId=id;
+        if(stage==='music-preview'&&state.media.musicPreview.status==='loading') state.media.musicPreview.requestId=id;
+      }
+      state.media.musicRequestWatermark=Math.max(Number(state.media.musicRequestWatermark||0),id);
+    }else if(!(previewId>0&&previewId===id)&&!musicSearchPayloadIsCurrent(payload)) return;
+  }
+  state.media.browser={...state.media.browser,...payload};
+  if(payload.verificationCompleted) state.media.browserVisible=false;
+  renderMediaBrowserState();
+  if(verification){
+    const id=Number(payload.requestId||state.media.musicSearch.requestId||0);
+    if(state.media.manualPortal?.verificationRequestId!==id){
+      state.media.manualPortal={...state.media.manualPortal,verificationRequestId:id};
+      void offerMediaManualPortal('audio','human-verification',String(payload.url||state.media.browser.url||'https://www.gequbao.com/'));
+    }
+  }
+  if(payload.autoActionMissing&&payload.automationStage==='music-download') void offerMediaManualPortal('audio',String(payload.failureReason||'download-timeout'),String(payload.url||state.media.browser.url||''));
+}
+
 function renderMediaManualPortal(){
   const manual=state.media.manualPortal||{};
   const video=$('#mediaVideoManualPortal');
@@ -4125,17 +4163,21 @@ async function offerMediaManualPortal(kind='video',reason='automation-error',url
   const targetUrl=bilibiliLogin
     ?String(state.media.videoParse.sourceUrl||state.media.videoProvider?.sourceUrl||url||'')
     :(kind==='video'?MEDIA_VIDEO_PRIMARY_PORTAL:String(url||state.media.browser.url||''));
-  state.media.manualPortal={available:true,kind,url:targetUrl,reason,prompting:!!current.prompting};
+  state.media.manualPortal={...current,available:true,kind,url:targetUrl,reason,prompting:!!current.prompting};
   renderMediaManualPortal();
   if(current.prompting) return;
   if(kind==='audio'&&reason==='human-verification'){
     // Verification must remain user-operated, but it should not require a second in-app confirmation.
-    state.media.manualPortal.prompting=false;
-    await toggleMediaManualPortal(kind,{forceOpen:true});
-    const resumed=await api.resumeMediaPortalAfterVerification();
-    if(!resumed?.ok) toast('验证页面状态已失效，请重新搜索音乐');
+    if(current.kind==='audio'&&current.reason==='human-verification'&&state.media.browserVisible) return;
+    state.media.manualPortal.prompting=true;
+    try{
+      await toggleMediaManualPortal(kind,{forceOpen:true});
+      const resumed=await api.resumeMediaPortalAfterVerification();
+      if(!resumed?.ok) toast('验证页面状态已失效，请重新搜索音乐');
+    }finally{state.media.manualPortal.prompting=false;}
     return;
   }
+  if(kind==='audio') return;
   state.media.manualPortal.prompting=true;
   const site=bilibiliLogin?'哔哩哔哩':(kind==='audio'?'歌曲宝':'Seekin');
   const detail=mediaPortalFailureMessage(reason,kind).replace(/。请.*$/,'');
@@ -4221,6 +4263,8 @@ async function clearMediaLaunchInput(kind='video'){
   syncMediaLaunchClearButtons();
   if(audio){
     $$('#mediaMusicResults audio').forEach(element=>element.pause());
+    state.media.musicSearchGeneration=Number(state.media.musicSearchGeneration||0)+1;
+    state.media.musicOperation=null;
     state.media.musicSearch={status:'idle',requestId:-1,query:'',results:[],error:''};
     state.media.musicPreview={status:'idle',requestId:-1,index:-1,resultUrl:'',previewUrl:'',error:''};
   }else{
@@ -4411,29 +4455,34 @@ async function downloadParsedVideo(favorite=false,options={}){
 
 async function searchMediaMusic(){
   const keyword=String($('#mediaMusicInput')?.value||'').trim();
-  if(!keyword){
-    toast('请输入歌曲名或歌手');
-    return;
-  }
-  clearMediaManualPortal('audio');
-  const url=await api.getMediaMusicSearchUrl(keyword);
+  if(!keyword){toast('请输入歌曲名或歌手');return;}
+  const generation=Number(state.media.musicSearchGeneration||0)+1;
+  state.media.musicSearchGeneration=generation;
+  const requestFloor=Math.max(Number(state.media.musicRequestWatermark||0),Number(state.media.musicSearch.requestId||0));
+  state.media.musicOperation={mode:'music-search',requestId:0,requestFloor,url:''};
   $('#mediaMusicResults audio')?.pause();
-  state.media.musicSearch={status:'searching',requestId:0,query:keyword,results:[],error:''};
+  state.media.musicSearch={status:'searching',requestId:0,requestFloor,query:keyword,results:[],error:''};
   state.media.musicPreview={status:'idle',requestId:0,index:-1,resultUrl:'',previewUrl:'',error:''};
-  state.media.browserVisible=false;
-  state.media.browser={...state.media.browser,ready:true,loading:true,opening:true,url,autoActionMissing:false,externalOpened:false};
+  clearMediaManualPortal('audio');
   renderMediaPortalWorkspace();
-  renderMediaBrowserState();
-  const opened=await api.openMediaPortal(url,'download',keyword,false,'','','music-search');
-  if(!opened||opened?.ok===false){
+  let url='';
+  try{
+    url=await api.getMediaMusicSearchUrl(keyword);
+    if(generation!==state.media.musicSearchGeneration) return;
+    state.media.browser={...state.media.browser,ready:true,loading:true,opening:true,url,autoActionMissing:false,externalOpened:false,verificationRequired:false,verificationPending:false};
+    renderMediaBrowserState();
+    const opened=await api.openMediaPortal(url,'download',keyword,false,'','','music-search');
+    state.media.musicRequestWatermark=Math.max(Number(state.media.musicRequestWatermark||0),Number(opened?.requestId||0));
+    if(generation!==state.media.musicSearchGeneration) return;
+    // Results can arrive before openMediaPortal resolves. Preserve that result.
+    if(state.media.musicSearch.status==='ready') return;
+    if(!opened||opened.ok===false) throw Error('load-error');
+    if(state.media.musicSearch.status==='searching') state.media.musicSearch.requestId=Number(opened.requestId||state.media.musicSearch.requestId||0);
+  }catch{
+    if(generation!==state.media.musicSearchGeneration||state.media.musicSearch.status==='ready') return;
     state.media.musicSearch={...state.media.musicSearch,status:'error',error:'load-error'};
     renderMediaPortalWorkspace();
     toast(mediaPortalFailureMessage('load-error','audio'));
-    void offerMediaManualPortal('audio','load-error',url);
-    return;
-  }
-  if(state.media.musicSearch.status==='searching'&&state.media.musicSearch.query===keyword){
-    state.media.musicSearch.requestId=Number(opened?.requestId||0);
   }
 }
 
@@ -4449,11 +4498,16 @@ async function previewMediaMusicVersion(index){
   }
   $$('#mediaMusicResults audio').forEach(audio=>audio.pause());
   state.media.musicPreview={status:'loading',requestId:0,index,resultUrl:String(result.url||''),previewUrl:'',error:''};
+  const operation={mode:'music-preview',requestId:0,requestFloor:Number(state.media.musicRequestWatermark||0),url:String(result.url||'')};
+  state.media.musicOperation=operation;
   state.media.browserVisible=false;
   state.media.browser={...state.media.browser,ready:true,loading:true,opening:true,url:result.url,autoActionMissing:false};
   renderMediaPortalWorkspace();
   renderMediaBrowserState();
   const opened=await api.previewMediaMusicResult(result.url);
+  state.media.musicRequestWatermark=Math.max(Number(state.media.musicRequestWatermark||0),Number(opened?.requestId||0));
+  if(state.media.musicOperation!==operation) return;
+  operation.requestId=Number(opened?.requestId||operation.requestId||0);
   if(!opened||opened?.ok===false){
     state.media.musicPreview={...state.media.musicPreview,status:'error',error:'load-error'};
     renderMediaPortalWorkspace();
@@ -4506,7 +4560,12 @@ async function downloadMediaMusicVersion(index,favorite=false){
   const displayName=[result.title,result.artist].filter(Boolean).join(' - ')||result.label||'未命名歌曲';
   const collection=favorite?await showMediaCollectionPicker('audio'):'';
   if(collection===null) return;
+  const operation={mode:'music-download',requestId:0,requestFloor:Number(state.media.musicRequestWatermark||0),url:String(result.url||'')};
+  state.media.musicOperation=operation;
   const opened=await api.downloadMediaMusicResult(result.url,favorite?'favorite':'download',collection,displayName);
+  state.media.musicRequestWatermark=Math.max(Number(state.media.musicRequestWatermark||0),Number(opened?.requestId||0));
+  if(state.media.musicOperation!==operation) return;
+  operation.requestId=Number(opened?.requestId||operation.requestId||0);
   if(!opened||opened?.ok===false){
     toast('该音乐版本暂时无法打开');
     void offerMediaManualPortal('audio','load-error',String(result.url||''));
@@ -8428,7 +8487,7 @@ function showUpdateDialog(){
   showModal(`
     <div data-update-dialog>
       <div class="modal-header"><h3>软件更新</h3><button class="modal-close" id="closeModal">×</button></div>
-      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '9.2.0')}</b><span>${hasNewerUpdateVersion(update)?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
+      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '9.2.1')}</b><span>${hasNewerUpdateVersion(update)?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
       <div class="modal-message">${escapeHtml(updateStatusText())}</div>
       <p class="update-network-tip">提示：开启 VPN 后再检测更新，结果会更加准确。</p>
       ${busy||downloaded?`<div class="update-progress"><span style="width:${downloaded?100:progress}%"></span></div>`:''}
