@@ -22,7 +22,7 @@ esac
   echo 'The media bridge requires JDK 17.' >&2
   exit 1
 }
-lipo -verify_arch "$macho_arch" "$JAVA_HOME/bin/java"
+lipo "$JAVA_HOME/bin/java" -verify_arch "$macho_arch"
 
 for entry in bridge classes runtime/app LICENSE UPSTREAM.json BUILD.md yunx-corresponding-source.zip; do
   [[ -e "$source_yunx/$entry" ]] || { echo "Missing Yunx resource: $entry" >&2; exit 1; }
@@ -42,7 +42,7 @@ cp -R "$source_yunx/runtime/app" "$resources/yunx/runtime/app"
 java="$resources/yunx/runtime/runtime/bin/java"
 chmod +x "$java"
 file "$java"
-lipo -verify_arch "$macho_arch" "$java"
+lipo "$java" -verify_arch "$macho_arch"
 "$java" -version
 
 ffmpeg_release='https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1'
@@ -52,7 +52,7 @@ for tool in ffmpeg ffprobe; do
   gzip -d "$resources/ffmpeg/$tool.gz"
   chmod +x "$resources/ffmpeg/$tool"
   file "$resources/ffmpeg/$tool"
-  lipo -verify_arch "$macho_arch" "$resources/ffmpeg/$tool"
+  lipo "$resources/ffmpeg/$tool" -verify_arch "$macho_arch"
   "$resources/ffmpeg/$tool" -version
 done
 for entry in LICENSE README; do
