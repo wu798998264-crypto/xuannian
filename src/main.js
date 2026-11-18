@@ -123,6 +123,9 @@ let tray;
 let isQuitting = false;
 let updateCheckTimer = null;
 let updateCheckInFlight = false;
+let updateDownloadFlight;
+let releaseFetch;
+let installedReleaseFiles = [];
 let installedUpdaterInitialized = false;
 let portableUpdateDownload = null;
 let lastUpdateLogKey = '';
@@ -450,7 +453,7 @@ function normalizeReleaseNotes(notes) {
 
 function isTransientUpdateError(error) {
   const message = String(error?.message || error || '');
-  return /ERR_CONNECTION_RESET|ECONNRESET|ETIMEDOUT|ESOCKETTIMEDOUT|ERR_NETWORK_CHANGED|ERR_INTERNET_DISCONNECTED|socket hang up|network error|timeout|timed out/i.test(message);
+  return error?.retryable === true || /连接中断|超时|ERR_CONNECTION_|ECONNRESET|EAI_AGAIN|ETIMEDOUT|ESOCKETTIMEDOUT|ERR_TIMED_OUT|ERR_NETWORK_CHANGED|ERR_INTERNET_DISCONNECTED|socket hang up|network error|timeout|timed out|HTTP (?:408|429|50[0234])\b/i.test(message);
 }
 
 function formatUpdateError(error, phase = 'check') {
@@ -476,97 +479,61 @@ function hasKnownAppUpdate(state = updateState) {
   return !!state?.version && compareVersions(state.version, app.getVersion()) > 0;
 }
 
-function requestJson(url, redirects = 0) {
-  return new Promise((resolve, reject) => {
-    const request = https.get(url, {
-      headers: {
-        Accept: 'application/vnd.github+json',
-        'User-Agent': `XuanNian/${app.getVersion()}`,
-        'X-GitHub-Api-Version': '2022-11-28',
-      },
-    }, (response) => {
-      const location = response.headers.location;
-      if (location && response.statusCode >= 300 && response.statusCode < 400 && redirects < 6) {
-        response.resume();
-        requestJson(new URL(location, url).toString(), redirects + 1).then(resolve, reject);
-        return;
-      }
-      let body = '';
-      response.setEncoding('utf8');
-      response.on('data', (chunk) => { body += chunk; });
-      response.on('end', () => {
-        if (response.statusCode < 200 || response.statusCode >= 300) {
-          reject(new Error(`GitHub 返回 ${response.statusCode}`));
-          return;
-        }
-        try {
-          resolve(JSON.parse(body));
-        } catch {
-          reject(new Error('更新信息格式无效'));
-        }
-      });
-    });
-    request.setTimeout(20000, () => request.destroy(new Error('检查更新超时')));
-    request.on('error', reject);
-  });
+const { downloadReleaseFile, createElectronReleaseFetch } = require('./release-download.cjs');
+
+function fetchUpdate(url, options) {
+  const {net, session} = require('electron');
+  releaseFetch ??= createElectronReleaseFetch(net, session.fromPartition('xuannian-release', {cache:false}));
+  return releaseFetch(url, options);
 }
 
-function downloadFile(url, destination, onProgress, redirects = 0) {
-  return new Promise((resolve, reject) => {
-    let failRequest = reject;
-    const request = https.get(url, {
-      headers: { 'User-Agent': `XuanNian/${app.getVersion()}` },
-    }, (response) => {
-      const location = response.headers.location;
-      if (location && response.statusCode >= 300 && response.statusCode < 400 && redirects < 8) {
-        response.resume();
-        downloadFile(new URL(location, url).toString(), destination, onProgress, redirects + 1).then(resolve, reject);
-        return;
+async function requestJson(url) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const response = await fetchUpdate(url, {signal:AbortSignal.timeout(30000), headers:{Accept:'application/vnd.github+json'}});
+      if (!response.ok) {
+        await response.body?.cancel();
+        throw new Error('更新服务返回 HTTP ' + response.status);
       }
-      if (response.statusCode < 200 || response.statusCode >= 300) {
-        response.resume();
-        reject(new Error(`下载更新失败（${response.statusCode}）`));
-        return;
-      }
-      const temporary = `${destination}.download`;
-      const total = Number(response.headers['content-length'] || 0);
-      let received = 0;
-      let settled = false;
-      fs.mkdirSync(path.dirname(destination), { recursive: true });
-      const output = fs.createWriteStream(temporary);
-      const fail = (error) => {
-        if (settled) return;
-        settled = true;
-        output.destroy();
-        try { fs.unlinkSync(temporary); } catch {}
-        reject(error);
-      };
-      failRequest = fail;
-      response.on('aborted', () => fail(new Error('下载连接中断')));
-      response.on('error', fail);
-      response.on('data', (chunk) => {
-        received += chunk.length;
-        if (total > 0) onProgress?.(Math.min(100, (received / total) * 100));
-      });
-      response.pipe(output);
-      output.on('finish', () => {
-        output.close(() => {
-          if (settled) return;
-          try {
-            if (fs.existsSync(destination)) fs.unlinkSync(destination);
-            fs.renameSync(temporary, destination);
-            settled = true;
-            resolve(destination);
-          } catch (error) {
-            fail(error);
-          }
-        });
-      });
-      output.on('error', fail);
-    });
-    request.setTimeout(30000, () => request.destroy(new Error('下载更新超时')));
-    request.on('error', (error) => failRequest(error));
-  });
+      return await response.json();
+    } catch (error) {
+      if (attempt === 2 || !isTransientUpdateError(error)) throw error;
+      await sleep(1000 * (attempt + 1));
+    }
+  }
+}
+
+// electron-updater still validates the signature and owns caching and installation.
+// Keep partials outside its pending directory, which it clears on a network error.
+function enableResumableInstaller(updater) {
+  if (process.platform !== 'win32' || !updater.httpExecutor) return;
+  const executor = updater.httpExecutor;
+  const original = executor.download.bind(executor);
+  executor.download = async (url, destination, options) => {
+    const asset = installedReleaseFiles.find(file => file.sha512 === options.sha512 && Number.isSafeInteger(file.size) && file.size > 0);
+    if (!asset || typeof options.sha512 !== 'string' || !url.href.startsWith(UPDATE_REPOSITORY_URL+'/releases/download/') || !/\.exe$/i.test(url.pathname))
+      return original(url, destination, options);
+    const digest = Buffer.from(asset.sha512, 'base64').toString('hex');
+    const directory = path.join(path.dirname(path.dirname(destination)), 'release-transfer');
+    await fs.promises.mkdir(directory,{recursive:true});
+    const verified = path.join(directory, digest + '.exe');
+    const controller = new AbortController();
+    const cancel = () => controller.abort(new Error('cancelled'));
+    options.cancellationToken.onCancel(cancel);
+    let previous = 0;
+    try {
+      await downloadReleaseFile({url:url.href, destination:verified, size:asset.size, digest, algorithm:'sha512',
+        attempts:1, fetchImpl:fetchUpdate, signal:controller.signal, onProgress:transferred=>{
+          options.onProgress?.({total:asset.size,transferred,percent:100*transferred/asset.size,delta:Math.max(0,transferred-previous),bytesPerSecond:0});
+          previous=transferred;
+        }});
+      controller.signal.throwIfAborted();
+      await fs.promises.rename(verified,destination);
+      return destination;
+    } finally {
+      options.cancellationToken.removeListener('cancel',cancel);
+    }
+  };
 }
 
 function hasTrustedMacSignature() {
@@ -596,7 +563,10 @@ async function checkManualPackageUpdate() {
   if (!asset?.browser_download_url) {
     throw new Error(process.platform === 'darwin' ? `发布页中没有找到 ${expectedMacArch} 版 macOS 安装包` : '发布页中没有找到 Windows 便携版更新包');
   }
-  portableUpdateDownload = { version, name: asset.name, url: asset.browser_download_url };
+  const digest = /^sha256:([a-f0-9]{64})$/i.exec(asset.digest || '');
+  if (!digest || !Number.isSafeInteger(asset.size) || asset.size <= 0) throw new Error('更新包缺少可核验的大小或摘要');
+  if (path.basename(asset.name) !== asset.name || !asset.browser_download_url.startsWith(UPDATE_REPOSITORY_URL+'/releases/download/')) throw new Error('更新包发布位置无效');
+  portableUpdateDownload = { version, name:asset.name, url:asset.browser_download_url, size:asset.size, digest:digest[1].toLowerCase() };
   return setUpdateState({
     status: 'available',
     version,
@@ -616,6 +586,8 @@ function initializeInstalledUpdater() {
   // A full installer uses one stable transfer. Differential updates generate
   // many range requests and are much more likely to fail on unstable routes.
   autoUpdater.disableDifferentialDownload = true;
+  enableResumableInstaller(autoUpdater);
+  autoUpdater.on('update-available', info => { installedReleaseFiles = Array.isArray(info?.files) ? info.files : []; });
   autoUpdater.logger = {
     info: (message) => runtimeLog(`updater ${message}`),
     warn: (message) => runtimeLog(`updater warning ${message}`),
@@ -647,6 +619,7 @@ function initializeInstalledUpdater() {
     retryAction: '',
   }));
   autoUpdater.on('error', (error) => {
+    if (updateDownloadFlight) return; // The download handler reports the final attempt.
     updateCheckInFlight = false;
     const retryAction = updateState.status === 'downloading' || updateState.retryAction === 'download' ? 'download' : 'check';
     setUpdateState({ status: 'error', retryAction, message: formatUpdateError(error, retryAction) });
@@ -657,7 +630,7 @@ async function checkForAppUpdates() {
   if (!app.isPackaged || !updateState.supported) {
     return setUpdateState({ status: 'current', message: app.isPackaged ? '当前系统暂不支持自动更新' : '开发预览版不检查更新' });
   }
-  if (updateCheckInFlight || updateState.status === 'downloading') return publicUpdateState();
+  if (updateCheckInFlight || updateDownloadFlight || updateState.status === 'downloading') return publicUpdateState();
   updateCheckInFlight = true;
   setUpdateState({ status: 'checking', version: '', releaseNotes: '', downloadedFile: '', retryAction: '', message: '正在检查更新…', percent: 0 });
   try {
@@ -674,7 +647,12 @@ async function checkForAppUpdates() {
   }
 }
 
-async function downloadAppUpdate() {
+function downloadAppUpdate() {
+  if (!updateDownloadFlight) updateDownloadFlight = runAppDownload().finally(()=>{updateDownloadFlight=null;});
+  return updateDownloadFlight;
+}
+
+async function runAppDownload() {
   if (updateState.status === 'downloaded') return publicUpdateState();
   const retryingDownload = updateState.status === 'error' && updateState.retryAction === 'download' && !!updateState.version;
   if (updateState.status !== 'available' && !retryingDownload && !hasKnownAppUpdate()) return checkForAppUpdates();
@@ -683,18 +661,9 @@ async function downloadAppUpdate() {
     if (updateState.manualInstall) {
       if (!portableUpdateDownload?.url) throw new Error('更新地址已失效，请重新检查更新');
       const destination = path.join(app.getPath('downloads'), portableUpdateDownload.name);
-      for (let attempt = 0; attempt < 2; attempt += 1) {
-        try {
-          await downloadFile(portableUpdateDownload.url, destination, (percent) => {
-            setUpdateState({ status: 'downloading', percent, message: process.platform === 'darwin' ? '正在下载 macOS 更新…' : '正在下载 Windows 便携版更新…' });
-          });
-          break;
-        } catch (error) {
-          if (!isTransientUpdateError(error) || attempt === 1) throw error;
-          setUpdateState({ status: 'downloading', retryAction: 'download', percent: 0, message: '网络连接中断，正在自动重试…' });
-          await sleep(1000);
-        }
-      }
+      await downloadReleaseFile({...portableUpdateDownload, destination, fetchImpl:fetchUpdate, onProgress:bytes=>{
+        setUpdateState({status:'downloading',percent:100*bytes/portableUpdateDownload.size,message:process.platform==='darwin'?'正在下载 macOS 更新…':'正在下载 Windows 便携版更新…'});
+      }});
       return setUpdateState({
         status: 'downloaded',
         percent: 100,
@@ -704,7 +673,7 @@ async function downloadAppUpdate() {
       });
     }
     initializeInstalledUpdater();
-    const attempts = 2;
+    const attempts = 3;
     let lastError = null;
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       try {
