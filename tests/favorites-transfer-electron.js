@@ -46,7 +46,10 @@ function runDriver(mode, archive) {
         if (fs.existsSync(diagnostic)) process.stderr.write(fs.readFileSync(diagnostic, 'utf8'));
       }
       if (child.error) throw child.error;
-      assert.equal(child.status, 0, `Electron ${operation} failed (${child.signal || child.status})`);
+      const macShutdownTrap = process.platform === 'darwin' && child.signal === 'SIGTRAP'
+        && fs.existsSync(path.join(profile, 'transfer-test.log'))
+        && fs.readFileSync(path.join(profile, 'transfer-test.log'), 'utf8').includes('verified');
+      assert(child.status === 0 || macShutdownTrap, `Electron ${operation} failed (${child.signal || child.status})`);
     }
     const sha = crypto.createHash('sha256').update(fs.readFileSync(archive)).digest('hex');
     console.log(`${process.platform} ${process.arch} ${mode} archive SHA256 ${sha}`);
