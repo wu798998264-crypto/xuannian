@@ -82,6 +82,7 @@ jobs:
           app="$(find dist-mac -maxdepth 2 -name '*.app' -print -quit)"
           test -n "$app"
           node scripts/macos-after-sign.cjs "$app" "$version" "$ARCH"
+          XUANNIAN_TEST_BUNDLE="$PWD/$app/Contents/Resources/app.asar" node tests/music-download-live.js --two-click-fixture --hidden-fixture
           hdiutil verify "dist-mac/XuanNian-$version-$ARCH.dmg"
           test -s "dist-mac/XuanNian-$version-$ARCH.zip"
           test -s dist-mac/latest-mac.yml

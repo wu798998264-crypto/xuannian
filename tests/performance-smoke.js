@@ -104,7 +104,7 @@ async function run() {
   assert(favoritesBackupSource.includes("FAVORITES_BACKUP_FORMAT = 'xuannian-favorites-backup'"), 'favorites backup must use a dedicated portable format');
   assert(favoritesPackageSource.includes("favorites-data.json") && favoritesPackageSource.includes("manifest.json")
     && favoritesPackageSource.includes("fs.renameSync(archive, destination)"), 'favorites export must use a manifest, a favorites-only data file, and an atomic replacement');
-  assert(mainSource.includes('normalizeImportedFavorites') && mainSource.includes('broadcastDataRefresh(saved)'), 'favorites import must normalize the package and refresh all data views');
+  assert(favoritesPackageSource.includes('normalizeImportedFavorites') && mainSource.includes('broadcastDataRefresh(saved)'), 'favorites import must normalize the package and refresh all data views');
   assert(/function createQuickWindow\(\)[\s\S]*?backgroundThrottling:\s*true/.test(mainSource), 'hidden quick window must allow Chromium background throttling');
   const warmRefreshStart = mainSource.indexOf('function scheduleQuickWindowWarmRefresh');
   const warmRefreshEnd = mainSource.indexOf('\nfunction stopClipboardWatcher', warmRefreshStart);

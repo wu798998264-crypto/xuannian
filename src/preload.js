@@ -436,8 +436,8 @@ contextBridge.exposeInMainWorld('nativeAPI', {
   async openHighQualityMusic(query = '', downloadTarget = 'download', collection = '') {
     return ipcRenderer.invoke('media:openHighQualityMusic', query || '', downloadTarget || 'download', collection || '');
   },
-  setMediaBrowserBounds(bounds = {}, visible = false, mode = 'browser') {
-    ipcRenderer.send('media:browserBounds', bounds || {}, !!visible, mode === 'preview' ? 'preview' : 'browser');
+  setMediaBrowserBounds(bounds = {}, visible = false, mode = 'browser', requestId = 0) {
+    ipcRenderer.send('media:browserBounds', bounds || {}, !!visible, ['preview','verification'].includes(mode) ? mode : 'browser', Number(requestId)||0);
     return true;
   },
   async getMediaBrowserState() {

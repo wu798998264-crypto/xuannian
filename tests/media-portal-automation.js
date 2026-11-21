@@ -134,9 +134,9 @@ function run() {
   assert(musicScript.includes('results.length'));
   assert(musicScript.includes('musicDownloadCandidates'));
   assert(musicScript.includes('低品质'));
-  assert(musicScript.includes('finalAction'));
+  assert(musicScript.includes('continueMusicDownload'));
   assert(musicScript.includes('directAudioUrl'));
-  assert(musicScript.includes("label: '普通音质'"));
+  assert(musicScript.includes('a[data-normal-download]'));
   const previewScript = buildPortalScript({ mode: 'music-preview' }, scoreMediaDownloadQualityLabel);
   assert(previewScript.includes('attemptMusicPreview'));
   assert(previewScript.includes('preview-unavailable'));

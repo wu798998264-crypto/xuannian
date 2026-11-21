@@ -5,7 +5,7 @@ const path = require('node:path');
 const { app, BaseWindow, session, webContents } = require('electron');
 
 app.setName('XuanNianMusicReloadProbe');
-app.setPath('appData', fs.mkdtempSync(path.join(os.tmpdir(), 'xuannian-music-reload-')));
+require('./isolate-media-probe')(fs.mkdtempSync(path.join(os.tmpdir(), 'xuannian-music-reload-')));
 app.disableHardwareAcceleration();
 process.env.XUANNIAN_DEBUG_LOG = '1';
 require('../src/main');

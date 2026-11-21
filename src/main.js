@@ -4,6 +4,7 @@ const { createApplicationWindow } = require('./application-window');
 const { attachEditableContextMenu } = require('./editable-context-menu');
 const { buildMusicPageSnapshotScript, isMusicSearchDocument } = require('./music-page');
 const { musicOperationDeadline, musicOperationTimeoutReason, executeMusicPageScript } = require('./music-operation');
+const { createMusicDownloadQueue } = require('./music-download-queue');
 const MUSIC_PAGE_SNAPSHOT_SCRIPT = buildMusicPageSnapshotScript({ observe: true });
 const {
   quickWindowPlatformOptions,
@@ -193,13 +194,16 @@ let mediaPortalInputState = null;
 let mediaPortalParsedVideo = null;
 const mediaPortalPreviewPromises = new WeakMap();
 let mediaPortalProgressTimer = null;
-let mediaPortalPendingDownload = null;
 let mediaPortalPreviewCapture = null;
 let mediaPortalVerificationResume = null;
 let mediaPortalVerificationTimer = null;
 let activeMediaPortalDownloads = 0;
 const configuredMediaDownloadSessions = new WeakSet();
 const mediaPortalDownloadTargets = new WeakMap();
+const musicDownloadQueue = createMusicDownloadQueue({
+  busy: () => !!(isQuitting || mediaPortalInputState || mediaPortalVerificationResume || mediaPortalPreviewCapture),
+  start: startQueuedMusicDownload,
+});
 const mediaPortalExpectedPopupDownloads = new WeakMap();
 const mediaPortalDownloadStartCounts = new WeakMap();
 const activeMediaDownloadNotifications = new Set();
@@ -2794,6 +2798,7 @@ function notifyMediaDownloadsChanged(payload = {}) {
 }
 
 function notifyMediaDownloadProgress(payload = {}) {
+  if (['downloading', 'completed', 'error', 'cancelled'].includes(payload.status)) musicDownloadQueue.advance(payload.id);
   if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
   mainWindow.webContents.send('media:downloadProgress', payload || {});
 }
@@ -2859,11 +2864,12 @@ function sanitizeDownloadFilename(value, mimeType = '') {
 }
 
 function uniqueMediaDownloadPath(directory, filename) {
+  const pending = new Set(Array.from(activeMediaDownloadItems.values(), item => String(item.destination || '').toLowerCase()));
   const extension = path.extname(filename);
   const stem = path.basename(filename, extension);
   let candidate = path.join(directory, filename);
   let suffix = 2;
-  while (fs.existsSync(candidate)) {
+  while (fs.existsSync(candidate) || pending.has(candidate.toLowerCase())) {
     candidate = path.join(directory, `${stem} (${suffix})${extension}`);
     suffix += 1;
   }
@@ -2968,6 +2974,13 @@ function isUsableMediaResponseChunk(value, contentType = '') {
   const type = String(contentType || '').toLowerCase();
   if (/^(?:text\/|application\/(?:json|xml|xhtml\+xml))/i.test(type)) return false;
   return !looksLikeTextualMediaPayload(value);
+}
+
+// Ordinary download links can have an opaque path and carry the MP3 filename
+// only in Content-Disposition. Treat it as a type hint, never as a save path.
+function hasMp3DownloadName(contentType, disposition, kindHint) {
+  if (kindHint !== 'audio' || !/^(?:application\/octet-stream(?:\s*;|$)|$)/i.test(contentType)) return false;
+  return /(?:^|;)\s*filename\*?\s*=\s*(?:"[^"]+\.mp3"|[^;"]+\.mp3)\s*(?:;|$)/i.test(disposition || '');
 }
 
 function isDirectMediaActionUrl(value) {
@@ -3204,6 +3217,7 @@ function streamNodeMediaPortalUrlToFile(url, destination, options = {}, redirect
       const textualResponse = /^(?:text\/|application\/(?:json|xml|xhtml\+xml))/i.test(contentType);
       const kind = textualResponse ? '' : (mediaKindForDownloadUrl(value)
         || (/^video\//i.test(contentType) ? 'video' : (/^audio\//i.test(contentType) ? 'audio' : (/^image\//i.test(contentType) ? 'image' : '')))
+        || (hasMp3DownloadName(contentType, response.headers['content-disposition'], hintedKind) ? 'audio' : '')
         || (hintedKind && isMediaUrl(value) ? hintedKind : ''));
       if (response.statusCode < 200 || response.statusCode >= 300) {
         response.resume();
@@ -3261,7 +3275,13 @@ function streamNodeMediaPortalUrlToFile(url, destination, options = {}, redirect
             finish(error);
             return;
           }
-          options.onStarted?.({ contentType, kind, resolvedUrl: value, totalBytes });
+          try {
+            options.onStarted?.({ contentType, kind, resolvedUrl: value, totalBytes });
+          } catch (error) {
+            response.destroy();
+            finish(error);
+            return;
+          }
         }
         receivedBytes += chunk.length;
         if (maxBytes && receivedBytes > maxBytes) {
@@ -3287,8 +3307,8 @@ function streamNodeMediaPortalUrlToFile(url, destination, options = {}, redirect
         finish(error);
       });
       output.once('finish', () => {
-        if (receivedBytes <= 0) {
-          finish(new Error('empty media response'));
+        if (receivedBytes <= 0 || (totalBytes > 0 && totalBytes !== receivedBytes)) {
+          finish(new Error('incomplete media response'));
           return;
         }
         try {
@@ -3366,6 +3386,7 @@ async function streamMediaPortalUrlToFile(webContents, url, destination, options
     const kind = textualResponse ? '' : (mediaKindForDownloadUrl(resolvedUrl)
       || mediaKindForDownloadUrl(url)
       || (/^video\//i.test(contentType) ? 'video' : (/^audio\//i.test(contentType) ? 'audio' : (/^image\//i.test(contentType) ? 'image' : '')))
+      || (hasMp3DownloadName(contentType, response.headers.get('content-disposition'), hintedKind) ? 'audio' : '')
       || (hintedKind && isMediaUrl(resolvedUrl || url) ? hintedKind : ''));
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     if (!kind || !response.body) throw new Error(`unexpected media response ${contentType || 'without content type'}`);
@@ -3373,7 +3394,9 @@ async function streamMediaPortalUrlToFile(webContents, url, destination, options
     try { if (fs.existsSync(temporary)) fs.unlinkSync(temporary); } catch {}
     output = fs.createWriteStream(temporary, { flags: 'wx' });
     reader = response.body.getReader();
-    const totalBytes = Math.max(0, Number(response.headers.get('content-length') || 0));
+    // Fetch delivers decompressed bytes. Only compare wire length for identity encoding.
+    const encoding = String(response.headers.get('content-encoding') || '').toLowerCase();
+    const totalBytes = !encoding || encoding === 'identity' ? Math.max(0, Number(response.headers.get('content-length') || 0)) : 0;
     if (maxBytes && totalBytes > maxBytes) throw mediaPreviewLimitError(maxBytes, totalBytes);
     let receivedBytes = 0;
     let firstChunk = true;
@@ -3399,7 +3422,7 @@ async function streamMediaPortalUrlToFile(webContents, url, destination, options
     }
     await new Promise((resolve, reject) => output.end((error) => error ? reject(error) : resolve()));
     output = null;
-    if (receivedBytes <= 0) throw new Error('empty media response');
+    if (receivedBytes <= 0 || (totalBytes > 0 && totalBytes !== receivedBytes)) throw new Error('incomplete media response');
     if (fs.existsSync(destination)) fs.unlinkSync(destination);
     fs.renameSync(temporary, destination);
     return { ok: true, path: destination, contentType, kind, resolvedUrl, receivedBytes, totalBytes: totalBytes || receivedBytes };
@@ -3510,6 +3533,7 @@ async function startDirectTrackedMediaDownload(webContents, url, referer) {
     updatedAt: Date.now(),
   });
   const handle = {
+    destination,
     pause() {
       const ok = control.pause();
       if (ok && started && !dismissedMediaDownloadTaskIds.has(taskId)) notifyMediaDownloadProgress(progressPayload('paused'));
@@ -3530,6 +3554,14 @@ async function startDirectTrackedMediaDownload(webContents, url, referer) {
       control,
       kindHint,
       onStarted: (details) => {
+        if (isGequbaoMusicUrl(target.url) && (details.kind !== 'audio' || /^(?:image|video)\//i.test(details.contentType))) {
+          throw new Error('music source did not return audio');
+        }
+        if (isGequbaoMusicUrl(target.url) && !started && (!target.taskId || mediaPortalDownloadTargets.get(webContents) !== target || webContents.musicDownloadExpired)) {
+          control.cancel();
+          control.throwIfCancelled();
+        }
+        if (started) return;
         started = true;
         if (target.taskId === taskId) target.taskId = '';
         totalBytes = Number(details.totalBytes || 0);
@@ -3586,12 +3618,28 @@ async function startDirectTrackedMediaDownload(webContents, url, referer) {
 }
 
 function startCapturedMediaPortalDownload(webContents, url) {
+  if (webContents.isDestroyed() || webContents.musicDownloadExpired) return null;
+  const target = mediaPortalDownloadTargets.get(webContents) || {};
+  const musicDownload = isGequbaoMusicUrl(target.url);
+  if (musicDownload && (!target.taskId || target.connecting)) return null;
   const safeUrl = sanitizeRemoteMediaUrl(url);
-  if (!isDirectMediaActionUrl(safeUrl)) {
+  if (musicDownload && mediaPortalInputState?.expectedMusicDownloadUrl && !isExpectedMusicDownload(webContents, safeUrl)) return null;
+  if (!isDirectMediaActionUrl(safeUrl) && !isExpectedMusicDownload(webContents, safeUrl)) {
     runtimeLog(`ignored non-media portal download source=${String(url || '').slice(0, 260)}`);
     return null;
   }
   const portalReferer = webContents.getURL();
+  if (musicDownload) {
+    target.connecting = true;
+    // The provider's confirmed URL works with Chromium's download manager.
+    // will-download owns the task and reports when the real transfer starts.
+    try { webContents.downloadURL(safeUrl); } catch {
+      if (mediaPortalInputState?.automationMode === 'music-download' && mediaPortalDownloadTargets.get(webContents) === target) {
+        void completeMediaPortalAutomation(mediaPortalInputState, { ok: false, reason: 'download-connection-failed' });
+      }
+    }
+    return null;
+  }
   const previewCapture = mediaPortalPreviewCapture?.webContents === webContents;
   const sourceUrl = previewCapture
     ? String(mediaPortalPreviewCapture?.sourceUrl || '')
@@ -3616,7 +3664,9 @@ function startCapturedMediaPortalDownload(webContents, url) {
     }
     runtimeLog('direct media request did not start; falling back to header-free Electron downloadURL');
     try { webContents.downloadURL(safeUrl); } catch {}
-  }).catch((error) => runtimeLog(`captured media download failed: ${error?.message || error}`));
+  }).catch((error) => {
+    runtimeLog(`captured media download failed: ${error?.message || error}`);
+  });
   return direct;
 }
 
@@ -3633,6 +3683,7 @@ function configureMediaDownloadSession(electronSession) {
     callback(canUsePortalPermission(webContents, permission));
   });
   electronSession.on('will-download', (event, item, webContents) => {
+    if (!webContents || webContents.musicDownloadExpired) { item.cancel(); return; }
     if (mediaPortalPreviewCapture?.webContents === webContents) {
       const captureState = mediaPortalPreviewCapture;
       const filename = sanitizeDownloadFilename(item.getFilename(), item.getMimeType());
@@ -3703,10 +3754,8 @@ function configureMediaDownloadSession(electronSession) {
       });
       return;
     }
-    const directories = mediaDirectories();
     const target = mediaPortalDownloadTargets.get(webContents) || {};
     const favoriteDownload = target.location === 'favorite';
-    const rootPath = favoriteDownload ? directories.favoritePath : directories.downloadPath;
     const receivedFilename = sanitizeDownloadFilename(item.getFilename(), item.getMimeType());
     const mimeType = String(item.getMimeType() || '');
     const filenameKind = mediaKindForPath(receivedFilename);
@@ -3714,12 +3763,19 @@ function configureMediaDownloadSession(electronSession) {
     const textualMime = /^(?:text\/|application\/(?:json|xml|xhtml\+xml))/i.test(mimeType);
     const kind = textualMime ? '' : (filenameKind || urlKind
       || (/^video\//i.test(mimeType) ? 'video' : (/^audio\//i.test(mimeType) ? 'audio' : (/^image\//i.test(mimeType) ? 'image' : ''))));
-    if (!kind) {
+    if (!kind || (isGequbaoMusicUrl(target.url) && (kind !== 'audio' || /^(?:image|video)\//i.test(mimeType) || !target.taskId))) {
+      // The ordinary quality card initially downloads its own HTML (#) while
+      // the provider is still preparing the actual audio URL.
+      const placeholder = mediaPortalInputState?.automationMode === 'music-download' && target.taskId
+        && isGequbaoMusicUrl(target.url) && /^text\/html\b/i.test(mimeType) && isMusicSearchDocument(item.getURL(), target.url);
       item.cancel();
+      if (placeholder) return;
+      if (isGequbaoMusicUrl(target.url) && target.taskId && mediaPortalInputState?.automationMode === 'music-download') {
+        void completeMediaPortalAutomation(mediaPortalInputState, { ok: false, reason: 'download-connection-failed' });
+      }
       notifyMediaDownloadsChanged({ status: 'blocked', message: '已拦截非媒体文件下载' });
       return;
     }
-    markMediaPortalTransferStarted(webContents);
     let filename = receivedFilename;
     if (String(target.preferredName || '').trim()) {
       const extension = filenameKind === kind
@@ -3731,13 +3787,28 @@ function configureMediaDownloadSession(electronSession) {
       const extension = kind === 'audio' ? '.mp3' : (kind === 'image' ? '.jpg' : '.mp4');
       filename = sanitizeDownloadFilename(path.basename(receivedFilename, path.extname(receivedFilename)) + extension, item.getMimeType());
     }
-    const downloadPath = mediaCollectionDirectory(rootPath, kind, target.collection || '');
-    fs.mkdirSync(downloadPath, { recursive: true });
-    const destination = uniqueMediaDownloadPath(downloadPath, filename);
-    item.setSavePath(destination);
+    let destination;
+    try {
+      const directories = mediaDirectories();
+      const rootPath = favoriteDownload ? directories.favoritePath : directories.downloadPath;
+      const downloadPath = mediaCollectionDirectory(rootPath, kind, target.collection || '');
+      fs.mkdirSync(downloadPath, { recursive: true });
+      destination = uniqueMediaDownloadPath(downloadPath, filename);
+      item.setSavePath(destination);
+    } catch (error) {
+      item.cancel();
+      runtimeLog(`media download save path failed: ${error.message || error}`);
+      if (isGequbaoMusicUrl(target.url) && target.taskId && mediaPortalInputState?.automationMode === 'music-download') {
+        void completeMediaPortalAutomation(mediaPortalInputState, { ok: false, reason: 'download-folder-unavailable' });
+      }
+      notifyMediaDownloadsChanged({ status: 'error', message: '下载目录无法写入，请在设置中更换目录' });
+      return;
+    }
     activeMediaPortalDownloads += 1;
     cancelMediaPortalIdleDestroy();
+    markMediaPortalTransferStarted(webContents);
     const taskId = claimMediaPortalTaskId(target, 'media');
+    webContents.nativeTransferCount = (webContents.nativeTransferCount || 0) + 1;
     let lastProgressAt = 0;
     const progressPayload = (status) => {
       const receivedBytes = Math.max(0, Number(item.getReceivedBytes() || 0));
@@ -3755,6 +3826,7 @@ function configureMediaDownloadSession(electronSession) {
       };
     };
     const handle = {
+      destination,
       pause() {
         try {
           if (!item.isPaused()) item.pause();
@@ -3790,6 +3862,10 @@ function configureMediaDownloadSession(electronSession) {
       notifyMediaDownloadProgress(progressPayload(state === 'interrupted' ? 'interrupted' : (item.isPaused() ? 'paused' : 'downloading')));
     });
     item.once('done', (_doneEvent, state) => {
+      webContents.nativeTransferCount -= 1;
+      if (!webContents.nativeTransferCount && webContents.retiredPortalView) {
+        setImmediate(() => { if (!webContents.isDestroyed()) webContents.close(); });
+      }
       activeMediaDownloadItems.delete(taskId);
       const dismissed = dismissedMediaDownloadTaskIds.delete(taskId);
       activeMediaPortalDownloads = Math.max(0, activeMediaPortalDownloads - 1);
@@ -3829,7 +3905,6 @@ function destroyMediaPortalView({ notify = true } = {}) {
   clearMediaPortalResultSyncTimer();
   clearMediaPortalMusicResultSyncTimer();
   clearMediaPortalProgressTimer();
-  clearMediaPortalPendingDownload();
   clearMediaPortalPreviewCapture();
   clearMediaPortalVerificationMonitor();
   mediaPortalInputState?.musicAbortController?.abort();
@@ -3845,20 +3920,20 @@ function destroyMediaPortalView({ notify = true } = {}) {
   if (view) {
     try { mainWindow?.contentView?.removeChildView(view); } catch {}
     try {
-      if (!view.webContents.isDestroyed()) view.webContents.close();
+      if (view.webContents.nativeTransferCount > 0 && !isQuitting) {
+        view.webContents.retiredPortalView = true;
+        view.setVisible(false);
+      } else if (!view.webContents.isDestroyed()) view.webContents.close();
     } catch {}
   }
   if (notify) notifyMediaBrowserState({ destroyed: true });
 }
 
 function scheduleMediaPortalIdleDestroy() {
-  if (mediaPortalIdleTimer || mediaPortalPreviewCapture || !mediaPortalView || mediaPortalView.webContents.isDestroyed()) return;
+  if (mediaPortalRequestedVisible || mediaPortalIdleTimer || mediaPortalPreviewCapture || mediaPortalInputState || mediaPortalVerificationResume || !mediaPortalView || mediaPortalView.webContents.isDestroyed()) return;
   mediaPortalIdleTimer = setTimeout(() => {
     mediaPortalIdleTimer = null;
-    if (mediaPortalPreviewCapture) {
-      scheduleMediaPortalIdleDestroy();
-      return;
-    }
+    if (mediaPortalRequestedVisible || mediaPortalPreviewCapture || mediaPortalInputState || mediaPortalVerificationResume || activeMediaPortalDownloads) return;
     runtimeLog('destroying idle media portal view');
     destroyMediaPortalView();
   }, MEDIA_PORTAL_IDLE_DESTROY_MS);
@@ -3866,12 +3941,19 @@ function scheduleMediaPortalIdleDestroy() {
 
 function resetMediaPortalAutomation(kind = '') {
   const targetKind = kind === 'audio' ? 'audio' : 'video';
+  musicDownloadQueue.cancelForeground(targetKind);
   const mode = String(mediaPortalInputState?.automationMode || '');
+  const clearingIdleVideo = targetKind === 'video' && mediaPortalParsedVideo && !mediaPortalInputState && !mediaPortalVerificationResume;
   const cancellable = targetKind === 'video'
     ? mode === 'video-parse'
     : mode === 'music-search' || mode === 'music-preview';
-  const verificationCancellable = targetKind === 'audio' && !!mediaPortalVerificationResume;
-  if (cancellable || verificationCancellable || (targetKind === 'video' && mediaPortalParsedVideo)) {
+  const verificationCancellable = targetKind === 'audio' && !!mediaPortalVerificationResume
+    && mediaPortalVerificationResume.automationMode !== 'music-download';
+  if (targetKind === 'video') {
+    clearMediaPortalPreviewCapture();
+    mediaPortalParsedVideo = null;
+  }
+  if (cancellable || verificationCancellable) {
     mediaPortalInputState?.musicAbortController?.abort();
     clearMediaPortalInputTimer();
     clearMediaPortalResultSyncTimer();
@@ -3879,11 +3961,10 @@ function resetMediaPortalAutomation(kind = '') {
     clearMediaPortalVisibilityNudgeTimer();
     clearMediaPortalProgressTimer();
     clearMediaPortalVerificationMonitor();
-    if (targetKind === 'video') clearMediaPortalPreviewCapture();
-    if (cancellable) mediaPortalInputState = null;
-    if (targetKind === 'video') mediaPortalParsedVideo = null;
-    mediaPortalRequestId += 1;
+    mediaPortalInputState = null;
   }
+  if (cancellable || verificationCancellable || clearingIdleVideo) mediaPortalRequestId += 1;
+  if (mediaPortalInputState || mediaPortalVerificationResume) return { ok: true, requestId: mediaPortalRequestId };
   if (!activeMediaPortalDownloads && mediaPortalView && !mediaPortalView.webContents.isDestroyed()) {
     hideMediaPortalView(mediaPortalView);
     scheduleMediaPortalIdleDestroy();
@@ -3942,8 +4023,10 @@ function mediaBrowserState(extra = {}) {
   const navigationHistory = webContents.navigationHistory;
   return {
     ready: true,
+    requestId: mediaPortalRequestId,
     loading: webContents.isLoading(),
-    url: webContents.getURL(),
+    url: webContents.portalFailedUrl || webContents.getURL(),
+    navigationError: webContents.portalNavigationError || '',
     title: webContents.getTitle(),
     canGoBack: navigationHistory.canGoBack(),
     canGoForward: navigationHistory.canGoForward(),
@@ -3952,6 +4035,7 @@ function mediaBrowserState(extra = {}) {
 }
 
 function notifyMediaBrowserState(extra = {}) {
+  musicDownloadQueue.wake();
   if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return;
   mainWindow.webContents.send('media:browserState', mediaBrowserState(extra));
 }
@@ -4003,6 +4087,15 @@ function startMediaPortalVideoResultSync(state, view = mediaPortalView) {
   mediaPortalResultSyncTimer = setTimeout(poll, 650);
 }
 
+function readyMusicFrame(contents) {
+  const frame = contents.musicDomReadyFrame;
+  return frame && !frame.isDestroyed() && frame === contents.mainFrame ? frame : undefined;
+}
+
+function readMusicSnapshot(contents, signal) {
+  return executeMusicPageScript(contents, MUSIC_PAGE_SNAPSHOT_SCRIPT, signal, readyMusicFrame(contents));
+}
+
 function startMediaPortalMusicResultSync(state, view = mediaPortalView) {
   clearMediaPortalMusicResultSyncTimer();
   if (!view || view.webContents.isDestroyed() || !isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId)) return;
@@ -4012,7 +4105,7 @@ function startMediaPortalMusicResultSync(state, view = mediaPortalView) {
       || state.automationMode !== 'music-search' || state.completing || state.musicResultSyncGeneration !== generation) return;
     state.musicResultSyncPollCount = Number(state.musicResultSyncPollCount || 0) + 1;
     try {
-      const snapshot = await executeMusicPageScript(view.webContents, MUSIC_PAGE_SNAPSHOT_SCRIPT, state.musicAbortController?.signal);
+      const snapshot = await readMusicSnapshot(view.webContents, state.musicAbortController?.signal);
       if (!isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId) || state.musicResultSyncGeneration !== generation) return;
       const results = Array.isArray(snapshot?.results) ? snapshot.results : [];
       if (results.length && isMusicSearchDocument(snapshot.url, state.portalUrl)) {
@@ -4122,7 +4215,34 @@ function clearMediaPortalVerificationMonitor({ clearResume = true } = {}) {
   if (clearResume) mediaPortalVerificationResume = null;
 }
 
-function rememberMediaPortalVerificationResume(state) {
+function retireMusicVerificationDocument(view = mediaPortalView) {
+  if (!view || view.webContents.isDestroyed()) return;
+  view.webContents.musicVerificationDocumentId = 0;
+  if (mediaPortalRequestedVisible && mediaPortalPresentationMode === 'browser') return;
+  mediaPortalRequestedVisible = false;
+  mediaPortalPresentationMode = 'browser';
+  keepMediaPortalWorkerVisible(view);
+}
+
+function suspendMusicForVerification(state, managedCheck = false) {
+  if (!state || !String(state.automationMode || '').startsWith('music-')
+    || !isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId)) return false;
+  rememberMediaPortalVerificationResume(state, managedCheck);
+  state.completing = true;
+  state.musicAbortController?.abort();
+  clearMediaPortalInputTimer();
+  clearMediaPortalResultSyncTimer();
+  clearMediaPortalMusicResultSyncTimer();
+  clearMediaPortalProgressTimer();
+  mediaPortalInputState = null;
+  emitMediaPortalProgress(state, {
+    reason: managedCheck ? 'automatic-security-check' : 'human-verification',
+    message: managedCheck ? '音乐站正在进行安全检查' : '等待你在玄念内完成音乐站验证',
+  });
+  return resumeMediaPortalAfterVerification();
+}
+
+function rememberMediaPortalVerificationResume(state, managedCheck) {
   if (!String(state?.automationMode || '').startsWith('music-')) return;
   mediaPortalVerificationResume = {
     ...state,
@@ -4134,6 +4254,8 @@ function rememberMediaPortalVerificationResume(state) {
     musicDeadlineExpired: false,
     musicSecurityCheckTimer: null,
     musicSecurityCheckShown: false,
+    managedCheck,
+    automaticSecurityCheck: false,
     retryCount: 0,
     visibilityRetryCount: 0,
     verificationStartedAt: Date.now(),
@@ -4154,13 +4276,17 @@ function resumeMediaPortalAfterVerification() {
     }
     if (Date.now() - Number(resume.verificationStartedAt || Date.now()) > 10 * 60 * 1000) {
       clearMediaPortalVerificationMonitor();
-      notifyMediaBrowserState({ verificationPending: false, verificationTimedOut: true });
+      retireMusicVerificationDocument(view);
+      notifyMediaBrowserState({ requestId: resume.requestId, automationMode: resume.automationMode, securityCheckPending: false, verificationRequired: false, verificationPending: false, verificationTimedOut: true });
+      mediaPortalInputState = resume;
+      resume.musicDeadlineExpired = true;
+      await completeMediaPortalAutomation(resume, { ok: false, reason: 'security-check-timeout' });
       return;
     }
     try {
-      const status = await executeMusicPageScript(mediaPortalView.webContents, MUSIC_PAGE_SNAPSHOT_SCRIPT);
+      const status = await readMusicSnapshot(mediaPortalView.webContents);
       if (mediaPortalVerificationResume !== resume || resume.requestId !== mediaPortalRequestId) return;
-      if (!status?.challenge && status?.readyState !== 'loading') {
+      if (status && !status.challenge && status.readyState !== 'loading' && isMusicSearchDocument(status.url, resume.portalUrl)) {
         const next = mediaPortalVerificationResume;
         clearMediaPortalVerificationMonitor();
         mediaPortalInputState = {
@@ -4169,19 +4295,21 @@ function resumeMediaPortalAfterVerification() {
           retryCount: 0,
           visibilityRetryCount: 0,
         };
-        mediaPortalRequestedVisible = false;
-        keepMediaPortalWorkerVisible(mediaPortalView);
+        retireMusicVerificationDocument(view);
         startMediaPortalProgress(mediaPortalInputState);
-        notifyMediaBrowserState({ opening: true, requestId: next.requestId, automationMode: next.automationMode, verificationPending: false, verificationRequired: false, verificationCompleted: true });
+        notifyMediaBrowserState({ opening: true, requestId: next.requestId, automationMode: next.automationMode, securityCheckPending: false, verificationPending: false, verificationRequired: false, verificationCompleted: true });
         if (next.automationMode === 'music-search' && status.results?.length && isMusicSearchDocument(status.url, next.portalUrl)) {
           await completeMediaPortalAutomation(mediaPortalInputState, { ok: true, results: status.results });
         } else scheduleMediaPortalInput();
         return;
+      } else if (status?.requiresHuman && isMusicSearchDocument(status.url, resume.portalUrl) && !view.webContents.musicVerificationDocumentId) {
+        view.webContents.musicVerificationDocumentId = resume.requestId;
+        notifyMediaBrowserState({ requestId: resume.requestId, automationMode: resume.automationMode, verificationRequired: true, verificationPending: true });
       }
     } catch {}
     mediaPortalVerificationTimer = setTimeout(poll, 700);
   };
-  notifyMediaBrowserState({ requestId: resume.requestId, automationMode: resume.automationMode, verificationPending: true, verificationRequired: true, verificationCompleted: false });
+  notifyMediaBrowserState({ requestId: resume.requestId, automationMode: resume.automationMode, securityCheckPending: !!resume.managedCheck, verificationPending: !resume.managedCheck, verificationRequired: !resume.managedCheck, verificationCompleted: false, verificationTimedOut: false });
   mediaPortalVerificationTimer = setTimeout(poll, 500);
   return true;
 }
@@ -4254,11 +4382,9 @@ function mediaPortalProgressPayload(state, extra = {}) {
   } else if (mode === 'music-download') {
     kind = 'audio';
     operation = 'download';
-    percent = Math.min(97, 8 + Math.round((elapsedMs / 35000) * 89));
-    const remainingSeconds = Math.max(0, Math.ceil((30000 - elapsedMs) / 1000));
-    message = remainingSeconds > 0
-      ? '下载站正在准备普通音质文件，预计还需 ' + remainingSeconds + ' 秒'
-      : '下载站已响应，正在等待文件开始下载';
+    percent = 0;
+    message = state.automaticSecurityCheck ? '正在等待音乐站完成安全检查'
+      : (state.waitingForFile ? '正在连接下载文件' : (state.musicDownloadMessage || '正在等待音乐站提供普通音质下载'));
   }
   return {
     requestId: Number(state?.requestId || 0),
@@ -4319,41 +4445,19 @@ function finishMediaPortalProgress(state, ok, reason = '', message = '') {
   });
 }
 
-function clearMediaPortalPendingDownload() {
-  if (mediaPortalPendingDownload?.timeout) clearTimeout(mediaPortalPendingDownload.timeout);
-  mediaPortalPendingDownload = null;
-}
-
-function waitForMediaPortalDownload(state) {
-  clearMediaPortalPendingDownload();
-  mediaPortalPendingDownload = {
-    requestId: state.requestId,
-    webContents: mediaPortalView?.webContents || null,
-    timeout: setTimeout(() => {
-      if (!mediaPortalPendingDownload || mediaPortalPendingDownload.requestId !== state.requestId) return;
-      const webContents = mediaPortalPendingDownload.webContents;
-      clearMediaPortalPendingDownload();
-      failMediaPortalPendingTask(webContents);
-      finishMediaPortalProgress(state, false, 'download-timeout', '下载站没有返回文件，请重新尝试该版本');
-      notifyMediaBrowserState({ opening: false, autoActionMissing: true, automationStage: 'music-download', failureReason: 'download-timeout' });
-    }, 30000),
-  };
+function waitForMediaPortalDownload(state, href) {
+  state.waitingForFile = true;
+  emitMediaPortalProgress(state);
+  // A link supplied by the download action may omit an extension. The download
+  // handler checks the response MIME and filename before accepting the file.
+  if (href) mediaPortalView.webContents.downloadURL(href);
 }
 
 function markMediaPortalDownloadStarted(webContents) {
   const state = mediaPortalInputState;
-  if (state?.automationMode === 'music-download' && state.requestId === mediaPortalRequestId) {
-    state.downloadObserved = true;
-    finishMediaPortalProgress(state, true, '', '普通音质文件已开始下载');
+  if (webContents === mediaPortalView?.webContents && state?.automationMode === 'music-download' && state.requestId === mediaPortalRequestId) {
+    void completeMediaPortalAutomation(state, { ok: true, transferStarted: true });
   }
-  if (!mediaPortalPendingDownload || mediaPortalPendingDownload.webContents !== webContents) return;
-  const pendingState = {
-    requestId: mediaPortalPendingDownload.requestId,
-    automationMode: 'music-download',
-    progressStartedAt: Date.now(),
-  };
-  clearMediaPortalPendingDownload();
-  finishMediaPortalProgress(pendingState, true, '', '普通音质文件已开始下载');
 }
 
 function clearMediaPortalPreviewCapture(result = null) {
@@ -4367,6 +4471,7 @@ function clearMediaPortalPreviewCapture(result = null) {
     try { capture.item.cancel(); } catch {}
   }
   capture.resolve(result);
+  musicDownloadQueue.wake();
 }
 
 function expectMediaPortalPopupDownload(webContents, timeoutMs = 15000) {
@@ -4558,8 +4663,9 @@ async function prepareAlternateMediaPortalPreview(state) {
 function setMediaPortalPresentationMode(mode = 'browser', previewUrl = '') {
   const view = mediaPortalView;
   if (!view || view.webContents.isDestroyed()) return;
-  const normalizedMode = mode === 'preview' ? 'preview' : 'browser';
+  const normalizedMode = ['preview', 'verification'].includes(mode) ? mode : 'browser';
   mediaPortalPresentationMode = normalizedMode;
+  if (normalizedMode === 'verification' || view.webContents.musicManagedChallenge) return;
   const source = String(previewUrl || '');
   const script = [
     '(() => {',
@@ -4598,6 +4704,13 @@ function sanitizeRemoteMediaUrl(value) {
   const url = String(value || '').trim();
   if (!/^https?:\/\//i.test(url) || url.length > 4096) return '';
   return url;
+}
+
+function isExpectedMusicDownload(webContents, url) {
+  const state = mediaPortalInputState;
+  return !!url && state?.automationMode === 'music-download' && state.requestId === mediaPortalRequestId
+    && webContents === mediaPortalView?.webContents && state.expectedMusicDownloadUrl === url
+    && !!mediaPortalDownloadTargets.get(webContents)?.taskId;
 }
 
 function sanitizeParsedMediaActions(actions, sourceUrl = '') {
@@ -4769,7 +4882,7 @@ async function completeMediaPortalAutomation(state, result = {}) {
     // The page can finish rendering while an earlier extraction is timing out.
     // Read the current document once more before publishing a terminal failure.
     try {
-      const snapshot = await executeMusicPageScript(mediaPortalView.webContents, MUSIC_PAGE_SNAPSHOT_SCRIPT, state.musicAbortController?.signal);
+      const snapshot = await readMusicSnapshot(mediaPortalView.webContents, state.musicAbortController?.signal);
       if (!isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId) || state.completing) return;
       if (snapshot?.results?.length && isMusicSearchDocument(snapshot.url, state.portalUrl)) result = { ok: true, results: snapshot.results };
       else if (result.ok && !isMusicSearchDocument(snapshot?.url, state.portalUrl)) return;
@@ -4785,8 +4898,9 @@ async function completeMediaPortalAutomation(state, result = {}) {
   if (humanVerification) {
     // CAPTCHA cannot and must not be automated. Ask once, keep the exact portal session,
     // and resume the original request automatically after the user completes verification.
-    rememberMediaPortalVerificationResume(state);
-    notifyMediaBrowserState({ requestId: state.requestId, automationMode: mode, verificationPending: true, verificationRequired: true, failureReason: 'human-verification', opening: false });
+    view.webContents.musicVerificationDocumentId = state.requestId;
+    suspendMusicForVerification(state, !!result.managedCheck);
+    return;
   }
   if (mode === 'video-parse') {
     if (!result.ok && continueMediaPortalVideoResultWait(state, result)) return;
@@ -4936,20 +5050,23 @@ async function completeMediaPortalAutomation(state, result = {}) {
       autoActionMissing: !previewSucceeded,
     });
   } else if (mode === 'music-download') {
+    if (result.ok && !result.transferStarted) {
+      try {
+        waitForMediaPortalDownload(state, sanitizeRemoteMediaUrl(result.href));
+        return;
+      } catch {
+        result = { ok: false, reason: 'download-action-missing' };
+      }
+    }
     state.completing = true;
     state.musicAbortController?.abort();
     mediaPortalInputState = null;
-    const href = sanitizeRemoteMediaUrl(result.href);
     if (!result.ok) {
+      if (view && !view.webContents.isDestroyed()) view.webContents.musicDownloadExpired = true;
       failMediaPortalPendingTask(view?.webContents);
       finishMediaPortalProgress(state, false, String(result.reason || 'download-action-missing'));
-    } else if (state.downloadObserved) {
-      finishMediaPortalProgress(state, true, '', '普通音质文件已开始下载');
     } else {
-      waitForMediaPortalDownload(state);
-      if (href && isMediaUrl(href) && view && !view.webContents.isDestroyed()) {
-        view.webContents.downloadURL(href);
-      }
+      finishMediaPortalProgress(state, true, '', '普通音质文件已开始下载');
     }
     notifyMediaBrowserState({
       opening: false,
@@ -4958,14 +5075,12 @@ async function completeMediaPortalAutomation(state, result = {}) {
       automationStage: 'music-download',
       failureReason: result.ok ? '' : String(result.reason || 'download-action-missing'),
       qualityLabel: '普通音质',
+      ...(result.ok ? { requestId: state.requestId, verificationPending: false, verificationRequired: false, verificationCompleted: true } : {}),
     });
   }
   if (!activeMediaPortalDownloads && !mediaPortalInputState) {
-    if (humanVerification) resumeMediaPortalAfterVerification();
-    else {
-      if (mediaPortalView && !mediaPortalView.webContents.isDestroyed()) hideMediaPortalView(mediaPortalView);
-      scheduleMediaPortalIdleDestroy();
-    }
+    if (mediaPortalView && !mediaPortalView.webContents.isDestroyed()) hideMediaPortalView(mediaPortalView);
+    scheduleMediaPortalIdleDestroy();
   }
 }
 
@@ -4973,7 +5088,7 @@ function scheduleMediaPortalInput() {
   clearMediaPortalInputTimer();
   const view = mediaPortalView;
   const state = mediaPortalInputState;
-  if (!view || view.webContents.isDestroyed() || !state || state.requestId !== mediaPortalRequestId) return;
+  if (!view || view.webContents.isDestroyed() || !state || state.waitingForFile || state.requestId !== mediaPortalRequestId) return;
   if (state.automationRunning) {
     state.automationRerunRequested = true;
     return;
@@ -4984,7 +5099,15 @@ function scheduleMediaPortalInput() {
     state.automationRunning = true;
     state.automationRerunRequested = false;
     keepMediaPortalWorkerVisible(view);
-    if (String(state.automationMode || '').startsWith('music-') && view.webContents.isLoading()) {
+    if (String(state.automationMode || '').startsWith('music-') && view.webContents.musicManagedChallenge) {
+      // The provider owns navigation until it clears verification. A challenge
+      // may temporarily change the URL of the requested search.
+      state.automationRunning = false;
+      return;
+    }
+    const detailFrame = state.automationMode === 'music-download' && isMusicSearchDocument(view.webContents.getURL(), state.portalUrl)
+      ? readyMusicFrame(view.webContents) : undefined;
+    if (String(state.automationMode || '').startsWith('music-') && view.webContents.isLoading() && !detailFrame) {
       state.automationRunning = false;
       scheduleMediaPortalInput();
       return;
@@ -5006,6 +5129,8 @@ function scheduleMediaPortalInput() {
       mode: state.automationMode,
       phase: state.phase || '',
       value: state.value || '',
+      musicDownloadRequestId: state.requestId,
+      expectedMusicDownloadUrl: state.expectedMusicDownloadUrl || '',
       nativeSubmit: state.automationMode === 'video-parse' && state.phase !== 'result',
       timeoutMs: state.automationMode === 'video-parse' && state.phase === 'result'
         ? (Number(state.videoResultWaitCount || 0) > 0
@@ -5015,9 +5140,26 @@ function scheduleMediaPortalInput() {
     }, scoreMediaDownloadQualityLabel);
     try {
       const result = String(state.automationMode || '').startsWith('music-')
-        ? await executeMusicPageScript(view.webContents, script, state.musicAbortController?.signal)
+        ? await executeMusicPageScript(view.webContents, script, state.musicAbortController?.signal, detailFrame)
         : await view.webContents.executeJavaScript(script, true);
       if (!isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId)) return;
+      if (state.automationMode === 'music-download' && result?.continueMusicDownload) {
+        if (result.readyMusicHref) {
+          const current = view.webContents.getURL();
+          const url = URL.parse(sanitizeRemoteMediaUrl(result.readyMusicHref));
+          if (!isGequbaoMusicUrl(current) || !isGequbaoMusicUrl(state.portalUrl)
+            || new URL(current).pathname.replace(/\/$/, '') !== new URL(state.portalUrl).pathname.replace(/\/$/, '')
+            || !url || url.username || url.password || !(url.protocol === 'https:' || isDirectMediaActionUrl(url.href))) {
+            await completeMediaPortalAutomation(state, { ok: false, reason: 'download-connection-failed' });
+            return;
+          }
+          state.expectedMusicDownloadUrl = url.href;
+        }
+        if (result.progressMessage) state.musicDownloadMessage = result.progressMessage;
+        if (result.clicked) runtimeLog(`music download action request=${state.requestId} action=${String(result.progressMessage || '').slice(0, 85)}`);
+        state.automationRerunRequested = true;
+        return;
+      }
       if (result?.continueAutomation) {
         if (result.nativeSubmitRequired) {
           try {
@@ -5542,28 +5684,44 @@ async function downloadParsedMediaVideo(downloadTarget = 'download', collection 
   }
 }
 
+function openForegroundMediaPortal(url, downloadTarget, sourceText, autoSubmit, collection, quality, mode, originalSourceText) {
+  const kind = String(mode || '').startsWith('music-') || isGequbaoMusicUrl(url) ? 'audio' : 'video';
+  return musicDownloadQueue.openForeground(kind, () =>
+    openMediaPortal(url, downloadTarget, sourceText, autoSubmit, collection, quality, mode, originalSourceText));
+}
+
+function startQueuedMusicDownload(job) {
+  try {
+    const opened = openMediaPortal(job.url, job.location, '', false, job.collection, '', 'music-download');
+    if (opened?.ok && mediaPortalView && !mediaPortalView.webContents.isDestroyed()) {
+      // Claiming a transfer clears the target's taskId. Keep the queue's ID immutable.
+      mediaPortalDownloadTargets.set(mediaPortalView.webContents, { ...job, kindHint: 'audio' });
+      notifyMediaDownloadProgress(mediaPortalPendingTask(job, 'preparing', { requestId: opened.requestId, sourceUrl: job.url }));
+      return;
+    }
+  } catch (error) { runtimeLog(`music download queue failed to open song: ${error.message || error}`); }
+  notifyMediaDownloadProgress(mediaPortalPendingTask(job, 'error'));
+}
+
 function downloadMediaMusicResult(url, downloadTarget = 'download', collection = '', preferredName = '') {
   const value = String(url || '').trim();
   if (!isGequbaoMusicUrl(value)) return false;
-  const opened = openMediaPortal(value, downloadTarget, '', false, collection, '', 'music-download');
-  if (opened && mediaPortalView && !mediaPortalView.webContents.isDestroyed()) {
-    const target = {
-      location: downloadTarget === 'favorite' ? 'favorite' : 'download',
-      collection: String(collection || '').trim(),
-      preferredName: String(preferredName || '').trim().slice(0, 160),
-      taskId: `music-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
-      taskName: `${String(preferredName || '普通音质音乐').trim().slice(0, 180)}（准备下载）`,
-    };
-    mediaPortalDownloadTargets.set(mediaPortalView.webContents, target);
-    notifyMediaDownloadProgress(mediaPortalPendingTask(target));
-  }
-  return opened;
+  const job = {
+    url: value,
+    location: downloadTarget === 'favorite' ? 'favorite' : 'download',
+    collection: String(collection || '').trim(),
+    preferredName: String(preferredName || '').trim().slice(0, 160),
+    taskId: `music-${crypto.randomUUID()}`,
+    taskName: String(preferredName || '普通音质音乐').trim().slice(0, 180),
+  };
+  notifyMediaDownloadProgress(mediaPortalPendingTask(job, 'queued'));
+  return { ok: true, queued: musicDownloadQueue.add(job), taskId: job.taskId };
 }
 
 function previewMediaMusicResult(url) {
   const value = String(url || '').trim();
   if (!isGequbaoMusicUrl(value)) return false;
-  return openMediaPortal(value, 'download', '', false, '', '', 'music-preview');
+  return openForegroundMediaPortal(value, 'download', '', false, '', '', 'music-preview');
 }
 
 function requestGequbaoMusicPage(url, onProgress = null, redirects = 0) {
@@ -5781,7 +5939,7 @@ function attachMediaPortalViewToMainBackground(view = mediaPortalView) {
   if (mediaPortalRequestedVisible && mediaPortalLastVisibleBounds) {
     if (!attachMediaPortalViewToMain(view)) return false;
     view.setBounds(mediaPortalLastVisibleBounds);
-    view.setVisible(true);
+    view.setVisible(!view.webContents.portalNavigationError);
     return true;
   }
   if (mediaPortalViewHost !== 'main-background') {
@@ -5875,7 +6033,7 @@ async function dispatchTrustedMediaPortalDownloadClick(view, fallbackPoint = {})
 }
 
 function hideMediaPortalView(view = mediaPortalView) {
-  if (!view || view.webContents.isDestroyed()) return;
+  if (!view || view.webContents.isDestroyed() || mediaPortalRequestedVisible) return;
   view.setVisible(false);
 }
 
@@ -5980,16 +6138,41 @@ function ensureMediaPortalView() {
     if (details.webContentsId !== view.webContents.id || details.resourceType !== 'mainFrame') return;
     const mitigation = Object.entries(details.responseHeaders || {}).find(([name]) => name.toLowerCase() === 'cf-mitigated')?.[1];
     view.webContents.musicManagedChallenge = [].concat(mitigation || []).some(value => String(value).toLowerCase() === 'challenge');
+    const verificationResume = mediaPortalVerificationResume;
+    if (verificationResume && view.webContents.musicManagedChallenge && !view.webContents.musicVerificationDocumentId) {
+      // The provider can return a second challenge after an intermediate document.
+      view.webContents.musicVerificationDocumentId = verificationResume.requestId;
+      notifyMediaBrowserState({ requestId: verificationResume.requestId, automationMode: verificationResume.automationMode, securityCheckPending: true });
+    }
+    if (!view.webContents.musicManagedChallenge && verificationResume
+      && view.webContents.musicVerificationDocumentId === Number(verificationResume.requestId || 0)
+      && details.statusCode >= 200 && (details.statusCode < 300 || details.statusCode >= 400)) {
+      // Collapse the provider as soon as the challenge response clears. The
+      // verification page may otherwise flash before the background poll reads it.
+      retireMusicVerificationDocument(view);
+    }
     const state = mediaPortalInputState;
+    if (!view.webContents.musicManagedChallenge && state?.automaticSecurityCheck && details.statusCode >= 200 && details.statusCode < 300) {
+      state.automaticSecurityCheck = false;
+      // The site's own download countdown starts on the song page. Allow it
+      // its full time once, even if the initial security check took a minute.
+      if (state.automationMode === 'music-download' && !state.musicDetailDeadlineGranted && isMusicSearchDocument(details.url, state.portalUrl)) {
+        state.musicDetailDeadlineGranted = true;
+        state.musicDeadlineAt = musicOperationDeadline('music-download');
+        state.progressStartedAt = Date.now();
+      }
+    }
     if (view.webContents.musicManagedChallenge && String(state?.automationMode || '').startsWith('music-')) {
       state.automaticSecurityCheck = true;
       emitMediaPortalProgress(state, { message: '音乐站正在进行自动安全检查，完成后继续读取结果', reason: 'automatic-security-check' });
       if (!state.musicSecurityCheckTimer) {
         state.musicSecurityCheckTimer = setTimeout(() => {
+          state.musicSecurityCheckTimer = null;
           if (!isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId)
             || view.webContents.isDestroyed() || !view.webContents.musicManagedChallenge || state.musicSecurityCheckShown) return;
           state.musicSecurityCheckShown = true;
-          notifyMediaBrowserState({ requestId: state.requestId, automationMode: state.automationMode, securityCheckPending: true });
+          view.webContents.musicVerificationDocumentId = state.requestId;
+          suspendMusicForVerification(state, true);
         }, 8000);
         state.musicAbortController?.signal.addEventListener('abort', () => clearTimeout(state.musicSecurityCheckTimer), { once: true });
       }
@@ -6021,10 +6204,11 @@ function ensureMediaPortalView() {
     inspectSeekinProviderResponse(view, params.requestId);
   });
   view.webContents.setWindowOpenHandler(({ url }) => {
-    const disposition = classifyMediaPortalPopup(url, view.webContents.getURL());
+    if (view.webContents.musicDownloadExpired) return { action: 'deny' };
+    const disposition = isExpectedMusicDownload(view.webContents, url) ? 'download' : classifyMediaPortalPopup(url, view.webContents.getURL());
     if (disposition === 'download') {
       consumeMediaPortalPopupDownload(view.webContents);
-      runtimeLog('captured media portal download popup: ' + String(url || '').slice(0, 300));
+      runtimeLog('captured media portal download popup from ' + URL.parse(url)?.host);
       setImmediate(() => startCapturedMediaPortalDownload(view.webContents, url));
     } else if (disposition === 'same-site') {
       setImmediate(() => view.webContents.loadURL(url).catch(() => {}));
@@ -6035,7 +6219,8 @@ function ensureMediaPortalView() {
     return { action: 'deny' };
   });
   view.webContents.on('will-navigate', (event, url) => {
-    const disposition = classifyMediaPortalPopup(url, view.webContents.getURL());
+    if (view.webContents.musicDownloadExpired) { event.preventDefault(); return; }
+    const disposition = isExpectedMusicDownload(view.webContents, url) ? 'download' : classifyMediaPortalPopup(url, view.webContents.getURL());
     if (disposition === 'download') {
       consumeMediaPortalPopupDownload(view.webContents);
       event.preventDefault();
@@ -6047,6 +6232,38 @@ function ensureMediaPortalView() {
     }
   });
   view.webContents.on('will-prevent-unload', (event) => event.preventDefault());
+  view.webContents.on('did-start-navigation', (event) => {
+    if (!event.isMainFrame || event.isSameDocument) return;
+    view.webContents.portalFailedUrl = '';
+    view.webContents.portalNavigationError = '';
+    notifyMediaBrowserState();
+  });
+  view.webContents.on('did-fail-load', (_event, code, description, failedUrl, mainFrame) => {
+    if (!mainFrame || code === -3 || view !== mediaPortalView) return;
+    view.webContents.portalFailedUrl = failedUrl;
+    view.webContents.portalNavigationError = description || String(code);
+    notifyMediaBrowserState();
+    const state = mediaPortalInputState;
+    const loadError = new Error(String(description || code) + ': ' + String(failedUrl || ''));
+    loadError.code = Number(code);
+    if (state && isCurrentMediaPortalRequest(state, mediaPortalInputState, mediaPortalRequestId)) {
+      handleMediaPortalLoadError(view, state, failedUrl || state.portalUrl, loadError, 'did-fail-load');
+      return;
+    }
+    const resume = mediaPortalVerificationResume;
+    if (resume && resume.requestId === mediaPortalRequestId && isAllowedPortalUrl(failedUrl)) {
+      resume.loadRetryCount = Number(resume.loadRetryCount || 0) + 1;
+      if (resume.loadRetryCount <= 2) {
+        const retryDelay = 450 * resume.loadRetryCount;
+        runtimeLog('retrying verification page load request=' + resume.requestId
+          + ' attempt=' + resume.loadRetryCount + ': ' + String(description || code));
+        setTimeout(() => {
+          if (mediaPortalVerificationResume !== resume || mediaPortalView !== view || view.webContents.isDestroyed()) return;
+          view.webContents.loadURL(failedUrl).catch(() => {});
+        }, retryDelay);
+      }
+    }
+  });
   view.webContents.on('did-start-loading', () => notifyMediaBrowserState());
   view.webContents.on('did-stop-loading', () => {
     trimMediaPortalHistory(view.webContents);
@@ -6060,15 +6277,21 @@ function ensureMediaPortalView() {
     });
   }
   view.webContents.on('page-title-updated', () => notifyMediaBrowserState());
-  view.webContents.on('did-finish-load', () => {
+  view.webContents.on('did-start-navigation', event => {
+    if (event.isMainFrame && !event.isSameDocument) view.webContents.musicDomReadyFrame = null;
+  });
+  view.webContents.on('dom-ready', () => {
+    view.webContents.musicDomReadyFrame = view.webContents.mainFrame;
     const state = mediaPortalInputState;
     if (state?.automationMode === 'music-search' && state.requestId === mediaPortalRequestId) {
       state.musicSearchDocumentUrl = view.webContents.getURL();
       runtimeLog(`music search document ready request=${state.requestId} url=${state.musicSearchDocumentUrl}`);
       startMediaPortalMusicResultSync(state, view);
+    } else if (state?.automationMode === 'music-download' && state.requestId === mediaPortalRequestId) {
+      scheduleMediaPortalInput();
     }
-    scheduleMediaPortalInput();
   });
+  view.webContents.on('did-finish-load', scheduleMediaPortalInput);
   view.webContents.on('render-process-gone', () => notifyMediaBrowserState({ crashed: true }));
   view.webContents.on('enter-html-full-screen', () => {
     mediaPortalHtmlFullscreen = true;
@@ -6093,7 +6316,7 @@ function keepMediaPortalWorkerVisible(view = mediaPortalView) {
   if (!view || view.webContents.isDestroyed()) return false;
   if (mediaPortalRequestedVisible && mediaPortalLastVisibleBounds && attachMediaPortalViewToMain(view)) {
     view.setBounds(mediaPortalLastVisibleBounds);
-    view.setVisible(true);
+    view.setVisible(!view.webContents.portalNavigationError);
   } else if (!attachMediaPortalViewToWorker(view)) {
     return false;
   }
@@ -6101,7 +6324,15 @@ function keepMediaPortalWorkerVisible(view = mediaPortalView) {
   return true;
 }
 
-function setMediaPortalBounds(bounds = {}, visible = false, mode = 'browser') {
+function setMediaPortalBounds(bounds = {}, visible = false, mode = 'browser', requestId = 0) {
+  if (visible && requestId && Number(requestId) !== mediaPortalRequestId) return false;
+  if (mode === 'verification') {
+    const resume = mediaPortalVerificationResume;
+    if (!resume || Number(requestId || 0) !== Number(resume.requestId || 0)
+      || !mediaPortalView || mediaPortalView.webContents.musicVerificationDocumentId !== Number(requestId || 0)) {
+      return false;
+    }
+  }
   const view = visible ? ensureMediaPortalView() : mediaPortalView;
   if (!view || view.webContents.isDestroyed()) return false;
   const content = mainWindow?.getContentBounds();
@@ -6126,12 +6357,15 @@ function setMediaPortalBounds(bounds = {}, visible = false, mode = 'browser') {
     return true;
   }
   const previewUrl = mediaPortalParsedVideo?.capturedDownloadUrl || mediaPortalParsedVideo?.previewUrl || '';
-  setMediaPortalPresentationMode(shouldShow && mode === 'preview' ? 'preview' : 'browser', previewUrl);
-  const keepWorkerActive = !shouldShow && (!!mediaPortalInputState || !!mediaPortalPreviewCapture || activeMediaPortalDownloads > 0);
+  const presentation = shouldShow && mode === 'preview'
+    ? 'preview'
+    : (shouldShow && mode === 'verification' ? 'verification' : 'browser');
+  setMediaPortalPresentationMode(presentation, previewUrl);
+  const keepWorkerActive = !shouldShow && (!!mediaPortalInputState || !!mediaPortalVerificationResume || !!mediaPortalPreviewCapture || activeMediaPortalDownloads > 0);
   if (shouldShow) {
     attachMediaPortalViewToMain(view);
     if (mediaPortalLastVisibleBounds) view.setBounds(mediaPortalLastVisibleBounds);
-    view.setVisible(true);
+    view.setVisible(!view.webContents.portalNavigationError);
     if (!wasRequestedVisible && mainWindow?.isFocused()) view.webContents.focus();
   } else if (keepWorkerActive) keepMediaPortalWorkerVisible(view);
   else hideMediaPortalView(view);
@@ -6244,13 +6478,20 @@ function openMediaPortal(url, downloadTarget = 'download', sourceText = '', auto
     updatePublishedMediaPortalVideo(activeParsedVideo);
     return { ok: true, requestId: activeParsedVideo.requestId, reusedActivePreview: true };
   }
+  // A timed-out page can still deliver a delayed native download. New jobs
+  // use a fresh WebContents while continuing to share the provider's session.
+  if (mediaPortalView?.webContents.musicDownloadExpired) destroyMediaPortalView({ notify: false });
   const view = ensureMediaPortalView();
   if (!view) return false;
   configureMediaPortalResponseObserver(view, value);
   mediaPortalInputState?.musicAbortController?.abort();
   failMediaPortalPendingTask(view.webContents, 'cancelled');
   if (automationMode) clearMediaPortalVerificationMonitor();
-  if (automationMode === 'music-search') mediaPortalRequestedVisible = false;
+  if (normalizedAutomationMode.startsWith('music-')) {
+    mediaPortalRequestedVisible = false;
+    mediaPortalPresentationMode = 'browser';
+    view.webContents.musicVerificationDocumentId = 0;
+  }
   mediaPortalRequestId += 1;
   const previousParsedVideo = normalizedAutomationMode === 'video-parse'
     && mediaPortalParsedVideo?.sourceUrl === automationValue
@@ -6295,7 +6536,6 @@ function openMediaPortal(url, downloadTarget = 'download', sourceText = '', auto
   clearMediaPortalResultSyncTimer();
   clearMediaPortalMusicResultSyncTimer();
   clearMediaPortalVisibilityNudgeTimer();
-  clearMediaPortalPendingDownload();
   if (mediaPortalInputState) {
     keepMediaPortalWorkerVisible(view);
     startMediaPortalProgress(mediaPortalInputState);
@@ -8887,8 +9127,13 @@ ipcMain.handle('media:setDownloadTaskPaused', (_event, taskId, shouldPause = tru
 ipcMain.handle('media:cancelDownloadTask', (_event, taskId) => {
   const id = String(taskId || '').trim();
   if (!id) return { ok: false, reason: '下载任务不存在' };
+  const queued = musicDownloadQueue.remove(id);
+  if (queued) {
+    notifyMediaDownloadProgress(mediaPortalPendingTask(queued, 'cancelled'));
+    return { ok: true, cancelled: true };
+  }
+  if (musicDownloadQueue.isPreparing(id)) return { ok: false, reason: '此项已开始准备下载' };
   const handle = activeMediaDownloadItems.get(id);
-  activeMediaDownloadItems.delete(id);
   if (handle) {
     dismissedMediaDownloadTaskIds.add(id);
     try { handle.cancel?.(); } catch {}
@@ -8900,7 +9145,7 @@ ipcMain.handle('media:cancelDownloadTask', (_event, taskId) => {
   return { ok: true, cancelled: !!handle };
 });
 ipcMain.handle('media:openPortal', (_event, url, downloadTarget = 'download', sourceText = '', autoSubmit = false, collection = '', qualityPreference = '', automationMode = '', originalSourceText = '') => (
-  openMediaPortal(url, downloadTarget, sourceText, autoSubmit, collection, qualityPreference, automationMode, originalSourceText)
+  openForegroundMediaPortal(url, downloadTarget, sourceText, autoSubmit, collection, qualityPreference, automationMode, originalSourceText)
 ));
 ipcMain.handle('media:resetPortal', (_event, kind = '') => resetMediaPortalAutomation(kind));
 ipcMain.handle('media:bilibiliSessionStatus', () => bilibiliSessionStatus(mediaPortalView?.webContents));
@@ -8917,9 +9162,9 @@ ipcMain.handle('media:downloadMusicResult', (_event, url, downloadTarget = 'down
 ipcMain.handle('media:previewMusicResult', (_event, url) => previewMediaMusicResult(url));
 ipcMain.handle('media:downloadMusicLyrics', (_event, url, preferredName = '') => downloadMediaMusicLyrics(url, preferredName));
 ipcMain.handle('media:openHighQualityMusic', (_event, query = '', downloadTarget = 'download', collection = '') => openHighQualityMusic(query, downloadTarget, collection));
-ipcMain.on('media:browserBounds', (event, bounds = {}, visible = false, mode = 'browser') => {
+ipcMain.on('media:browserBounds', (event, bounds = {}, visible = false, mode = 'browser', requestId = 0) => {
   if (!mainWindow || event.sender !== mainWindow.webContents) return;
-  setMediaPortalBounds(bounds, visible, mode);
+  setMediaPortalBounds(bounds, visible, mode, requestId);
 });
 ipcMain.handle('media:browserState', () => mediaBrowserState());
 ipcMain.handle('media:browserAction', (event, action) => {
@@ -8928,7 +9173,9 @@ ipcMain.handle('media:browserAction', (event, action) => {
   const navigationHistory = webContents.navigationHistory;
   if (action === 'back' && navigationHistory.canGoBack()) navigationHistory.goBack();
   else if (action === 'forward' && navigationHistory.canGoForward()) navigationHistory.goForward();
-  else if (action === 'reload') webContents.reload();
+  else if (action === 'reload' && isAllowedPortalUrl(webContents.portalFailedUrl)) {
+    webContents.loadURL(webContents.portalFailedUrl).catch(() => {});
+  } else if (action === 'reload') webContents.reload();
   else if (action === 'stop' && webContents.isLoading()) webContents.stop();
   else return false;
   notifyMediaBrowserState();

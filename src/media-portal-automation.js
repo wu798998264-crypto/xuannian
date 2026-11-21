@@ -138,7 +138,7 @@ function selectMediaPreviewOption(options, maxBytes = 0) {
   return candidates.at(-1) || null;
 }
 
-function buildPortalScript({ mode, value = '', phase = '', timeoutMs = 30000, candidateIndex = 0, nativeSubmit = false } = {}, qualityScorer = () => -1) {
+function buildPortalScript({ mode, value = '', phase = '', timeoutMs = 30000, candidateIndex = 0, nativeSubmit = false, musicDownloadRequestId = 0, expectedMusicDownloadUrl = '' } = {}, qualityScorer = () => -1) {
   const normalizedMode = String(mode || '');
   const normalizedPhase = String(phase || '');
   const deadlineMs = Math.max(1000, Math.min(90000, Number(timeoutMs) || 30000));
@@ -470,20 +470,24 @@ function buildPortalScript({ mode, value = '', phase = '', timeoutMs = 30000, ca
     const parseMusicResults = () => {
       return readMusicPage().results;
     };
-    const musicDownloadCandidates = () => [...document.querySelectorAll('button,a,[role="button"]')]
-      .filter(visible)
+    const musicActionEnabled = (element) => visible(element)
+      && !element.closest('[aria-disabled="true"],[aria-busy="true"],[inert],.disabled') && getComputedStyle(element).pointerEvents !== 'none';
+    const musicDownloadCandidates = (state) => [...document.querySelectorAll('button,a,[role="button"]')]
+      .filter(musicActionEnabled)
       .map((element, index) => {
         const label = text(element);
-        const href = httpUrl(element.href || element.getAttribute('href'));
-        const finalAction = /(?:下载)?(?:低品质|低音质|普通音质)\\s*mp3|备用线路/i.test(label);
-        const score = finalAction ? 100 : (/下载歌曲|继续下载|download\\s*song|continue\\s*download/i.test(label) ? 20 : 10);
-        return { element, index, label, href, finalAction, score };
+        const url = httpUrl(element.getAttribute('href'));
+        const href = url && !sameDocumentUrl(url) && (mediaUrl(url) || element.hasAttribute('download')) ? url : '';
+        const ordinary = /低品质|低音质|普通音质|标准音质|备用线路|普通下载/i.test(label);
+        const dialog = element.closest('[role="dialog"],[role="alertdialog"],dialog,.modal,.swal2-popup,.layui-layer');
+        const confirm = state.actionStarted && (/确认下载|确定下载|再次点击.{0,6}下载|confirm\\s*download/i.test(label)
+          || (state.ordinarySelected && /^(?:确定|确认|下载|ok)$/i.test(label) && dialog && /下载|download/i.test(text(dialog)) && !/开通|登录|广告|付费|会员/.test(text(dialog))));
+        const score = href ? 4 : confirm ? 3 : ordinary ? 2 : 1;
+        return { element, index, label, href, ordinary, confirm, score };
       })
-      .filter((candidate) => /(?:下载歌曲|继续下载|立即下载|普通下载|下载(?:低品质|低音质|普通音质)\\s*mp3|备用线路|download\\s*song|continue\\s*download)/i.test(candidate.label) && !/(?:歌词|lyric|无损|高清|高品质|推荐|网盘|夸克|阿里)/i.test(candidate.label))
-      .sort((left, right) => {
-        const directDifference = Number(!!mediaUrl(right.href)) - Number(!!mediaUrl(left.href));
-        return directDifference || right.score - left.score || left.index - right.index;
-      });
+      .filter(({label, ordinary, confirm}) => (ordinary || confirm || /下载歌曲|继续下载|立即下载|download\\s*song|continue\\s*download/i.test(label))
+        && !/歌词|lyric|无损|高清|高品质|高音质|网盘|夸克|阿里|广告|倒计时|排队|请等待|\\d+\\s*秒|\\b\\d+\\s*s\\b/i.test(label))
+      .sort((left, right) => right.score - left.score || left.index - right.index);
     const directAudioUrl = () => {
       const audio = document.querySelector('audio');
       const embedded = [audio?.currentSrc, audio?.src, audio?.querySelector?.('source')?.src]
@@ -675,31 +679,59 @@ function buildPortalScript({ mode, value = '', phase = '', timeoutMs = 30000, ca
     };
     const attemptMusicDownload = () => {
       if (humanVerificationRequired()) { resolve({ ok: false, stage: 'download', reason: 'human-verification' }); return; }
-      const direct = directAudioUrl();
-      if (direct) { resolve({ ok: true, stage: 'download', href: direct, label: '普通音质', clicked: false }); return; }
-      const clicked = new WeakSet();
-      let actionStarted = false;
-      const waitForDownload = () => {
-        if (humanVerificationRequired()) { resolve({ ok: false, stage: 'download', reason: 'human-verification' }); return; }
-        const readyUrl = directAudioUrl();
-        if (readyUrl) { resolve({ ok: true, stage: 'download', href: readyUrl, label: '普通音质', clicked: actionStarted }); return; }
-        const candidate = musicDownloadCandidates().find((item) => !clicked.has(item.element));
-        if (candidate) {
-          const directHref = mediaUrl(candidate.href);
-          if (directHref) { resolve({ ok: true, stage: 'download', href: directHref, label: candidate.label, clicked: actionStarted }); return; }
-          clicked.add(candidate.element);
-          actionStarted = true;
-          candidate.element.click();
-          if (candidate.finalAction) {
-            resolve({ ok: true, stage: 'download', href: '', label: candidate.label, clicked: true, pending: true });
+      const reason = providerFailureReason();
+      if (reason) { resolve({ ok: false, stage: 'download', reason }); return; }
+      const requestId = ${safeJson(musicDownloadRequestId)};
+      if (window.__xuannianMusicDownload?.requestId !== requestId) {
+        window.__xuannianMusicDownload = { requestId, clicked: new WeakMap(), actionStarted: false, ordinarySelected: false, requestedLink: false, linkRetried: false, confirmedLink: false };
+      }
+      const state = window.__xuannianMusicDownload;
+      const pending = (progressMessage, clicked = false) => resolve({ ok: false, stage: 'download', continueMusicDownload: true, progressMessage, clicked });
+      if (state.confirmedLink) return pending('已确认普通下载，等待文件传输');
+      const countdown = document.querySelector('#download-countdown');
+      if (countdown && countdown.getClientRects().length && getComputedStyle(countdown).visibility !== 'hidden') {
+        const seconds = text(countdown).match(/^\\d{1,3}$/);
+        if (seconds && Number(seconds[0]) > 0) return pending('普通下载排队中，剩余 ' + seconds[0] + ' 秒');
+      }
+      const card = [...document.querySelectorAll('a[data-normal-download]')].find(visible);
+      if (card) {
+        const message = text(card.querySelector('[role="status"]'));
+        if (!musicActionEnabled(card)) return pending('正在准备普通下载链接');
+        const href = httpUrl(card.getAttribute('href'));
+        if (href && !sameDocumentUrl(href)) {
+          if (href !== ${safeJson(expectedMusicDownloadUrl)}) {
+            resolve({ ok: false, stage: 'download', continueMusicDownload: true, readyMusicHref: href, progressMessage: '普通下载链接已就绪' });
             return;
           }
+          // The provider records the second click and the anchor starts the native download.
+          state.confirmedLink = true;
+          card.click();
+          return pending('已确认普通下载，等待文件传输', true);
         }
-        if (Date.now() < deadline) pause(waitForDownload, 240);
-        else if (actionStarted) resolve({ ok: true, stage: 'download', href: '', label: '普通音质', clicked: true, pending: true });
-        else resolve({ ok: false, stage: 'download', reason: 'download-action-missing' });
-      };
-      waitForDownload();
+        const retry = /未获取到链接|准备下载失败/.test(message);
+        if (retry && state.linkRetried) { resolve({ ok: false, stage: 'download', reason: 'download-connection-failed' }); return; }
+        // A freshly displayed dialog may replace its placeholder card or bind
+        // the download handler after the first click. Allow one retry on the
+        // enabled placeholder, after the page has had time to start its work.
+        if (state.requestedLink && !retry && (state.linkRetried || Date.now() - state.requestedAt < 1500)) return pending('正在准备普通下载链接');
+        state.linkRetried = !!state.requestedLink;
+        state.requestedLink = true;
+        state.requestedAt = Date.now();
+        state.actionStarted = true;
+        state.ordinarySelected = true;
+        card.click();
+        return pending(retry ? '正在重新申请普通下载链接' : '正在申请普通下载链接', true);
+      }
+      const candidate = musicDownloadCandidates(state).find(item => item.href || state.clicked.get(item.element) !== item.label);
+      if (candidate) {
+        if (candidate.href) { resolve({ ok: true, stage: 'download', href: candidate.href, label: candidate.label, clicked: state.actionStarted }); return; }
+        state.clicked.set(candidate.element, candidate.label);
+        state.actionStarted = true;
+        if (candidate.ordinary) state.ordinarySelected = true;
+        candidate.element.click();
+        return pending(candidate.confirm ? '已确认普通下载，等待文件传输' : '正在准备普通下载链接', true);
+      }
+      return pending(state.actionStarted ? '等待下载站提供普通下载链接' : '正在等待普通下载入口');
     };
 
     if (mode === 'video-parse') {
