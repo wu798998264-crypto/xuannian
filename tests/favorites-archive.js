@@ -38,10 +38,10 @@ try {
   const source = path.join(root, 'source');
   fs.mkdirSync(path.join(source, 'assets'), { recursive: true });
   const reference = Buffer.from('prompt reference attachment\n', 'utf8');
-  fs.writeFileSync(path.join(source, 'assets', '参考图.txt'), reference);
+  fs.writeFileSync(path.join(source, 'assets', 'reference.txt'), reference);
   const snapshot = createFavoritesBackupSnapshot({
     noteProjects: [{ id: 'project', name: '画面提示词' }],
-    notes: [{ id: 'prompt', projectId: 'project', title: '夕阳', content: '电影感，中文与 emoji 🌄', attachments: [{ kind: 'file', path: 'assets/参考图.txt' }] }],
+    notes: [{ id: 'prompt', projectId: 'project', title: '夕阳', content: '电影感，中文与 emoji 🌄', attachments: [{ kind: 'file', path: 'assets/reference.txt' }] }],
   });
   fs.writeFileSync(path.join(source, 'manifest.json'), JSON.stringify({ format: snapshot.format, version: snapshot.version }));
   fs.writeFileSync(path.join(source, 'favorites-data.json'), JSON.stringify(snapshot.data));
@@ -63,8 +63,8 @@ try {
     fs.mkdirSync(destination);
     extractZipToDirectory(archive, destination);
     const data = JSON.parse(fs.readFileSync(path.join(destination, 'favorites-data.json'), 'utf8'));
-    const target = path.join(destination, 'assets', '参考图.txt');
-    const imported = normalizeImportedFavorites(rewriteFavoriteAssetPaths({ ...snapshot, data }, new Map([['assets/参考图.txt', target]])));
+    const target = path.join(destination, 'assets', 'reference.txt');
+    const imported = normalizeImportedFavorites(rewriteFavoriteAssetPaths({ ...snapshot, data }, new Map([['assets/reference.txt', target]])));
     assert.strictEqual(imported.notes[0].content, snapshot.data.notes[0].content);
     assert.strictEqual(imported.noteProjects[0].name, '画面提示词');
     assert.strictEqual(imported.notes[0].attachments[0].path, target);
