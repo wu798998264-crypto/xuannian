@@ -167,6 +167,7 @@
   <div class="quick-toast" id="quickToast"></div>
   <div class="picker" id="picker"><div class="picker-box"><div class="picker-title" id="pickerTitle"></div><div class="picker-list" id="pickerList"></div></div></div>
   <script src="src/wheel-scroll.js"></script>
+  <script src="src/attachment-paths.js"></script>
   <script>
     const $ = (s) => document.querySelector(s);
     const $$ = (s) => Array.from(document.querySelectorAll(s));
@@ -413,13 +414,7 @@
         await loadData();
       });
     }
-    function imageSrc(item){
-      if(!item) return '';
-      if(item.dataUrl) return item.dataUrl;
-      if(item.preview) return item.preview;
-      if(item.path) return 'file:///' + String(item.path).replace(/\\/g,'/');
-      return '';
-    }
+    const imageSrc = attachmentImageSrc;
     function pathFileName(value=''){
       const raw=String(value||'');
       const clean=raw.replace(/^file:\/\/\/?/i,'').split('?')[0];
@@ -428,11 +423,6 @@
       }catch{
         return clean.split(/[\\/]/).pop() || clean || '文件';
       }
-    }
-    function fileUrlFromPath(value=''){
-      const raw=String(value||'');
-      if(/^file:\/\//i.test(raw)) return raw;
-      return 'file:///' + raw.replace(/\\/g,'/');
     }
     function isFolderLikePath(value=''){
       const name=pathFileName(value);

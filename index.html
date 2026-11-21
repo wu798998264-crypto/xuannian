@@ -1429,6 +1429,7 @@
 <div class="file-thumbnail-preview" id="fileThumbnailPreview"><img alt="媒体文件预览"></div>
 
 <script src="src/wheel-scroll.js"></script>
+<script src="src/attachment-paths.js"></script>
 <script>
 const fallbackApi = createBrowserFallbackAPI();
 const api = createUnifiedAPI(window.nativeAPI, fallbackApi);
@@ -5904,14 +5905,6 @@ function filteredRecords(){
 function pathFileName(value=''){
   return String(value || '').split(/[\\/]/).pop() || '文件';
 }
-function fileUrlFromPath(value=''){
-  return `file:///${String(value || '').replace(/\\/g,'/')}`;
-}
-function filePathFromPreview(value=''){
-  const text=String(value || '');
-  if(!/^file:\/\//i.test(text)) return '';
-  try{return decodeURIComponent(text.replace(/^file:\/\/\/?/i,'')).replace(/\//g,'\\');}catch{return '';}
-}
 function filePathForIcon(itemOrPath=''){
   if(typeof itemOrPath==='string') return itemOrPath;
   return itemOrPath?.path || filePathFromPreview(itemOrPath?.preview || '') || '';
@@ -7228,13 +7221,6 @@ function attachmentKindFromPath(value=''){
   if(isAudioAttachmentPath(value)) return 'audio';
   return 'file';
 }
-function attachmentImageSrc(item){
-  if(!item) return '';
-  if(item.dataUrl) return item.dataUrl;
-  if(item.preview) return item.preview;
-  if(item.path) return `file:///${String(item.path).replace(/\\/g,'/')}`;
-  return '';
-}
 function renderBubbleAttachments(attachments=[], ownerId=''){
   if(!attachments.length) return '';
   return `<div class="bubble-attachments">${attachments.map((item,index)=>({item,index})).filter(entry=>entry.item).sort((a,b)=>attachmentDisplayRank(a.item)-attachmentDisplayRank(b.item)).map(({item,index})=>{
@@ -7304,11 +7290,11 @@ function renderNoteAttachments(attachments=[]){
   if(!attachments?.length) return '';
   return `<div class="bubble-attachments">${sortAttachmentsForDisplay(attachments).map(item=>{
     const label=escapeHtml(attachmentLabel(item));
-    if(item.kind==='image' && (item.dataUrl || item.path)){
+    if(item.kind==='image' && attachmentImageSrc(item)){
       const src=escapeHtml(attachmentImageSrc(item));
       return `<span class="bubble-attachment image"${item.path?` data-attachment-path="${escapeHtml(item.path)}"`:''}><img class="previewable-image" loading="lazy" data-preview-image="${src}" src="${src}" alt="${label}" /><span>${label}</span></span>`;
     }
-    if(item.kind==='video' && (item.path || item.dataUrl)){
+    if(item.kind==='video' && attachmentImageSrc(item)){
       const src=escapeHtml(attachmentImageSrc(item));
       return `<span class="bubble-attachment video"${item.path?` data-attachment-path="${escapeHtml(item.path)}"`:''}>${videoThumbMarkup(src)}<span>${label}</span></span>`;
     }
@@ -8096,7 +8082,7 @@ async function exportUserDataPackage(){
   await showInfoModal({title:'导出失败', message:result?.reason || '未能导出收藏数据包，请确认磁盘权限后重试。'});
 }
 
-  async function importUserDataPackage(){
+async function importUserDataPackage(){
   const confirmed=await showConfirmModal({
     title:'导入收藏数据包',
     message:'导入会把数据包里的收藏分类、收藏内容和附件合并到当前玄念数据中，不会覆盖现有收藏。导入前建议先导出一份备份。',

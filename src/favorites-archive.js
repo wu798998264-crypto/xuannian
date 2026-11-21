@@ -16,12 +16,50 @@ function runArchiveTool(command, args, options = {}) {
   });
 }
 
+// The Windows inbox bsdtar can crash writing ZIP members outside the active code page.
+// Pass paths as environment values so PowerShell never interprets names as commands.
+function windowsZip(operation, archive, directory) {
+  const script = [
+    "$ErrorActionPreference = 'Stop'",
+    "$ProgressPreference = 'SilentlyContinue'",
+    "[AppContext]::SetSwitch('Switch.System.IO.Compression.ZipFile.UseBackslash', $false)",
+    "Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem",
+    "$archive = $env:XN_FAVORITES_ZIP",
+    "$dir = $env:XN_FAVORITES_DIR",
+    operation === 'create'
+      ? '[IO.Compression.ZipFile]::CreateFromDirectory($dir, $archive, [IO.Compression.CompressionLevel]::Optimal, $false, [Text.Encoding]::UTF8)'
+      : [
+        '$zip = [IO.Compression.ZipFile]::Open($archive, [IO.Compression.ZipArchiveMode]::Read, [Text.Encoding]::UTF8)',
+        'try {',
+        '  $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)',
+        '  foreach ($entry in $zip.Entries) {',
+        "    $name = $entry.FullName.Replace('\\', '/')",
+        "    $parts = @($name.Split('/') | Where-Object { $_ -ne '.' -and $_ -ne '' })",
+        "    if ($name.StartsWith('/') -or $name -match '[:\\x00-\\x1f]' -or $parts -contains '..') { throw 'Unsafe ZIP path' }",
+        "    foreach ($part in $parts) { if ($part -match '[<>\"|?*]|[. ]$|^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\\.|$)') { throw 'Unsupported ZIP filename' } }",
+        '    $type = ($entry.ExternalAttributes -shr 16) -band 0xf000',
+        "    if ($type -notin @(0, 0x4000, 0x8000) -or ($entry.ExternalAttributes -band 0x400)) { throw 'Unsupported ZIP link or special entry' }",
+        "    if ($parts.Count -and !$seen.Add(($parts -join '/').Normalize())) { throw 'Duplicate ZIP filename' }",
+        '  }',
+        '} finally { $zip.Dispose() }',
+        '[IO.Compression.ZipFile]::ExtractToDirectory($archive, $dir, [Text.Encoding]::UTF8)',
+      ].join('\n'),
+  ].join('\n');
+  try {
+    runArchiveTool('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(script, 'utf16le').toString('base64')], {
+      stdio: 'pipe',
+      env: { ...process.env, XN_FAVORITES_ZIP: path.resolve(archive), XN_FAVORITES_DIR: path.resolve(directory) },
+    });
+  } catch (error) {
+    if (operation === 'create') throw Error('无法写入收藏 ZIP，请检查目标目录、可用空间及写入权限。', { cause: error });
+    throw Error('无法读取收藏 ZIP，请确认传输完整，且包内没有不安全的路径、链接或重名条目。', { cause: error });
+  }
+}
+
 function createZipFromDirectory(sourceDir, zipPath) {
   if (fs.existsSync(zipPath)) fs.rmSync(zipPath, { force: true });
   if (process.platform === 'win32') {
-    // Exports are first written to .zip.part. Automatic format selection sees
-    // .part and creates a TAR, which older Mac importers cannot open as a ZIP.
-    runArchiveTool(tarCommand(), ['--format', 'zip', '-c', '-f', zipPath, '-C', sourceDir, '.']);
+    windowsZip('create', zipPath, sourceDir);
     return;
   }
   runArchiveTool('/usr/bin/zip', ['-qry', zipPath, '.'], { cwd: sourceDir });
@@ -61,6 +99,15 @@ function extractZipToDirectory(zipPath, targetDir) {
     const targetStat = fs.lstatSync(target);
     if (!targetStat.isDirectory() || targetStat.isSymbolicLink() || fs.readdirSync(target).length) {
       throw new Error('收藏备份只能解压到新的临时目录。');
+    }
+  }
+  if (process.platform === 'win32') {
+    const signature = Buffer.alloc(4);
+    const file = fs.openSync(archive, 'r');
+    try { fs.readSync(file, signature, 0, 4, 0); } finally { fs.closeSync(file); }
+    if (signature.readUInt32LE() === 0x04034b50 || signature.readUInt32LE() === 0x06054b50) {
+      windowsZip('extract', archive, target);
+      return;
     }
   }
   const command = tarCommand();

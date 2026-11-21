@@ -1,0 +1,60 @@
+name: Verify favorites transfers
+
+on:
+  push:
+    branches:
+      - 'codex/favorites-transfer-qa-*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  export:
+    name: Export on ${{ matrix.runner }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-latest, macos-15]
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: node tests/favorites-backup.js
+      - run: node tests/favorites-archive.js
+      - run: node tests/favorites-package.js
+      - run: node tests/favorites-transfer-electron.js export exchange/favorites.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: export-${{ matrix.runner }}
+          path: exchange/favorites.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  import:
+    name: Import ${{ matrix.origin }} backup on ${{ matrix.runner }}
+    needs: export
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        origin: [windows-latest, macos-15]
+        runner: [windows-latest, macos-15]
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: export-${{ matrix.origin }}
+          path: exchange
+      - run: node tests/favorites-transfer-electron.js import exchange/favorites.zip

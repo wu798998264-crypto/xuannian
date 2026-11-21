@@ -205,6 +205,7 @@
   </div>
   <input type="file" id="fileInput" hidden multiple />
   <script src="src/wheel-scroll.js"></script>
+  <script src="src/attachment-paths.js"></script>
   <script>
     const api=window.nativeAPI;
     const params=new URLSearchParams(location.search);
@@ -245,14 +246,9 @@
       return 'file';
     }
     function label(item){return item?.name||String(item?.path||'').split(/[\\/]/).pop()||'附件';}
-    function src(item){if(item?.dataUrl)return item.dataUrl;if(item?.preview)return item.preview;if(item?.path)return `file:///${String(item.path).replace(/\\/g,'/')}`;return '';}
+    const src = attachmentImageSrc;
     function filePathOf(item){
-      if(item?.path) return String(item.path);
-      const value=String(item?.preview||'');
-      if(/^file:\/\//i.test(value)){
-        try{return decodeURIComponent(value.replace(/^file:\/\/\/?/i,'')).replace(/\//g,'\\');}catch{return value;}
-      }
-      return '';
+      return item?.path || item?.filePath || filePathFromPreview(item?.preview);
     }
     function iconPathAttr(item){
       const value=filePathOf(item);

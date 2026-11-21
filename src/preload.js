@@ -498,11 +498,20 @@ contextBridge.exposeInMainWorld('nativeAPI', {
     return ipcRenderer.invoke('dialog:selectStorageFolder', currentPath || '');
   },
   async exportUserDataPackage() {
-    return ipcRenderer.invoke('data:exportPackage');
+    try {
+      return await ipcRenderer.invoke('data:exportPackage');
+    } catch (error) {
+      return { ok: false, reason: error.message };
+    }
   },
   async importUserDataPackage() {
-    invalidateCache();
-    return ipcRenderer.invoke('data:importPackage');
+    try {
+      const result = await ipcRenderer.invoke('data:importPackage');
+      if (result?.ok) invalidateCache();
+      return result;
+    } catch (error) {
+      return { ok: false, reason: error.message };
+    }
   },
   async revealUserDataFolder() {
     return ipcRenderer.invoke('data:revealFolder');

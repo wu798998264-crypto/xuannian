@@ -6,8 +6,11 @@ const {
   createFavoritesBackupSnapshot,
   normalizeImportedFavorites,
   collectFavoriteAssetPaths,
+  attachmentAssetPaths,
+  rewriteAttachmentAsset,
   rewriteFavoriteAssetPaths,
   remapConflictingProjectIds,
+  mergeImportedFavorites,
   favoriteContentCounts,
 } = require('../src/favorites-backup');
 
@@ -114,5 +117,112 @@ assert.throws(
   /版本/,
   'future backup versions must fail with an actionable version error',
 );
+
+function withAttachments(attachments) {
+  return { noteProjects: [], notes: [{ id: 'note', attachments }] };
+}
+
+const referenced = createFavoritesBackupSnapshot({
+  notes: [{ id: 'image-note', sourceRecordId: 'ref' }],
+  records: [
+    { id: 'ref', type: 'image', preview: 'file:///C:/saved/%E5%9B%BE%20%23%25.png' },
+    { id: 'unrelated', type: 'file', files: ['C:/private.pdf'] },
+  ],
+});
+assert.deepStrictEqual(collectFavoriteAssetPaths(referenced), ['C:\\saved\\图 #%.png']);
+assert(!JSON.stringify(referenced.data).includes('private.pdf'));
+assert(!Object.hasOwn(referenced.data.notes[0], 'sourceRecordId'));
+const fromRecord = createFavoritesBackupSnapshot({
+  notes: [{ id: 'link-note', sourceRecordId: 'rec' }],
+  records: [{ id: 'rec', type: 'link', content: 'https://example.com' }],
+});
+assert.strictEqual(fromRecord.data.notes[0].content, 'https://example.com');
+const references = attachmentAssetPaths({
+  path: 'C:\\missing.png', filePath: '/Users/newer.png',
+  preview: 'file:////Users/café%20#copy%.png', dataUrl: 'data:image/png;base64,dGVzdA==',
+  originalPath: '\\\\server\\files\\old.png',
+});
+assert.deepStrictEqual(references, ['C:\\missing.png', '/Users/newer.png', '/Users/café #copy%.png', '\\\\server\\files\\old.png']);
+const unusual = withAttachments([
+  { kind: 'image', dataUrl: 'file://server/share/Scan%20%23.jpg' },
+  { kind: 'file', filePath: '/Users/a/PICTURE' },
+  { kind: 'file', path: '/Users/a/picture' },
+]);
+assert.deepStrictEqual(collectFavoriteAssetPaths(unusual), ['\\\\server\\share\\Scan #.jpg', '/Users/a/PICTURE', '/Users/a/picture']);
+const portableUnusual = rewriteFavoriteAssetPaths(unusual, new Map([
+  ['\\\\server\\share\\Scan #.jpg', 'assets/scan.jpg'],
+  ['/Users/a/PICTURE', 'assets/1'], ['/Users/a/picture', 'assets/2'],
+]));
+assert.deepStrictEqual(portableUnusual.notes[0].attachments.map(item => item.path), ['assets/scan.jpg', 'assets/1', 'assets/2']);
+const decomposed = 'assets/café #%.png'.normalize('NFD');
+const restored = rewriteFavoriteAssetPaths(withAttachments([
+  { kind: 'image', preview: 'assets/café #%.png' },
+  { kind: 'image', path: 'assets/backslash.png' },
+]), new Map([
+  [decomposed, '/Users/new/图 #%.png'],
+  ['assets\\backslash.png', 'D:\\新目录\\图 #%.png'],
+])).notes[0].attachments;
+assert.strictEqual(restored[0].path, '/Users/new/图 #%.png');
+assert.strictEqual(restored[0].preview, 'file:///Users/new/%E5%9B%BE%20%23%25.png');
+assert.strictEqual(restored[1].preview, 'file:///D:/%E6%96%B0%E7%9B%AE%E5%BD%95/%E5%9B%BE%20%23%25.png');
+const inline = { kind: 'image', path: 'C:\\missing.png', dataUrl: 'data:image/png;base64,dGVzdA==' };
+assert.strictEqual(rewriteFavoriteAssetPaths(withAttachments([inline])).notes[0].attachments[0].dataUrl, inline.dataUrl);
+assert.strictEqual(rewriteAttachmentAsset(inline, '/Users/a.png').preview, 'file:///Users/a.png');
+const oldSticky = normalizeImportedFavorites({
+  format: FAVORITES_BACKUP_FORMAT, version: 2,
+  data: { stickyNotes: [{ id: 'old', attachments: [{ filePath: 'assets/legacy.bin' }] }] },
+});
+assert.strictEqual(rewriteFavoriteAssetPaths(oldSticky, { 'assets/legacy.bin': '/Users/restored.bin' }).notes[0].attachments[0].path, '/Users/restored.bin');
+
+for (const invalid of [
+  {}, { format: 'unrelated', notes: [] }, { notes: 'broken' },
+  { format: FAVORITES_BACKUP_FORMAT, version: -1, data: { notes: [] } },
+  { format: FAVORITES_BACKUP_FORMAT, version: 3, data: { noteProjects: [] } },
+  { format: FAVORITES_BACKUP_FORMAT, version: 3, data: { noteProjects: [], notes: [null] } },
+  { format: FAVORITES_BACKUP_FORMAT, version: 3, data: { noteProjects: [], notes: [{ attachments: 'corrupt' }] } },
+]) assert.throws(() => normalizeImportedFavorites(invalid));
+
+const target = {
+  settings: { local: true }, records: [{ id: 'local' }],
+  noteProjects: [{ id: 'cp1', name: '目标' }],
+  notes: [{ id: 'same', projectId: 'cp1', content: '原文', createdAt: 1 }],
+};
+const foreign = {
+  noteProjects: [{ id: 'cp1', name: '来源' }],
+  notes: [{ id: 'same', projectId: 'cp1', content: '带回来的收藏', createdAt: 2 }],
+};
+const once = mergeImportedFavorites(target, foreign);
+assert.strictEqual(once.notes.length, 2);
+assert.strictEqual(once.noteProjects.length, 2);
+assert.strictEqual(once.notes.find(item => item.content === '带回来的收藏').projectId, once.noteProjects.find(item => item.name === '来源').id);
+assert.deepStrictEqual(mergeImportedFavorites(once, foreign), once);
+assert.deepStrictEqual(once.settings, target.settings);
+assert.deepStrictEqual(once.records, target.records);
+const fileNote = {
+  id: 'with-file', projectId: 'cp1', title: '同一文件名',
+  attachments: [{ kind: 'file', name: 'brief.pdf', path: 'D:\\one.pdf', size: 40, assetSha256: 'aaaa' }],
+};
+const firstFile = { ...target, notes: [fileNote] };
+const secondFile = {
+  noteProjects: target.noteProjects, notes: [{
+    ...fileNote, attachments: [{ ...fileNote.attachments[0], path: 'D:\\two.pdf', assetSha256: 'bbbb' }],
+  }],
+};
+const bothFiles = mergeImportedFavorites(firstFile, secondFile);
+assert.strictEqual(bothFiles.notes.length, 2);
+assert.deepStrictEqual(mergeImportedFavorites(bothFiles, secondFile), bothFiles);
+const previous = {
+  id: 'same-source', projectId: 'cp1', createdAt: 123, sourceRecordId: 'local-record',
+  attachments: [{ kind: 'image', name: 'pic.png', path: 'C:\\old.png' }],
+};
+const repaired = mergeImportedFavorites({ ...target, notes: [previous] }, {
+  noteProjects: target.noteProjects,
+  notes: [{ ...previous, attachments: [{ ...previous.attachments[0], path: 'C:\\restored.png', assetSha256: 'aaaa' }] }],
+});
+assert.strictEqual(repaired.notes.length, 1);
+assert.strictEqual(repaired.notes[0].attachments[0].path, 'C:\\restored.png');
+const orphan = mergeImportedFavorites({ notes: [], noteProjects: [] }, { notes: [{ content: '失去分类的旧收藏' }] });
+assert.strictEqual(orphan.notes[0].projectId, orphan.noteProjects[0].id);
+assert.deepStrictEqual(mergeImportedFavorites(orphan, { notes: [{ content: '失去分类的旧收藏' }] }), orphan);
 
 console.log('favorites backup tests passed');
