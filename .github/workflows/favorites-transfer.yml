@@ -27,6 +27,7 @@ jobs:
       - run: npm ci
       - run: node tests/favorites-backup.js
       - run: node tests/favorites-archive.js
+      - run: node tests/favorites-zip-encoding.js
       - run: node tests/favorites-package.js
       - run: node tests/favorites-transfer-electron.js export exchange/favorites.zip
       - uses: actions/upload-artifact@v4

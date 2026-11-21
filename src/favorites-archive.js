@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
+const { hasLegacyGbkNames } = require('./favorites-zip-encoding');
 
 function tarCommand() {
   return process.platform === 'win32' ? 'tar.exe' : '/usr/bin/tar';
@@ -18,7 +19,7 @@ function runArchiveTool(command, args, options = {}) {
 
 // The Windows inbox bsdtar can crash writing ZIP members outside the active code page.
 // Pass paths as environment values so PowerShell never interprets names as commands.
-function windowsZip(operation, archive, directory) {
+function windowsZip(operation, archive, directory, legacyNames = false) {
   const script = [
     "$ErrorActionPreference = 'Stop'",
     "$ProgressPreference = 'SilentlyContinue'",
@@ -26,10 +27,11 @@ function windowsZip(operation, archive, directory) {
     "Add-Type -AssemblyName System.IO.Compression, System.IO.Compression.FileSystem",
     "$archive = $env:XN_FAVORITES_ZIP",
     "$dir = $env:XN_FAVORITES_DIR",
+    legacyNames ? '$encoding = [Text.Encoding]::GetEncoding(936)' : '$encoding = [Text.Encoding]::UTF8',
     operation === 'create'
       ? '[IO.Compression.ZipFile]::CreateFromDirectory($dir, $archive, [IO.Compression.CompressionLevel]::Optimal, $false, [Text.Encoding]::UTF8)'
       : [
-        '$zip = [IO.Compression.ZipFile]::Open($archive, [IO.Compression.ZipArchiveMode]::Read, [Text.Encoding]::UTF8)',
+        '$zip = [IO.Compression.ZipFile]::Open($archive, [IO.Compression.ZipArchiveMode]::Read, $encoding)',
         'try {',
         '  $seen = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)',
         '  foreach ($entry in $zip.Entries) {',
@@ -42,7 +44,7 @@ function windowsZip(operation, archive, directory) {
         "    if ($parts.Count -and !$seen.Add(($parts -join '/').Normalize())) { throw 'Duplicate ZIP filename' }",
         '  }',
         '} finally { $zip.Dispose() }',
-        '[IO.Compression.ZipFile]::ExtractToDirectory($archive, $dir, [Text.Encoding]::UTF8)',
+        '[IO.Compression.ZipFile]::ExtractToDirectory($archive, $dir, $encoding)',
       ].join('\n'),
   ].join('\n');
   try {
@@ -101,23 +103,24 @@ function extractZipToDirectory(zipPath, targetDir) {
       throw new Error('收藏备份只能解压到新的临时目录。');
     }
   }
-  if (process.platform === 'win32') {
-    const signature = Buffer.alloc(4);
-    const file = fs.openSync(archive, 'r');
-    try { fs.readSync(file, signature, 0, 4, 0); } finally { fs.closeSync(file); }
-    if (signature.readUInt32LE() === 0x04034b50 || signature.readUInt32LE() === 0x06054b50) {
-      windowsZip('extract', archive, target);
-      return;
-    }
+  const signature = Buffer.alloc(4);
+  const file = fs.openSync(archive, 'r');
+  try { fs.readSync(file, signature, 0, 4, 0); } finally { fs.closeSync(file); }
+  const zip = [0x04034b50, 0x06054b50].includes(signature.readUInt32LE());
+  const legacyNames = zip && hasLegacyGbkNames(archive);
+  if (zip && process.platform === 'win32') {
+    windowsZip('extract', archive, target, legacyNames);
+    return;
   }
   const command = tarCommand();
-  const names = archiveLines(runArchiveTool(command, ['-tf', archive]));
-  const details = archiveLines(runArchiveTool(command, ['-tvf', archive]));
+  const encoding = legacyNames ? ['--options', 'zip:hdrcharset=CP936'] : [];
+  const names = archiveLines(runArchiveTool(command, [...encoding, '-tf', archive]));
+  const details = archiveLines(runArchiveTool(command, [...encoding, '-tvf', archive]));
   validateArchiveMembers(names, details);
   fs.mkdirSync(target, { recursive: true });
   // macOS bsdtar reads both real ZIPs and the TAR files older Windows builds
   // accidentally named .zip. Keep its default path and symlink protections.
-  runArchiveTool(command, ['-xf', archive, '-C', target]);
+  runArchiveTool(command, [...encoding, '-xf', archive, '-C', target]);
 }
 
 module.exports = { createZipFromDirectory, extractZipToDirectory };

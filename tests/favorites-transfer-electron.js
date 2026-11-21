@@ -17,6 +17,7 @@ const nestedName = '子目录/内容 🎵 %.bin';
 const imageBytes = fs.readFileSync(path.join(__dirname, '../src/xuannian-logo-256.png'));
 const binaryBytes = Buffer.from([0, 9, 35, 37, 127, 128, 254, 255]);
 const otherBytes = Buffer.from([255, 254, 128, 127, 37, 35, 9, 0]);
+let closingTestInstance = false;
 
 function runDriver(mode, archive) {
   assert(['export', 'import'].includes(mode), 'Use export|import <archive.zip>');
@@ -68,8 +69,14 @@ async function runElectron(mode, archive, profile) {
   const { app, clipboard, dialog, shell, webContents } = require('electron');
   const trace = message => fs.appendFileSync(path.join(profile, 'transfer-test.log'), message + '\n');
   trace(`Starting ${mode} using Electron ${process.versions.electron}`);
-  process.on('uncaughtException', error => { trace(String(error.stack || error)); app.exit(1); });
-  process.on('unhandledRejection', error => { trace(String(error?.stack || error)); app.exit(1); });
+  const fail = error => {
+    if (closingTestInstance) return;
+    closingTestInstance = true;
+    trace(String(error?.stack || error));
+    app.exit(1);
+  };
+  process.on('uncaughtException', fail);
+  process.on('unhandledRejection', fail);
   // The archive module captures the real system ZIP/tar tool. Isolate every other native
   // subprocess before production startup (registry, auto-start, clipboard and hotkeys).
   require('../src/favorites-archive');
@@ -200,9 +207,12 @@ async function runElectron(mode, archive, profile) {
 const [mode, inputPath, profile] = process.argv.slice(2);
 if (process.versions.electron) {
   const { app } = require('electron');
-  runElectron(mode, path.resolve(inputPath), profile)
-    .then(() => app.exit(0))
-    .catch(error => { console.error(error); app.exit(1); });
+  runElectron(mode, path.resolve(inputPath), profile).then(() => {
+    // app.exit tears down all WebContents, including unused warm-up windows that
+    // may still be loading. Results above are final before this point.
+    closingTestInstance = true;
+    app.exit(0);
+  }).catch(error => { closingTestInstance = true; console.error(error); app.exit(1); });
 } else {
   runDriver(mode, path.resolve(inputPath));
 }
