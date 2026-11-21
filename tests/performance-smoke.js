@@ -96,12 +96,14 @@ async function run() {
   const mainSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'main.js'), 'utf8');
   const mediaLibrarySource = fs.readFileSync(path.join(__dirname, '..', 'src', 'media-library.js'), 'utf8');
   const favoritesBackupSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'favorites-backup.js'), 'utf8');
+  const favoritesPackageSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'favorites-package.js'), 'utf8');
   const videoThumbnailSource = fs.readFileSync(path.join(__dirname, '..', 'src', 'video-thumbnail.html'), 'utf8');
   const packageMetadata = require('../package.json');
   assert(mainSource.includes(`app.setAppUserModelId('${packageMetadata.build.appId}')`), 'the Windows runtime identity must match the packaged shortcut so the taskbar uses the XuanNian logo');
   assert(!mainSource.includes('app.xuannian.desktop.rounded'), 'the obsolete rounded taskbar identity must not return');
   assert(favoritesBackupSource.includes("FAVORITES_BACKUP_FORMAT = 'xuannian-favorites-backup'"), 'favorites backup must use a dedicated portable format');
-  assert(mainSource.includes("favorites-data.json") && mainSource.includes("manifest.json") && mainSource.includes('.part'), 'favorites export must use a manifest, a favorites-only data file, and an atomic partial archive');
+  assert(favoritesPackageSource.includes("favorites-data.json") && favoritesPackageSource.includes("manifest.json")
+    && favoritesPackageSource.includes("fs.renameSync(archive, destination)"), 'favorites export must use a manifest, a favorites-only data file, and an atomic replacement');
   assert(mainSource.includes('normalizeImportedFavorites') && mainSource.includes('broadcastDataRefresh(saved)'), 'favorites import must normalize the package and refresh all data views');
   assert(/function createQuickWindow\(\)[\s\S]*?backgroundThrottling:\s*true/.test(mainSource), 'hidden quick window must allow Chromium background throttling');
   const warmRefreshStart = mainSource.indexOf('function scheduleQuickWindowWarmRefresh');
@@ -150,7 +152,7 @@ async function run() {
   assert(mainSource.includes('douyinvod\\.com|bytev\\.com|douyinpic\\.com') && mainSource.includes("return 'https://www.douyin.com/'"), 'Douyin CDN downloads must use a Douyin referer instead of the Seekin page referer');
   assert(mainSource.includes('startDirectMediaPortalPreview') && mainSource.includes('startDirectTrackedMediaDownload'), 'direct CDN streaming must support both temporary previews and tracked final downloads');
   assert(mainSource.includes("const hintedKind = ['video', 'audio', 'image']") && mainSource.includes('const textualResponse ='), 'typed media actions must accept generic binary streams without accepting HTML or JSON error pages');
-  assert(mainSource.includes('ignored non-media portal download source=') && mainSource.includes('if (!isDirectMediaActionUrl(safeUrl))'), 'portal pages must never enter the direct media download path');
+  assert(mainSource.includes('ignored non-media portal download source=') && mainSource.includes('!isDirectMediaActionUrl(safeUrl) && !isExpectedMusicDownload(webContents, safeUrl)'), 'only direct media or the active song’s confirmed download link may enter the transfer path');
   assert(mainSource.includes('MEDIA_PREVIEW_MAX_BYTES = 0'), 'Douyin preview caching must retain the selected full media source instead of forcing a lower-quality size-limited file');
   assert(mainSource.includes('isUsableMediaResponseChunk') && mainSource.includes('looksLikeTextualMediaPayload'), 'media streaming must reject HTML or JSON payloads even when a provider labels them as binary');
   assert(mainSource.includes('control: createMediaDownloadControl()') && mainSource.includes('capture.control?.cancel?.()'), 'cancelling a preview must abort its direct network stream');
@@ -237,7 +239,7 @@ async function run() {
   assert(indexSource.includes('MEDIA_PORTAL_HEALTH_KEY') && indexSource.includes('recordMediaPortalFailure') && indexSource.includes('MEDIA_PORTAL_IMMEDIATE_DAILY_FAILURES') && indexSource.includes('nextHealthyMediaPortalIndex'), 'verified site failures must be skipped for the rest of the local day without treating one content failure as a site outage');
   assert(!indexSource.includes('高清音质') && indexSource.includes('handleMediaMusicResultAction(Number(action.dataset.musicIndex),action.dataset.musicAction)'), 'music result actions must route directly without exposing an unverified high-quality option');
   assert(mainSource.includes('startMediaExternalAudioTracker') && mainSource.includes('providerLabel') && mainSource.includes('importExternalAudioTracker'), 'external cloud-drive audio downloads must be tracked and imported without recursive disk scanning');
-  assert(mainSource.includes("taskId: `music-${Date.now()}") && mainSource.includes("status = 'preparing'") && mainSource.includes('claimMediaPortalTaskId'), 'ordinary music downloads must use one visible task from preparation through the real file transfer');
+  assert(mainSource.includes("mediaPortalPendingTask(job, 'queued'") && mainSource.includes("mediaPortalPendingTask(job, 'preparing'") && mainSource.includes('claimMediaPortalTaskId'), 'ordinary music downloads must use one visible task from enqueue through the real file transfer');
   assert(mainSource.includes("providerLabel = '云盘客户端'") && mainSource.includes('等待${tracker.providerLabel}下载'), 'cloud-drive music tasks must identify the launched provider while waiting for a local file');
   assert(indexSource.includes('id="mediaVideoManualPortal"') && indexSource.includes('id="mediaMusicManualPortal"') && indexSource.includes('offerMediaManualPortal'), 'media pages must expose a conditional original-site control after automatic handling fails');
   assert(indexSource.includes("const nextIndex=currentIndex+1<routes.length?currentIndex+1:-1") && indexSource.includes("let portalIndex=Number.isInteger(routeSelection)?routeSelection:0"), 'each video request must actually try the primary route and every configured fallback before manual handling');
@@ -256,7 +258,7 @@ async function run() {
   assert(/data-media-tab="downloads"[\s\S]*?<svg[\s\S]*?<span>已下载<\/span>/.test(indexSource) && /data-media-tab="favorites"[\s\S]*?<svg[\s\S]*?<span>收藏<\/span>/.test(indexSource), 'downloaded and favorite tabs must include distinguishing icons');
   assert(indexSource.includes('data-download-task-delete') && indexSource.includes('handleMediaDownloadTaskDoubleClick') && indexSource.includes('handleMediaDownloadTaskContextMenu'), 'download history must support delete, double-click open, and file context actions');
   assert(!indexSource.includes('data-media-action="play"') && !indexSource.includes('const playAction='), 'downloaded media rows must not render the nonfunctional play-button column');
-  assert(indexSource.includes("['paused','interrupted'].includes(task.status)") && indexSource.includes('api.cancelMediaDownloadTask(task.id)') && indexSource.includes('knownSize'), 'paused and interrupted downloads must show file size and expose a removable task action');
+  assert(indexSource.includes("['queued','paused','interrupted'].includes(task.status)") && indexSource.includes('api.cancelMediaDownloadTask(task.id)') && indexSource.includes('knownSize'), 'queued, paused and interrupted downloads must expose a removable task action and show the size when known');
   assert(indexSource.includes('bindReliableMediaButton') && mainSource.includes('!parsed.embeddedPreview') && mediaStyleSource.includes('display:inline-flex;align-items:center;justify-content:center'), 'video actions must hide the native browser layer and use their full visible button bounds');
   assert(indexSource.includes('id="createMediaCollectionFromPicker"') && indexSource.includes("api.createMediaCollection('favorites',kind,name)"), 'the favorite collection picker must support creating and selecting a new category');
   assert(indexSource.includes("api.setMediaBrowserBounds({},false,'browser')") && indexSource.includes('collection=await showMediaCollectionPicker'), 'embedded video must yield to the favorite collection picker');

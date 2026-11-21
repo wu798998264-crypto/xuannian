@@ -53,7 +53,7 @@ try {
 
   const legacy = path.join(root, 'legacy-windows.zip');
   const legacyPart = path.join(root, 'legacy-windows.zip.part');
-  execFileSync(command, [process.platform === 'win32' ? '-a' : '--format=pax', '-c', '-f', legacyPart, '-C', source, '.'], { windowsHide: true });
+  execFileSync(command, [process.platform === 'win32' ? '--format=ustar' : '--format=pax', '-c', '-f', legacyPart, '-C', source, '.'], { windowsHide: true });
   assert.notStrictEqual(fs.readFileSync(legacyPart).subarray(0, 2).toString(), 'PK', 'fixture must reproduce the old Windows TAR payload');
   fs.renameSync(legacyPart, legacy);
 
