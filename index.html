@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <script>if(window.nativeAPI?.platform==='darwin') document.documentElement.classList.add('platform-mac');</script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>玄念9.2.9</title>
+  <title>玄念9.3.0</title>
   <link rel="icon" href="src/xuannian-logo-256.png" />
   <link rel="stylesheet" href="src/media-library.css" />
   <style>
@@ -512,6 +512,12 @@
     .compact-notice{display:none}
     .draggable-card{cursor:grab}
     .draggable-card:active{cursor:grabbing}
+    #noteList .draggable-card{user-select:none}
+    .note-sorting,.note-sorting #noteList{cursor:grabbing}
+    .note-sorting .page-coach,.note-sorting #imageHoverPreview{visibility:hidden;pointer-events:none}
+    .note-sort-ghost,.note-sort-line{position:fixed;top:0;left:0;z-index:98;pointer-events:none}
+    .note-sort-ghost{max-width:min(250px,60vw);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;padding:6px 12px;border-radius:8px;background:var(--panel);color:var(--text);border:1px solid var(--line);box-shadow:var(--shadow);font-size:13px}
+    .note-sort-line{height:3px;border-radius:2px;background:var(--blue)}
     .record.dragging{opacity:.45}
     .record.drag-over{outline:2px dashed var(--black);outline-offset:2px}
     .sticky-card.dragging{opacity:.45}
@@ -1332,6 +1338,10 @@
             <button class="ghost-btn cache-clear-btn" id="clearClipboardCache" type="button">清理缓存</button>
           </div>
         </div>
+        <div class="setting-card" id="loginItemSetting" hidden>
+          <span>开机自启动</span>
+          <label class="settings-inline"><input type="checkbox" id="settingOpenAtLogin" checked disabled /> 登录系统时自动启动玄念</label>
+        </div>
         <div class="setting-card">
           <div class="setting-title">快捷窗口快捷键<button class="setting-help-icon" id="showQuickGuide" type="button" title="查看快捷窗口说明" aria-label="查看快捷窗口说明">!</button></div>
           <div class="settings-inline">
@@ -1431,6 +1441,8 @@
 
 <script src="src/wheel-scroll.js"></script>
 <script src="src/attachment-paths.js"></script>
+<script src="src/note-order.js"></script>
+<script src="src/note-drag.js"></script>
 <script>
 const fallbackApi = createBrowserFallbackAPI();
 const api = createUnifiedAPI(window.nativeAPI, fallbackApi);
@@ -1543,7 +1555,7 @@ const state = {
   sendingInspiration: false,
   mediaRecorder: null,
   recordingChunks: [],
-  noteManagement: { active:false },
+  draggedNoteId: null,
   ideaManagement: { active:false },
   modalCloseGuard: null,
   videoThumbObserver: null,
@@ -1648,7 +1660,7 @@ const onboardingKeys={
 };
 const pageCoachCopy={
   clipboard:{title:'剪切板',text:'复制或剪切文字、图片和文件后，内容会自动出现在这里。'},
-  notes:{title:'收藏',text:'点击即可复用；长按并拖动可调整顺序，拖到左侧分类可移动分类。'},
+  notes:{title:'收藏',text:'单击收藏条可复制内容。按住上下拖动，松手即可保存顺序。拖到左侧分类可更改归类。'},
   search:{title:'全盘查找',text:'输入文件名即可查看本机文件和文件夹。'},
   stickies:{title:'便签',text:'新建便签后点击置顶，可以把参考文字或图片留在桌面上。'},
 };
@@ -1825,7 +1837,7 @@ function createBrowserFallbackAPI(){
     async getNotes(){ return read().notes; },
     async saveNotes(notes){ const data=read(); data.notes=notes; write(data); return data.notes; },
     async addNote(note){ const data=read(); const nextOrder=Math.max(0,...data.notes.filter(x=>x.projectId===note.projectId).map(x=>Number(x.order||0)))+1; const item={id:uid('note'),createdAt:Date.now(),order:nextOrder,...note}; data.notes.unshift(item); write(data); return data.notes; },
-    async reorderNotes(projectId, orderedIds){ const data=read(); const orderMap=new Map(orderedIds.map((id,index)=>[id,index+1])); data.notes=data.notes.map(x=>x.projectId===projectId && orderMap.has(x.id)?{...x,order:orderMap.get(x.id)}:x); write(data); return data.notes; },
+    async reorderNotes(projectId, orderedIds){ const data=read(); data.notes=applyNoteOrder(data.notes,projectId,orderedIds); write(data); return data.notes; },
     async updateNote(id, patch){ const data=read(); data.notes=data.notes.map(x=>x.id===id?{...x,...patch}:x); write(data); return data.notes; },
     async deleteNote(id){ const data=read(); const current=data.notes.find(x=>x.id===id); if(current){ const attachments=Array.isArray(current.attachments)?current.attachments:[]; const files=attachments.map(item=>item.path||item.filePath||'').filter(Boolean); const firstImage=attachments.find(item=>item.kind==='image'&&(item.preview||item.dataUrl||item.path)); data.records=data.records||[]; data.records.unshift({id:uid('rec'),createdAt:Date.now(),retentionDays:Number(data.settings?.retentionDays||30),type:files.length?(attachments.every(item=>item.kind==='image')?'image':'file'):'text',content:String(current.content||current.title||'').trim() || (files.length?files.join('\n'):'收藏备份'),preview:firstImage?.preview||firstImage?.dataUrl||(firstImage?.path?`file:///${String(firstImage.path).replace(/\\/g,'/')}`:''),files,sizeText:files.length?`${files.length} 个附件`:'',sourceNoteId:current.id,source:'deleted-note-backup'}); } data.notes=data.notes.filter(x=>x.id!==id); write(data); return data.notes; },
     async getStickyNotes(){ return read().stickyNotes || []; },
@@ -1857,7 +1869,7 @@ function createBrowserFallbackAPI(){
     async deleteInspiration(id){ const data=read(); data.inspirations=data.inspirations.filter(x=>x.id!==id); write(data); return data.inspirations; },
     async getSettings(){ return read().settings; },
     async saveSettings(settings){ const data=read(); data.settings={...data.settings,...settings}; write(data); return data.settings; },
-    async getUpdateState(){ return {status:'current',revision:0,currentVersion:'9.2.9',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false,repositoryUrl:'https://github.com/wu798998264-crypto/xuannian'}; },
+    async getUpdateState(){ return {status:'current',revision:0,currentVersion:'9.3.0',version:'',percent:0,message:'浏览器预览版不检查更新',portable:false,manualInstall:false,platform:'browser',supported:false,repositoryUrl:'https://github.com/wu798998264-crypto/xuannian'}; },
     async checkForUpdates(){ return this.getUpdateState(); },
     async downloadUpdate(){ return this.getUpdateState(); },
     async installUpdate(){ return false; },
@@ -2209,7 +2221,7 @@ async function init(){
     }
   });
   window.nativeAPI?.onMainSuspend?.(()=>{
-    exitManagementModes();
+    exitIdeaManagement();
   });
   window.nativeAPI?.onScreenshotCaptured?.(async(result)=>{
     if(!result?.path) return;
@@ -2267,9 +2279,9 @@ function showFirstRunTaskGuide(){
       demo:`<div class="tour-demo-row"><span class="tour-demo-icon">${iconSvg('pin')}</span><b>今日待办</b></div><div class="tour-demo-row"><span class="tour-demo-icon">${iconSvg('pin')}</span><span>绘画参考图</span></div><div style="display:flex;justify-content:center"><span class="tour-demo-key">${escapeHtml(stickyHotkey)}</span></div>`,
     },
     {
-      title:'长按拖动，整理更直接',
-      text:'长按收藏或便签并拖动，可以调整显示顺序；把内容拖到左侧目标分类，就能直接修改分类。',
-      demo:`<div class="tour-demo-row"><b>常用回复</b><span style="margin-left:auto;color:var(--muted)">分类</span></div><div class="tour-demo-row" style="transform:translateX(14px);border:1px dashed var(--text)"><span>长按并拖动内容</span><b style="margin-left:auto">→</b></div><div class="tour-demo-row"><b>工作模板</b><span style="margin-left:auto;color:var(--muted)">目标分类</span></div>`,
+      title:'拖动调整顺序或分类',
+      text:'按住收藏或便签上下拖动，松手即可保存顺序。拖到左侧分类可更改归类。',
+      demo:`<div class="tour-demo-row"><b>常用回复</b><span style="margin-left:auto;color:var(--muted)">分类</span></div><div class="tour-demo-row" style="transform:translateX(14px);border:1px dashed var(--text)"><span>拖到目标分类</span><b style="margin-left:auto">→</b></div><div class="tour-demo-row"><b>工作模板</b><span style="margin-left:auto;color:var(--muted)">目标分类</span></div>`,
     },
   ];
   let stepIndex=0;
@@ -2755,10 +2767,18 @@ function bindEvents(){
     state.clipboardRenderLimit=Math.min(total,state.clipboardRenderLimit+60);
     renderClipboard();
   });
-  $('#noteList').addEventListener('scroll', ()=>{
+  const noteList=$('#noteList');
+  bindFavoriteRowDrag(noteList,{
+    rowHeight:NOTE_ROW_HEIGHT, rowGap:14, items:filteredNotes, project:()=>state.activeNoteProject,
+    onStart:id=>{ state.draggedNoteId=id; hidePageCoach(); },
+    onEnd:()=>{ state.draggedNoteId=null; },
+    onDrop:dropFavoriteNote,
+  });
+  noteList.addEventListener('scroll', ()=>{
     scheduleRenderFrame('note-scroll', ()=>{
-      const start=Math.max(0,Math.floor($('#noteList').scrollTop/NOTE_ROW_HEIGHT)-NOTE_WINDOW_OVERSCAN);
-      if(start!==state.noteVirtualStart) renderNotes();
+      const last=Math.max(0,filteredNotes().length-NOTE_WINDOW_SIZE);
+      const start=Math.min(last,Math.max(0,Math.floor(noteList.scrollTop/NOTE_ROW_HEIGHT)-NOTE_WINDOW_OVERSCAN));
+      if(start!==state.noteVirtualStart && (start===0 || start===last || Math.abs(start-state.noteVirtualStart)>=NOTE_WINDOW_OVERSCAN)) renderNotes();
     });
   });
   $('#manualClipboardRead')?.addEventListener('click', async ()=>{
@@ -2780,6 +2800,7 @@ function bindEvents(){
   $('#replayOnboarding')?.addEventListener('click', replayOnboarding);
   $('#showStickyGuide')?.addEventListener('click', showStickyGuide);
   $('#saveSettings').addEventListener('click', saveSettings);
+  bindOpenAtLoginSetting();
   $('#resetAllHotkeys')?.addEventListener('click', resetAllHotkeyInputs);
   $('#settingHotkey').addEventListener('keydown', (e)=>captureHotkeyInput(e, $('#settingHotkey')));
   bindMouseHotkeyInput($('#settingHotkey'));
@@ -2795,12 +2816,12 @@ function bindEvents(){
   $('#settingAlwaysTop')?.addEventListener('click', toggleAlwaysTop);
   $('#windowPinBtn').addEventListener('click', toggleAlwaysTop);
   $('#windowMinBtn')?.addEventListener('click', ()=>{
-    exitManagementModes();
+    exitIdeaManagement();
     window.nativeAPI?.minimizeWindow?.();
   });
   $('#windowMaxBtn')?.addEventListener('click', ()=>window.nativeAPI?.toggleMaximizeWindow?.());
   $('#windowCloseBtn')?.addEventListener('click', ()=>{
-    exitManagementModes();
+    exitIdeaManagement();
     window.nativeAPI?.closeWindow?.();
   });
   bindWindowMoveStrip();
@@ -5799,7 +5820,7 @@ async function switchView(view,{skipCoach=false}={}){
     api.setMediaBrowserBounds({},false);
   }
   if(previousView==='settings' && view!=='settings') renderSettings();
-  exitManagementModes();
+  exitIdeaManagement();
   state.view=view;
   $$('.nav-btn[data-view]').forEach(btn=>btn.classList.toggle('active', btn.dataset.view===view));
   $$('.view').forEach(v=>v.classList.remove('active'));
@@ -6513,20 +6534,6 @@ function bindImagePreview(){
   });
 }
 
-function startNoteManagement(){
-  state.noteManagement.active=true;
-  renderNotes();
-}
-
-async function toggleNoteManagement(){
-  if(state.noteManagement.active){
-    state.noteManagement.active=false;
-    renderNotes();
-    return;
-  }
-  startNoteManagement();
-}
-
 function startIdeaManagement(){
   state.ideaManagement.active=true;
   renderIdeaCategories();
@@ -6546,12 +6553,8 @@ async function toggleIdeaManagement(){
   startIdeaManagement();
 }
 
-function exitManagementModes(){
-  const noteWasActive=state.noteManagement.active;
-  if(noteWasActive && $('#modalBackdrop')?.classList.contains('show')) closeModal();
-  state.noteManagement.active=false;
+function exitIdeaManagement(){
   state.ideaManagement.active=false;
-  if(noteWasActive && state.view==='notes') renderNotes();
 }
 
 
@@ -6583,7 +6586,6 @@ function renderNoteProjects(){
     if(action==='rename') showEditNoteCategoryModal(projectId);
     if(action==='delete') await deleteNoteCategory(projectId);
   });
-  bindCategoryDropTargets('note');
   bindProjectDragSort('note');
 }
 
@@ -6596,7 +6598,7 @@ function renderStickyProjects(){
   }
   wrap.innerHTML=projects.map(p=>`<button class="project-item ${p.id===state.activeStickyProject?'active':''}" draggable="true" data-drag-project="sticky" data-sticky-project-id="${p.id}" title="${escapeHtml(p.name)}">${escapeHtml(p.name)}</button>`).join('');
   $$('[data-sticky-project-id]').forEach(btn=>btn.onclick=()=>{ state.activeStickyProject=btn.dataset.stickyProjectId; renderStickyProjects(); renderStickyNotes(); });
-  bindCategoryDropTargets('sticky');
+  bindStickyCategoryDropTargets();
   bindProjectDragSort('sticky');
 }
 
@@ -6608,7 +6610,7 @@ function filteredNotes(){
   const items=source
     .filter(x=>x.projectId===state.activeNoteProject)
     .filter(x=> !q || String(x.title||'').toLowerCase().includes(q) || String(x.content||'').toLowerCase().includes(q) || (x.note||'').toLowerCase().includes(q))
-    .sort((a,b)=>Number(a.order||9999)-Number(b.order||9999) || Number(b.createdAt||0)-Number(a.createdAt||0));
+    .sort(compareNoteOrder);
   state.noteFilterCache={source,key,items};
   return items;
 }
@@ -6677,7 +6679,7 @@ function renderNotes(){
     const attachments=renderNoteAttachments(item.attachments||[]);
     const title=visibleNoteTitle(item.title);
     return `
-    <article class="record copyable draggable-card" draggable="true" data-note-card="${item.id}" data-drag-note="${item.id}" title="点击复制；长按拖动可排序或移动分类">
+    <article class="record copyable draggable-card${item.id===state.draggedNoteId?' dragging':''}" data-note-card="${item.id}" title="点击复制，拖动调整顺序或移动分类">
       <div class="type-bar text"></div>
       <div>
         <div class="record-head">${title ? `<span class="note-card-title">${escapeHtml(title)}</span>` : ''}<span class="record-time">${nowText(item.createdAt)}</span></div>
@@ -6721,7 +6723,6 @@ function renderNotes(){
     event.stopPropagation();
     await deleteNoteById(btn.dataset.deleteNote);
   });
-  bindNoteDragSort();
   bindImagePreview();
   bindVideoThumbnails(list);
   hydrateNativeFileIcons(list);
@@ -7013,48 +7014,20 @@ function itemImageSourceForCopy(item){
   return image ? attachmentImageSrc(image) : '';
 }
 
-function bindNoteDragSort(){
-  $$('[data-drag-note]').forEach(card=>{
-    card.addEventListener('dragstart', event=>{
-      if(event.target.closest('button,input,textarea,select,a')){ event.preventDefault(); return; }
-      state.draggedNoteId=card.dataset.dragNote;
-      event.dataTransfer.effectAllowed='move';
-      event.dataTransfer.setData('text/plain', state.draggedNoteId);
-      card.classList.add('dragging');
-      showDragCoachOnce('note');
-    });
-    card.addEventListener('dragend', ()=>{
-      state.draggedNoteId=null;
-      $$('#noteList .record').forEach(card=>card.classList.remove('dragging','drag-over'));
-      $$('#noteProjectList .project-item').forEach(item=>item.classList.remove('drag-target'));
-    });
-  });
-  $$('[data-note-card]').forEach(card=>{
-    card.addEventListener('dragover', event=>{
-      if(!state.draggedNoteId || state.draggedNoteId===card.dataset.noteCard) return;
-      event.preventDefault();
-      card.classList.add('drag-over');
-    });
-    card.addEventListener('dragleave', ()=>card.classList.remove('drag-over'));
-    card.addEventListener('drop', async event=>{
-      event.preventDefault();
-      const draggedId=state.draggedNoteId || event.dataTransfer.getData('text/plain');
-      await reorderVisibleNotes(draggedId, card.dataset.noteCard);
-    });
-  });
-}
-
-async function reorderVisibleNotes(draggedId, targetId){
-  if(!draggedId || !targetId || draggedId===targetId) return;
-  const visible=filteredNotes();
-  const ids=visible.map(x=>x.id);
-  const from=ids.indexOf(draggedId);
-  const to=ids.indexOf(targetId);
-  if(from<0 || to<0) return;
-  ids.splice(to,0,ids.splice(from,1)[0]);
-  state.notes=await api.reorderNotes(state.activeNoteProject, ids);
-  renderNotes();
-  toast('收藏顺序已更新');
+async function dropFavoriteNote(draggedId,projectId,slot,destination){
+  if(destination){
+    const note=state.notes.find(item=>item.id===draggedId);
+    if(!note || note.projectId!==projectId || destination===projectId) return;
+    const order=state.notes.reduce((max,item)=>item.projectId===destination?Math.max(max,Number(item.order)||0):max,0)+1;
+    try{
+      state.notes=await api.updateNote(draggedId,{projectId:destination,order});
+      renderNoteProjects();
+      renderNotes();
+      toast('收藏已移动到目标分类');
+    }catch{ toast('移动收藏失败，请重试'); }
+    return;
+  }
+  await reorderFavoriteRow(draggedId,projectId,slot,{items:filteredNotes(),state,api,render:renderNotes,toast});
 }
 
 function bindStickyDragSort(){
@@ -7065,7 +7038,7 @@ function bindStickyDragSort(){
       event.dataTransfer.effectAllowed='move';
       event.dataTransfer.setData('text/plain', state.draggedStickyId);
       card.classList.add('dragging');
-      showDragCoachOnce('sticky');
+      showStickyDragCoachOnce();
     });
     card.addEventListener('dragend', ()=>{
       state.draggedStickyId=null;
@@ -7101,24 +7074,20 @@ async function reorderVisibleStickyNotes(draggedId, targetId){
   toast('便签顺序已更新');
 }
 
-function showDragCoachOnce(kind){
-  const key=`xuannian.drag-guide.${kind}.v1`;
+function showStickyDragCoachOnce(){
+  const key='xuannian.drag-guide.sticky.v1';
   if(localStorage.getItem(key)==='seen') return;
   localStorage.setItem(key,'seen');
-  const isNote=kind==='note';
   showCoach({
-    title:isNote?'拖动收藏':'拖动便签',
+    title:'拖动便签',
     text:`继续拖到内容之间可调整顺序；拖到左侧目标分类即可移动分类。`,
   });
 }
 
-function bindCategoryDropTargets(kind){
-  const isNote=kind==='note';
-  const selector=isNote?'[data-project-id]':'[data-sticky-project-id]';
-  $$(selector).forEach(target=>{
+function bindStickyCategoryDropTargets(){
+  $$('[data-sticky-project-id]').forEach(target=>{
     target.addEventListener('dragover',event=>{
-      const dragging=isNote?state.draggedNoteId:state.draggedStickyId;
-      if(!dragging) return;
+      if(!state.draggedStickyId) return;
       event.preventDefault();
       event.dataTransfer.dropEffect='move';
       target.classList.add('drag-target');
@@ -7127,26 +7096,16 @@ function bindCategoryDropTargets(kind){
     target.addEventListener('drop',async event=>{
       event.preventDefault();
       target.classList.remove('drag-target');
-      const id=isNote?state.draggedNoteId:state.draggedStickyId;
-      const projectId=isNote?target.dataset.projectId:target.dataset.stickyProjectId;
+      const id=state.draggedStickyId;
+      const projectId=target.dataset.stickyProjectId;
       if(!id||!projectId) return;
-      if(isNote){
-        const item=state.notes.find(entry=>entry.id===id);
-        if(!item||item.projectId===projectId) return;
-        const order=Math.max(0,...state.notes.filter(entry=>entry.projectId===projectId).map(entry=>Number(entry.order||0)))+1;
-        state.notes=await api.updateNote(id,{projectId,order});
-        renderNoteProjects();
-        renderNotes();
-        toast('收藏已移动到目标分类');
-      }else{
-        const item=state.stickyNotes.find(entry=>entry.id===id);
-        if(!item||item.projectId===projectId) return;
-        const order=Math.max(0,...state.stickyNotes.filter(entry=>entry.projectId===projectId).map(entry=>Number(entry.order||0)))+1;
-        state.stickyNotes=await api.updateStickyNote(id,{projectId,order});
-        renderStickyProjects();
-        renderStickyNotes();
-        toast('便签已移动到目标分类');
-      }
+      const item=state.stickyNotes.find(entry=>entry.id===id);
+      if(!item||item.projectId===projectId) return;
+      const order=Math.max(0,...state.stickyNotes.filter(entry=>entry.projectId===projectId).map(entry=>Number(entry.order||0)))+1;
+      state.stickyNotes=await api.updateStickyNote(id,{projectId,order});
+      renderStickyProjects();
+      renderStickyNotes();
+      toast('便签已移动到目标分类');
     });
   });
 }
@@ -8096,6 +8055,34 @@ function applyAlwaysTop(enabled){
 async function toggleAlwaysTop(){
   const next=!state.settings.alwaysOnTop; const actual=await api.setAlwaysOnTop(next); state.settings.alwaysOnTop=actual; applyAlwaysTop(actual); toast(actual?'窗口已置顶':'窗口已取消置顶');
 }
+async function bindOpenAtLoginSetting(){
+  const native=window.nativeAPI;
+  if(!native?.getOpenAtLogin || !['win32','darwin'].includes(native.platform)) return;
+  const input=$('#settingOpenAtLogin');
+  $('#loginItemSetting').hidden=false;
+  try {
+    input.checked=await native.getOpenAtLogin();
+    input.disabled=false;
+  } catch {
+    toast('无法读取开机自启动设置');
+    return;
+  }
+  input.addEventListener('change', async()=>{
+    const enabled=input.checked;
+    input.disabled=true;
+    try {
+      const result=await native.setOpenAtLogin(enabled);
+      input.checked=result.enabled;
+      toast(result.requiresApproval?'请在系统设置的「登录项」中允许玄念启动':(enabled?'已开启开机自启动':'已关闭开机自启动'));
+    } catch {
+      input.checked=!enabled;
+      toast('开机自启动设置未保存，请检查系统登录项后重试');
+    } finally {
+      input.disabled=false;
+    }
+  });
+}
+
 function renderSettings(){
   $('#settingStorage').value=state.settings.storagePath || '';
   $('#settingMediaDownloadPath').value=state.settings.mediaDownloadPath || state.media.downloadPath || '';
@@ -8560,7 +8547,7 @@ function showUpdateDialog(){
   showModal(`
     <div data-update-dialog>
       <div class="modal-header"><h3>软件更新</h3><button class="modal-close" id="closeModal">×</button></div>
-      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '9.2.9')}</b><span>${hasNewerUpdateVersion(update)?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
+      <div class="update-version-line"><b>玄念 ${escapeHtml(update.currentVersion || '9.3.0')}</b><span>${hasNewerUpdateVersion(update)?`最新版本 ${escapeHtml(update.version)}`:'稳定更新通道'}</span></div>
       <div class="modal-message">${escapeHtml(updateStatusText())}</div>
       <p class="update-network-tip">提示：开启 VPN 后再检测更新，结果会更加准确。</p>
       ${busy||downloaded?`<div class="update-progress"><span style="width:${downloaded?100:progress}%"></span></div>`:''}

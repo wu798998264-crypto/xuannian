@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, dialog, globalShortcut, clipboard, desktopCapturer, screen, Menu, nativeImage, shell } = require('electron');
 const { Notification, WebContentsView, nativeTheme } = require('electron');
 const { createApplicationWindow } = require('./application-window');
+const { applyNoteOrder } = require('./note-order');
 const { attachEditableContextMenu } = require('./editable-context-menu');
 const { buildMusicPageSnapshotScript, isMusicSearchDocument } = require('./music-page');
 const { musicOperationDeadline, musicOperationTimeoutReason, executeMusicPageScript } = require('./music-operation');
@@ -321,6 +322,26 @@ function startupExecutablePath() {
   const portableExecutable = String(process.env.PORTABLE_EXECUTABLE_FILE || '').trim();
   if (portableExecutable && fs.existsSync(portableExecutable)) return portableExecutable;
   return process.execPath;
+}
+
+function loginPreferenceFile() {
+  // A login item belongs to this OS account, even if the user shares a storage folder.
+  return path.join(app.getPath('userData'), 'login-preference.json');
+}
+
+function readOpenAtLogin() {
+  return readJsonWithRecoverySync(loginPreferenceFile(), { enabled: true })?.enabled !== false;
+}
+
+function applyOpenAtLogin(enabled) {
+  const options = process.platform === 'win32' ? { path: startupExecutablePath() } : {};
+  app.setLoginItemSettings({ ...options, openAtLogin: enabled });
+  const status = app.getLoginItemSettings(options);
+  const requiresApproval = enabled && status.status === 'requires-approval';
+  if (status.openAtLogin !== enabled && !requiresApproval) {
+    throw Error('系统未能更新玄念的登录启动项。');
+  }
+  return { enabled, requiresApproval };
 }
 
 function appHtmlPath(fileName) {
@@ -7132,7 +7153,7 @@ async function flushDataWrites(timeoutMs = 5000) {
 function broadcastDataRefresh(data = null, options = {}) {
   dataRevision += 1;
   const next = data || loadData({ clone: false });
-  if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed() && mainWindow.isVisible()) {
+  if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed() && mainWindow.isVisible() && mainWindow.webContents !== options.excludeSender) {
     if (options.recordsOnly) mainWindow.webContents.send('native-clipboard-records', next.records);
     else mainWindow.webContents.send('native-data-refresh');
   }
@@ -7142,6 +7163,10 @@ function broadcastDataRefresh(data = null, options = {}) {
 
 function scheduleQuickWindowWarmRefresh(data, options = {}) {
   if (!isQuickWindowUsable()) return;
+  if (quickWindow.webContents === options.excludeSender) {
+    quickWindowRevision = dataRevision;
+    return;
+  }
   if (quickWindow.webContents.isLoading()) {
     quickWindowDataDirty = true;
     return;
@@ -8873,6 +8898,11 @@ app.whenReady().then(() => {
   // shortcut; a mismatched identity falls back to Electron's default icon.
   app.setAppUserModelId('app.xuannian.desktop');
   Menu.setApplicationMenu(null);
+  if (app.isPackaged && ['darwin', 'win32'].includes(process.platform)) {
+    try { applyOpenAtLogin(readOpenAtLogin()); } catch (error) {
+      runtimeLog(`login item setup failed: ${error.message}`);
+    }
+  }
   protectUserDataOnStartup();
   cleanupMediaPreviewCache();
   createWindow();
@@ -8889,9 +8919,6 @@ app.whenReady().then(() => {
   setTimeout(() => {
     if (!isQuitting) getFileSearchService().prewarm().catch((error) => runtimeLog(`file search prewarm failed: ${error?.message || error}`));
   }, 1800);
-  setTimeout(() => {
-    if (!isQuitting) app.setLoginItemSettings({ openAtLogin: true, path: startupExecutablePath() });
-  }, 1200);
 });
 }
 
@@ -8937,6 +8964,15 @@ app.on('will-quit', () => {
 });
 
 ipcMain.handle('data:load', () => loadData({ clone: false }));
+ipcMain.handle('notes:reorder', async (event, projectId, orderedIds) => {
+  const data = loadData({ clone: false });
+  if (!Array.isArray(orderedIds) || !orderedIds.length) return data.notes;
+  const notes = applyNoteOrder(data.notes, projectId, orderedIds);
+  await saveDataDurable({ ...data, notes }, { skipLocalizeAssets: true, clone: false });
+  const latest = loadData({ clone: false });
+  broadcastDataRefresh(latest, { notifySticky: false, excludeSender: event.sender });
+  return latest.notes;
+});
 
 ipcMain.handle('search:status', () => getFileSearchService().getStatus());
 ipcMain.handle('search:initialize', () => getFileSearchService().initialize());
@@ -9244,6 +9280,21 @@ ipcMain.handle('data:save', async (_event, data) => {
   broadcastDataRefresh(saved, { notifySticky: stickyRefreshNeeded });
   if (settingsChanged) notifySettingsChanged(saved.settings);
   return { ok: true, data: saved };
+});
+
+ipcMain.handle('settings:getOpenAtLogin', () => readOpenAtLogin());
+ipcMain.handle('settings:setOpenAtLogin', (_event, enabled) => {
+  if (typeof enabled !== 'boolean') throw Error('开机自启动设置无效。');
+  const previous = readOpenAtLogin();
+  try {
+    const result = applyOpenAtLogin(enabled);
+    writeJsonAtomicSync(loginPreferenceFile(), JSON.stringify({ enabled }));
+    return result;
+  } catch (error) {
+    try { applyOpenAtLogin(previous); } catch {}
+    runtimeLog(`login item change failed: ${error.message}`);
+    throw Error('开机自启动设置未保存，请检查系统登录项设置后重试。');
+  }
 });
 
 ipcMain.handle('window:setAlwaysOnTop', (_event, enabled) => {

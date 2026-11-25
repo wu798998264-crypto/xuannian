@@ -242,6 +242,20 @@ async function run() {
   assert.strictEqual(musicPreview.ok, true);
   assert.strictEqual(musicPreview.previewUrl, 'https://cdn.example.com/test-song.mp3');
 
+  let musicDownloadRequestId = 0;
+  const requestSong = async (timeoutMs = 4000) => {
+    const options = { mode: 'music-download', musicDownloadRequestId: ++musicDownloadRequestId };
+    const deadline = Date.now() + timeoutMs;
+    let result;
+    do {
+      result = await win.webContents.executeJavaScript(buildPortalScript(options, scoreMediaDownloadQualityLabel), true);
+      if (!result.continueMusicDownload) return result;
+      if (result.readyMusicHref) options.expectedMusicDownloadUrl = result.readyMusicHref;
+      await new Promise(resolve => setTimeout(resolve, 80));
+    } while (Date.now() < deadline);
+    return result;
+  };
+
   await loadFixture(win, '<div id="slot"></div>', `
     window.musicDownloaded = false;
     setTimeout(() => {
@@ -249,16 +263,155 @@ async function run() {
       document.querySelector('#download').addEventListener('click', () => {
         setTimeout(() => {
           document.querySelector('#slot').insertAdjacentHTML('beforeend', '<button id="low-quality" style="width:180px;height:42px">#2 下载低品质MP3</button>');
-          document.querySelector('#low-quality').addEventListener('click', () => { window.musicDownloaded = true; });
+          document.querySelector('#low-quality').addEventListener('click', () => {
+            window.musicDownloaded = true;
+            document.querySelector('#slot').insertAdjacentHTML('beforeend', '<a href="https://cdn.example.com/song.mp3">下载歌曲</a>');
+          });
         }, 240);
       });
     }, 280);
   `);
   console.log('probe: delayed music download quality dialog');
-  const musicDownload = await win.webContents.executeJavaScript(buildPortalScript({ mode: 'music-download', timeoutMs: 4000 }, scoreMediaDownloadQualityLabel), true);
+  const musicDownload = await requestSong();
   assert.strictEqual(musicDownload.ok, true);
   assert.strictEqual(musicDownload.clicked, true);
   assert.strictEqual(await win.webContents.executeJavaScript('window.musicDownloaded'), true);
+
+  console.log('probe: keep watching after choosing ordinary quality and confirm the actual file');
+  await loadFixture(win, '<button id="ordinary" disabled>普通下载（排队）</button><button id="other">确定</button>', `
+    window.steps = [];
+    other.onclick = () => window.steps.push('unrelated');
+    setTimeout(() => { ordinary.disabled = false; ordinary.textContent = '下载低品质 MP3'; }, 300);
+    ordinary.onclick = () => {
+      window.steps.push('quality');
+      setTimeout(() => {
+        document.body.insertAdjacentHTML('beforeend', '<div role="dialog"><p>确认下载普通音质歌曲？</p><button id="confirm">确定</button></div>');
+        document.getElementById('confirm').onclick = () => {
+          window.steps.push('confirm');
+          setTimeout(() => document.body.insertAdjacentHTML('beforeend', '<a download href="https://cdn.example.com/finished.mp3">下载歌曲文件</a>'), 300);
+        };
+      }, 350);
+    };
+  `);
+  const confirmed = await requestSong();
+  assert.strictEqual(confirmed.href, 'https://cdn.example.com/finished.mp3');
+  assert.deepStrictEqual(await win.webContents.executeJavaScript('window.steps'), ['quality', 'confirm']);
+
+  console.log('probe: use the ordinary card for both clicks exactly once, after queue and link readiness');
+  await loadFixture(win, `
+    <div>排队 <span id="download-countdown">2</span> 秒后自动为您获取下载链接</div>
+    <a id="card" data-normal-download="1" target="_blank" download="歌曲.mp3" href="#"><h6>直链下载通道</h6><p role="status">直接将歌曲保存到本地设备</p></a>
+    <button id="cloud">下载高品质网盘音乐</button>
+  `, `
+    window.steps = [];
+    const counter = document.getElementById('download-countdown');
+    const card = document.getElementById('card');
+    const status = card.querySelector('[role="status"]');
+    cloud.onclick = () => window.steps.push('cloud');
+    setTimeout(() => { counter.textContent = '0'; counter.parentElement.hidden = true; }, 250);
+    card.onclick = event => {
+      event.preventDefault();
+      if (card.getAttribute('href') !== '#') {
+        window.steps.push(card.hasAttribute('aria-disabled') ? 'too early' : 'download');
+        return;
+      }
+      window.steps.push(counter.textContent === '0' ? 'request' : 'before queue completed');
+      card.setAttribute('aria-busy','true');
+      card.setAttribute('aria-disabled','true');
+      status.textContent = '正在准备下载，请稍候…';
+      setTimeout(() => { card.href = 'https://cdn.example.com/opaque-signed-url'; }, 140);
+      setTimeout(() => {
+        card.removeAttribute('aria-disabled'); card.removeAttribute('aria-busy');
+        status.textContent = '链接已就绪，再次点击即可下载';
+      }, 420);
+    };
+  `);
+  const pendingFile = await requestSong(1400);
+  assert.strictEqual(pendingFile.continueMusicDownload, true);
+  assert.strictEqual(pendingFile.ok, false, 'a DOM click alone must not count as a download');
+  assert.deepStrictEqual(await win.webContents.executeJavaScript('window.steps'), ['request', 'download']);
+
+  console.log('probe: a ready ordinary card clicks once after the current signed URL is accepted');
+  await loadFixture(win, '<a id="card" data-normal-download download="歌曲.mp3" href="https://cdn.example.com/ready.mp3">直链下载通道</a>', `
+    window.clicks = 0;
+    card.onclick = event => { event.preventDefault(); window.clicks++; };
+  `);
+  const readyOptions = { mode: 'music-download', musicDownloadRequestId: ++musicDownloadRequestId };
+  const sampleReady = () => win.webContents.executeJavaScript(buildPortalScript(readyOptions, scoreMediaDownloadQualityLabel), true);
+  const firstUrl = (await sampleReady()).readyMusicHref;
+  assert.strictEqual(firstUrl, 'https://cdn.example.com/ready.mp3');
+  readyOptions.expectedMusicDownloadUrl = firstUrl;
+  await win.webContents.executeJavaScript("card.href = 'https://cdn.example.com/ready.mp3?signature=updated'");
+  const updatedUrl = (await sampleReady()).readyMusicHref;
+  assert.strictEqual(updatedUrl, 'https://cdn.example.com/ready.mp3?signature=updated');
+  assert.strictEqual(await win.webContents.executeJavaScript('window.clicks'), 0);
+  readyOptions.expectedMusicDownloadUrl = updatedUrl;
+  assert.strictEqual((await sampleReady()).clicked, true);
+  assert.strictEqual((await sampleReady()).clicked, false);
+  assert.strictEqual(await win.webContents.executeJavaScript('window.clicks'), 1);
+
+  console.log('probe: a failed ordinary link is retried only once');
+  await loadFixture(win, '<a id="card" data-normal-download download="歌曲.mp3" href="#"><h6>直链下载通道</h6><p role="status">普通下载</p></a>', `
+    window.clicks = 0;
+    card.onclick = event => {
+      event.preventDefault();
+      window.clicks++;
+      card.setAttribute('aria-busy','true');
+      card.querySelector('p').textContent = '正在准备下载';
+      setTimeout(() => { card.removeAttribute('aria-busy'); card.querySelector('p').textContent = '未获取到链接，点击重试'; }, 120);
+    };
+  `);
+  const missingLink = await requestSong(1500);
+  assert.strictEqual(missingLink.reason, 'download-connection-failed');
+  assert.strictEqual(await win.webContents.executeJavaScript('window.clicks'), 2);
+
+  console.log('probe: wait for the enabled ordinary-quality music action');
+  await loadFixture(win, '<button id="quality">下载歌曲</button>', `
+    const quality = document.querySelector('#quality');
+    window.songClicks = [];
+    quality.onclick = () => {
+      if (quality.textContent !== '下载歌曲') {
+        window.songClicks.push(quality.dataset.ready || 'too soon');
+        document.body.insertAdjacentHTML('beforeend', '<a href="https://cdn.example.com/song.mp3">下载歌曲文件</a>');
+        return;
+      }
+      window.songClicks.push('open');
+      quality.textContent = '下载普通音质 MP3';
+      quality.disabled = true;
+      quality.setAttribute('aria-disabled', 'true');
+      setTimeout(() => { quality.disabled = false; }, 300);
+      setTimeout(() => { quality.removeAttribute('aria-disabled'); quality.textContent = '下载普通音质 MP3（倒计时 1 秒）'; }, 750);
+      setTimeout(() => { quality.textContent = '下载普通音质 MP3'; quality.dataset.ready = 'yes'; }, 1250);
+    };
+  `);
+  assert.strictEqual((await requestSong()).ok, true);
+  assert.deepStrictEqual(await win.webContents.executeJavaScript('window.songClicks'), ['open', 'yes']);
+
+  console.log('probe: download the full file offered by the site when a preview exists');
+  await loadFixture(win, '<audio preload="none" src="https://cdn.example.com/preview-only.mp3"></audio><button id="open">下载歌曲</button>', `
+    document.querySelector('#open').onclick = () => setTimeout(() => {
+      document.body.insertAdjacentHTML('beforeend', '<a style="display:block;width:180px;height:36px" href="https://cdn.example.com/full-song.mp3">下载普通音质 MP3</a>');
+    }, 300);
+  `);
+  const fullSong = await requestSong();
+  assert.strictEqual(fullSong.ok, true);
+  assert.strictEqual(fullSong.href, 'https://cdn.example.com/full-song.mp3');
+
+  console.log('probe: return a provider refusal after starting the music download');
+  await loadFixture(win, '<button id="open">下载歌曲</button><div role="alert" style="width:240px;height:42px"></div>', `
+    document.querySelector('#open').onclick = () => setTimeout(() => {
+      document.querySelector('[role="alert"]').textContent = '受版权保护，禁止下载';
+    }, 150);
+  `);
+  const refusalStartedAt = Date.now();
+  const refusedSong = await requestSong();
+  assert.strictEqual(refusedSong.ok, false);
+  assert.strictEqual(refusedSong.reason, 'protected-or-private');
+  assert(Date.now() - refusalStartedAt < 2500, 'a provider refusal should finish before the 4s deadline');
+
+  console.log('probe: a music dialog without a file or final action times out as a failure');
+  await loadFixture(win, '<button id="open" onclick="this.disabled=true">下载歌曲</button>');
+  assert.strictEqual((await requestSong(1100)).ok, false);
 
   await loadFixture(win, '<div style="width:200px;height:40px">no result</div>');
   console.log('probe: bounded parse timeout');

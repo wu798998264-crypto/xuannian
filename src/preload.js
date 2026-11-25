@@ -258,10 +258,9 @@ contextBridge.exposeInMainWorld('nativeAPI', {
     return (await save(data)).data.stickyNotes || [];
   },
   async reorderNotes(projectId, orderedIds) {
-    const data = await load();
-    const orderMap = new Map(orderedIds.map((id, index) => [id, index + 1]));
-    data.notes = data.notes.map((item) => item.projectId === projectId && orderMap.has(item.id) ? { ...item, order: orderMap.get(item.id) } : item);
-    return (await save(data)).data.notes;
+    const notes = await ipcRenderer.invoke('notes:reorder', projectId, orderedIds);
+    invalidateCache();
+    return notes;
   },
   async getInspirations() {
     return (await load()).inspirations;
@@ -327,6 +326,8 @@ contextBridge.exposeInMainWorld('nativeAPI', {
   async getSettings() {
     return (await load()).settings;
   },
+  getOpenAtLogin: () => ipcRenderer.invoke('settings:getOpenAtLogin'),
+  setOpenAtLogin: (enabled) => ipcRenderer.invoke('settings:setOpenAtLogin', enabled),
   async saveSettings(settings) {
     const data = await load();
     data.settings = { ...data.settings, ...settings };

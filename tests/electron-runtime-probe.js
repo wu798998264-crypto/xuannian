@@ -1610,17 +1610,23 @@ async function run() {
         downloadCountAfterSearch:downloadsSearchRow?.children[1]?.id==='mediaDownloadsSummary',
         favoriteCountAfterSearch:favoritesSearchRow?.children[1]?.id==='mediaFavoritesSummary',
       };
-      const verificationPromise=offerMediaManualPortal('audio','human-verification','https://www.gequbao.com/');
-      await new Promise(resolve=>setTimeout(resolve,20));
-      const verificationPrompt={
-        modalVisible:$('#modalBackdrop').classList.contains('show'),
-      };
-      await verificationPromise;
+      setMediaKind('audio',{showPortal:true});
+      state.media.musicSearch={status:'searching',query:'测试歌曲',requestId:501,results:[]};
+      const challenge={ready:true,verificationRequired:true,requestId:501,automationMode:'music-search',url:'https://www.gequbao.com/s/test'};
+      const shell=$('#mediaBrowserShell'), heading=$('#mediaVerificationHeading'), reopen=$('#mediaMusicVerificationOpen');
+      applyMediaBrowserState(challenge);
       const verificationFlow={
-        ...verificationPrompt,
-        resumeCalls:verificationResumeCalls,
-        browserVisible:state.media.browserVisible,
+        modalVisible:$('#modalBackdrop').classList.contains('show'),
+        openedAutomatically:!shell.hidden&&!heading.hidden&&reopen.hidden,
       };
+      $('#mediaMusicManualPortal').click();
+      applyMediaBrowserState(challenge);
+      verificationFlow.stayedClosed=shell.hidden&&heading.hidden&&!reopen.hidden;
+      reopen.click();
+      verificationFlow.reopened=!shell.hidden&&!heading.hidden&&state.media.musicVerification?.requestId===501;
+      applyMediaBrowserState({...challenge,verificationRequired:false,verificationCompleted:true});
+      verificationFlow.closedAfterVerification=shell.hidden&&reopen.hidden&&!state.media.musicVerification;
+      verificationFlow.resumeCalls=verificationResumeCalls;
       clearMediaManualPortal('audio');
       state.media.downloadTasks=[];
       state.media.downloadsExpanded=false;
@@ -1736,8 +1742,11 @@ async function run() {
   assert.deepStrictEqual(mediaLibraryMetrics.backgroundPortal, {browserHidden:true,directVisible:true});
   assert.strictEqual(mediaLibraryMetrics.manualPortalInitiallyVisible, true, 'manual-site controls must remain visible at the right edge before and after automatic routes run');
   assert.strictEqual(mediaLibraryMetrics.verificationFlow.modalVisible, false, 'human verification must open the embedded session without a second confirmation');
-  assert.strictEqual(mediaLibraryMetrics.verificationFlow.resumeCalls, 1);
-  assert.strictEqual(mediaLibraryMetrics.verificationFlow.browserVisible, true);
+  assert.strictEqual(mediaLibraryMetrics.verificationFlow.resumeCalls, 0, 'renderer must preserve the main process verification monitor');
+  assert.strictEqual(mediaLibraryMetrics.verificationFlow.openedAutomatically, true, 'a new challenge must open the embedded browser immediately');
+  assert.strictEqual(mediaLibraryMetrics.verificationFlow.stayedClosed, true, 'a repeated challenge must respect manual dismissal');
+  assert.strictEqual(mediaLibraryMetrics.verificationFlow.reopened, true, 'the user can return to the same verification request');
+  assert.strictEqual(mediaLibraryMetrics.verificationFlow.closedAfterVerification, true, 'successful verification must return to the application');
   assert.deepStrictEqual(mediaLibraryMetrics.browserTogglePersistence, {available:true,browserVisible:true});
   assert.deepStrictEqual(mediaLibraryMetrics.localPlaybackRequests, []);
   assert.deepStrictEqual(mediaLibraryMetrics.downloadedMusicControls, {rowPlayButtons:0,localPlayerVisible:false,musicProviderLabel:'歌曲宝',musicManualPortalAvailable:true,firstDownloaded:'测试歌曲歌词.lrc',lyricsVisible:true,lyricsType:'歌词',lyricsFavoriteButton:false});
